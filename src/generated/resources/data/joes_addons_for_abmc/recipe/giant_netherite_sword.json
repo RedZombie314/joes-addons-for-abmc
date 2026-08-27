@@ -1,0 +1,21 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "key": {
+    "B": {
+      "item": "minecraft:netherite_block"
+    },
+    "X": {
+      "item": "joes_addons_for_abmc:netherite_core"
+    }
+  },
+  "pattern": [
+    " X ",
+    " X ",
+    " B "
+  ],
+  "result": {
+    "count": 1,
+    "id": "joes_addons_for_abmc:giant_netherite_sword"
+  }
+}

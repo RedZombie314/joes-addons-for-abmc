@@ -1,0 +1,67 @@
+### Gradle ###
+.gradle
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/**/build/
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/**/out/
+
+.run/
+
+### Eclipse ###
+.apt_generated
+.classpath
+.eclipse/
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/**/bin/
+
+### VS Code ###
+.vscode/
+
+### Mac OS ###
+.DS_Store
+
+### Minecraft Modding ###
+run/
+!**/src/**/run/
+**/src/generated/**/.cache/
+repo/
+!**/src/**/repo/
+
+### Server酱 推送工具（含密钥，不入库） ###
+tools/serverchan/config.json
+
+### 本地杂项（构建产物/日志/大文件，不入库） ###
+# 历史打包 jar 目录
+dist/
+outputs/
+# 崩溃报告与运行日志
+crash\ reports/
+debug_log/
+logs/
+# 反编译/本地辅助源码
+net/
+# 第三方依赖源码/包
+TouhouLittleMaid-1.20/
+TouhouLittleMaid-1.20.zip
+libs/
+# 本地构建属性与测试脚手架
+.build-target-props.json
+a3_classpath.txt
+a3test/
+a4test/
+# 上传/发布用本地素材与临时反编译目录
+uploads/
+tlmaid_tmp/
+

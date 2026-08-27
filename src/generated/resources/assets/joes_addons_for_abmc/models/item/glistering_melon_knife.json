@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/handheld",
+  "textures": {
+    "layer0": "joes_addons_for_abmc:item/glistering_melon_knife"
+  }
+}

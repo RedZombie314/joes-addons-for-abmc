@@ -1,0 +1,32 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_netherite_core": {
+      "conditions": {
+        "items": [
+          {
+            "items": "joes_addons_for_abmc:netherite_core"
+          }
+        ]
+      },
+      "trigger": "minecraft:inventory_changed"
+    },
+    "has_the_recipe": {
+      "conditions": {
+        "recipe": "joes_addons_for_abmc:giant_netherite_axe"
+      },
+      "trigger": "minecraft:recipe_unlocked"
+    }
+  },
+  "requirements": [
+    [
+      "has_the_recipe",
+      "has_netherite_core"
+    ]
+  ],
+  "rewards": {
+    "recipes": [
+      "joes_addons_for_abmc:giant_netherite_axe"
+    ]
+  }
+}

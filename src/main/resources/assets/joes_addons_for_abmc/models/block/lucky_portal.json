@@ -1,0 +1,21 @@
+{
+  "parent": "minecraft:block/block",
+  "textures": {
+    "portal": "joes_addons_for_abmc:block/lucky_portal",
+    "particle": "joes_addons_for_abmc:block/lucky_portal"
+  },
+  "elements": [
+    {
+      "from": [0, 0, 0],
+      "to": [16, 6, 16],
+      "faces": {
+        "down": {"texture": "#portal", "cullface": "down"},
+        "up": {"texture": "#portal"},
+        "north": {"texture": "#portal"},
+        "south": {"texture": "#portal"},
+        "west": {"texture": "#portal"},
+        "east": {"texture": "#portal"}
+      }
+    }
+  ]
+}

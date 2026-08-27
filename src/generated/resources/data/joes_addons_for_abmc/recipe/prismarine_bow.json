@@ -1,0 +1,21 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "key": {
+    "C": {
+      "item": "minecraft:chain"
+    },
+    "P": {
+      "item": "minecraft:prismarine_shard"
+    }
+  },
+  "pattern": [
+    " PC",
+    "P C",
+    " PC"
+  ],
+  "result": {
+    "count": 1,
+    "id": "joes_addons_for_abmc:prismarine_bow"
+  }
+}

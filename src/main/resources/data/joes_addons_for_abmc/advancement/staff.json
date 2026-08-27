@@ -1,0 +1,34 @@
+{
+  "display": {
+    "icon": {
+      "id": "joes_addons_for_abmc:staff"
+    },
+    "title": {
+      "translate": "advancements.joes_addons_for_abmc.staff.title"
+    },
+    "description": {
+      "translate": "advancements.joes_addons_for_abmc.staff.description"
+    },
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": true,
+    "hidden": false
+  },
+  "criteria": {
+    "obtain_staff": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [
+          {
+            "items": "joes_addons_for_abmc:staff"
+          }
+        ]
+      }
+    }
+  },
+  "requirements": [
+    [
+      "obtain_staff"
+    ]
+  ]
+}

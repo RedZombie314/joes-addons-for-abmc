@@ -1,0 +1,11 @@
+{
+  "type": "joes_addons_for_abmc:lucky_dim_type",
+  "generator": {
+    "type": "minecraft:noise",
+    "biome_source": {
+      "type": "minecraft:fixed",
+      "biome": "joes_addons_for_abmc:lucky_plains"
+    },
+    "settings": "joes_addons_for_abmc:lucky_dim"
+  }
+}

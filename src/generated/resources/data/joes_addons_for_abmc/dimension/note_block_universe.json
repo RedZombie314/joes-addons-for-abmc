@@ -1,0 +1,11 @@
+{
+  "type": "joes_addons_for_abmc:note_dim_type",
+  "generator": {
+    "type": "joes_addons_for_abmc:note_block_chunk_generator",
+    "biome_source": {
+      "type": "minecraft:multi_noise",
+      "preset": "minecraft:overworld"
+    },
+    "settings": "minecraft:overworld"
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "ear_ringing": {
+    "subtitle": "subtitles.joes_addons_for_abmc.ear_ringing",
+    "sounds": [
+      "joes_addons_for_abmc:ear_ringing"
+    ]
+  },
+  "staff_command_fly": {
+    "subtitle": "subtitles.joes_addons_for_abmc.staff_command_fly",
+    "sounds": [
+      "joes_addons_for_abmc:staff_command_fly"
+    ]
+  },
+  "villagerbigband": {
+    "subtitle": "subtitles.joes_addons_for_abmc.villagerbigband",
+    "sounds": [
+      "joes_addons_for_abmc:villagerbigband"
+    ]
+  },
+  "zombies": {
+    "subtitle": "subtitles.joes_addons_for_abmc.zombies",
+    "sounds": [
+      "joes_addons_for_abmc:zombies"
+    ]
+  },
+  "wanderingtrader": {
+    "subtitle": "subtitles.joes_addons_for_abmc.wanderingtrader",
+    "sounds": [
+      "joes_addons_for_abmc:wanderingtrader"
+    ]
+  },
+  "greenandpurple": {
+    "subtitle": "subtitles.joes_addons_for_abmc.greenandpurple",
+    "sounds": [
+      "joes_addons_for_abmc:greenandpurple"
+    ]
+  },
+  "purplestheme": {
+    "subtitle": "subtitles.joes_addons_for_abmc.purplestheme",
+    "sounds": [
+      "joes_addons_for_abmc:purplestheme"
+    ]
+  },
+  "laser_start": {
+    "subtitle": "subtitles.joes_addons_for_abmc.laser_start",
+    "sounds": [
+      "joes_addons_for_abmc:laser_start"
+    ]
+  },
+  "laser_middle": {
+    "subtitle": "subtitles.joes_addons_for_abmc.laser_middle",
+    "sounds": [
+      "joes_addons_for_abmc:laser_middle"
+    ]
+  },
+  "laser_end": {
+    "subtitle": "subtitles.joes_addons_for_abmc.laser_end",
+    "sounds": [
+      "joes_addons_for_abmc:laser_end"
+    ]
+  }
+}

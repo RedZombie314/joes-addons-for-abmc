@@ -1,0 +1,8 @@
+allprojects {
+    tasks.register("a3testcp") {
+        doLast {
+            new File(project.projectDir, "a3_classpath.txt").text =
+                project.sourceSets.main.runtimeClasspath.asPath
+        }
+    }
+}

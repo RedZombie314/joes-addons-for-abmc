@@ -1,0 +1,25 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "cn.autoforged.joes_addons_for_abmc.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "MerchantOfferMixin",
+    "BaseFireBlockMixin",
+    "PistonBaseBlockMixin",
+    "LivingEntitySoundMixin",
+    "MobAmbientSoundMixin",
+    "EntitySoundMixin",
+    "EnchantCommandMixin",
+    "EnchantmentNameMixin",
+    "MeleeAttackGoalMixin",
+    "WitchMixin"
+  ],
+  "client": [
+    "ClientLevelMixin",
+    "BlockMarkerParticleMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

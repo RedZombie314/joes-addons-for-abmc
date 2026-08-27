@@ -1,0 +1,16 @@
+{
+  "variants": {
+    "age=0": {
+      "model": "joes_addons_for_abmc:block/job_frosted_ice_0"
+    },
+    "age=1": {
+      "model": "joes_addons_for_abmc:block/job_frosted_ice_1"
+    },
+    "age=2": {
+      "model": "joes_addons_for_abmc:block/job_frosted_ice_2"
+    },
+    "age=3": {
+      "model": "joes_addons_for_abmc:block/job_frosted_ice_3"
+    }
+  }
+}

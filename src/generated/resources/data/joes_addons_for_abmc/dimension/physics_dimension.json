@@ -1,0 +1,17 @@
+{
+  "type": "joes_addons_for_abmc:physics_dim_type",
+  "generator": {
+    "type": "minecraft:flat",
+    "settings": {
+      "biome": "joes_addons_for_abmc:physics_void",
+      "features": false,
+      "lakes": false,
+      "layers": [
+        {
+          "block": "minecraft:air",
+          "height": 1
+        }
+      ]
+    }
+  }
+}

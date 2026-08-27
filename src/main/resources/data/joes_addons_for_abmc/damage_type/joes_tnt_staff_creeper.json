@@ -1,0 +1,6 @@
+{
+  "message_id": "joes_tnt_staff_creeper",
+  "scaling": "when_caused_by_living_non_player",
+  "exhaustion": 0.1,
+  "effects": "hurt"
+}

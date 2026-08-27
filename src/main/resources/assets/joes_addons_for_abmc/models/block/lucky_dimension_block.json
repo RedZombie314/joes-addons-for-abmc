@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:block/cube_all",
+  "textures": {
+    "all": "joes_addons_for_abmc:block/lucky_dimension_block"
+  }
+}

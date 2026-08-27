@@ -1,0 +1,11 @@
+{
+  "variants": {
+    "axis=x": {
+      "model": "joes_addons_for_abmc:block/note_portal"
+    },
+    "axis=z": {
+      "model": "joes_addons_for_abmc:block/note_portal",
+      "y": 90
+    }
+  }
+}

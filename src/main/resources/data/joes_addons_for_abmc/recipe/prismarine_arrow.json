@@ -1,0 +1,16 @@
+{
+  "type": "joes_addons_for_abmc:prismarine_arrow",
+  "category": "misc",
+  "ingredients": [
+    {
+      "item": "minecraft:trident"
+    },
+    {
+      "item": "minecraft:prismarine_shard"
+    }
+  ],
+  "result": {
+    "count": 4,
+    "id": "joes_addons_for_abmc:prismarine_arrow"
+  }
+}

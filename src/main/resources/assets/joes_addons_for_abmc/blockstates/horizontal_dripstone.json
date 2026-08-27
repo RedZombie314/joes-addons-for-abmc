@@ -1,0 +1,8 @@
+{
+  "variants": {
+    "facing=north": { "model": "minecraft:block/pointed_dripstone_down_tip" },
+    "facing=south": { "model": "minecraft:block/pointed_dripstone_down_tip" },
+    "facing=west": { "model": "minecraft:block/pointed_dripstone_down_tip" },
+    "facing=east": { "model": "minecraft:block/pointed_dripstone_down_tip" }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "key": {
+    "G": {
+      "item": "minecraft:glistering_melon_slice"
+    },
+    "M": {
+      "item": "minecraft:magma_cream"
+    },
+    "T": {
+      "item": "minecraft:totem_of_undying"
+    }
+  },
+  "pattern": [
+    " G ",
+    " M ",
+    " T "
+  ],
+  "result": {
+    "count": 1,
+    "id": "joes_addons_for_abmc:glistering_melon_knife"
+  }
+}
