@@ -16,13 +16,13 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 public abstract class EnchantCommandMixin {
 
     /** /enchant 允许的最高等级。 */
-    private static final int JAFM_MAX_ENCHANT_LEVEL = 99;
+    private static final int JAFA_MAX_ENCHANT_LEVEL = 99;
 
     @Redirect(
         method = "enchant",
         at = @At(value = "INVOKE", target = "Lnet/minecraft/world/item/enchantment/Enchantment;getMaxLevel()I")
     )
-    private static int jafm_liftedLevelCap(Enchantment enchantment) {
-        return JAFM_MAX_ENCHANT_LEVEL;
+    private static int jafa_liftedLevelCap(Enchantment enchantment) {
+        return JAFA_MAX_ENCHANT_LEVEL;
     }
 }

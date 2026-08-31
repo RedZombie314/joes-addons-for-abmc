@@ -67,6 +67,14 @@ public class ModEntities {
                 .updateInterval(20)
                 .build("portal"));
 
+    public static final Supplier<EntityType<PotionPortalEntity>> POTION_PORTAL =
+        ENTITIES.register("potion_portal",
+            () -> EntityType.Builder.<PotionPortalEntity>of(PotionPortalEntity::new, MobCategory.MISC)
+                .sized(1.0F, 2.0F)
+                .clientTrackingRange(64)
+                .updateInterval(20)
+                .build("potion_portal"));
+
     public static final Supplier<EntityType<PlayerShellEntity>> PLAYER_SHELL =
         ENTITIES.register("player_shell",
             () -> EntityType.Builder.<PlayerShellEntity>of(PlayerShellEntity::new, MobCategory.MISC)

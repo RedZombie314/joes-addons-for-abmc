@@ -67,6 +67,12 @@ public class TransmutationFallingBlockEntity extends FallingBlockEntity {
         }
     }
 
+    /** 允许右键互动穿透变形方块（不阻挡玩家点击/交互其身后的方块）。 */
+    @Override
+    public boolean isPickable() {
+        return false;
+    }
+
     @Override
     protected void addAdditionalSaveData(CompoundTag compound) {
         compound.put("MyBlockState", NbtUtils.writeBlockState(this.myBlockState));

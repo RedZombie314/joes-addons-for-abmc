@@ -22,7 +22,7 @@ import org.spongepowered.asm.mixin.injection.ModifyConstant;
 public abstract class BlockMarkerParticleMixin {
 
     @ModifyConstant(method = "<init>", constant = @Constant(intValue = 80))
-    private int jafm_speedupDisappear(int constant) {
+    private int jafa_speedupDisappear(int constant) {
         if (BarrierStaffHelper.isHoldingBarrierStaff()) {
             return 27;
         }

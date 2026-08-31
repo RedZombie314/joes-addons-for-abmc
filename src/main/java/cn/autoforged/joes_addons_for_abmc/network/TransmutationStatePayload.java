@@ -8,22 +8,23 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 
 /**
- * 变形状态（服务端→客户端）：玩家被变形药水变成物品/下落方块/生物壳/玩家空壳时，
- * 告知客户端“玩家正处于变形状态”，并给出被变成实体的实体ID；
- * 复原/终止时再通知解除。客户端据此：
- * 1) 每 tick 把被变成实体贴到本地玩家脚下（消除服务端 20Hz 快照造成的延迟/瞬移感）；
- * 2) 彻底隐藏变形玩家自身的渲染（含手持物与穿戴装备），实现完全隐身。
+ * 变形状态（服务端→客户端）：
+ * - 物品/方块/玩家空壳/生物壳形态：告知客户端“玩家正处于变形状态”，并给出被变成实体的实体ID；
+ * - 生物(morph)形态：给出目标生物实体类型 id，供客户端把玩家渲染成该生物（渲染替换），玩家本体保持操控。
+ * - 复原/终止时再通知解除。
  *
  * @param transmuted     true=正处于变形，false=变形已结束
  * @param followEntityId 被变成实体的实体ID（transmuted=false 时为 -1）
+ * @param morphEntityType 渲染替换要呈现的生物实体类型 id（如 "minecraft:creeper"）；非生物形态为空串
  */
-public record TransmutationStatePayload(boolean transmuted, int followEntityId) implements CustomPacketPayload {
+public record TransmutationStatePayload(boolean transmuted, int followEntityId, String morphEntityType) implements CustomPacketPayload {
     public static final CustomPacketPayload.Type<TransmutationStatePayload> TYPE =
         new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "transmutation_state"));
 
     public static final StreamCodec<FriendlyByteBuf, TransmutationStatePayload> STREAM_CODEC =
         StreamCodec.composite(ByteBufCodecs.BOOL, TransmutationStatePayload::transmuted,
             ByteBufCodecs.VAR_INT, TransmutationStatePayload::followEntityId,
+            ByteBufCodecs.STRING_UTF8, TransmutationStatePayload::morphEntityType,
             TransmutationStatePayload::new);
 
     @Override

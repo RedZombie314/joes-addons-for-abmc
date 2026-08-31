@@ -10,14 +10,18 @@
     "LivingEntitySoundMixin",
     "MobAmbientSoundMixin",
     "EntitySoundMixin",
+    "EntityRightClickMixin",
     "EnchantCommandMixin",
     "EnchantmentNameMixin",
     "MeleeAttackGoalMixin",
-    "WitchMixin"
+    "WitchMixin",
+    "RangedAttackGoalMixin",
+    "PlayerDimensionsMixin"
   ],
   "client": [
     "ClientLevelMixin",
-    "BlockMarkerParticleMixin"
+    "BlockMarkerParticleMixin",
+    "LivingEntityAccessorMixin"
   ],
   "injectors": {
     "defaultRequire": 1

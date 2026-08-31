@@ -26,7 +26,7 @@ public abstract class MeleeAttackGoalMixin {
     @Shadow private int ticksUntilNextAttack;
 
     @Inject(method = "resetAttackCooldown", at = @At("HEAD"), cancellable = true)
-    private void jafm_quickChargeFasterAttacks(CallbackInfo ci) {
+    private void jafa_quickChargeFasterAttacks(CallbackInfo ci) {
         int quickCharge = ModMain.getEnchantLevel(mob, Enchantments.QUICK_CHARGE);
         if (quickCharge > 0) {
             int interval = (int) Math.round(20.0 / (1.0 + 0.25 * quickCharge));

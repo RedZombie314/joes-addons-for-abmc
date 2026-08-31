@@ -24,7 +24,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public abstract class MerchantOfferMixin {
 
     @Inject(method = "satisfiedBy", at = @At("HEAD"), cancellable = true)
-    private void jafm_acceptAnyShulkerBox(ItemStack playerOfferA, ItemStack playerOfferB,
+    private void jafa_acceptAnyShulkerBox(ItemStack playerOfferA, ItemStack playerOfferB,
                                           CallbackInfoReturnable<Boolean> cir) {
         MerchantOffer self = (MerchantOffer) (Object) this;
         ItemCost costA = self.getItemCostA();

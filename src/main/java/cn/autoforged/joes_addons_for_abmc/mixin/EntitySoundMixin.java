@@ -19,7 +19,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class EntitySoundMixin {
 
     @Inject(method = "playSound", at = @At("HEAD"), cancellable = true)
-    private void jafm_playSound(SoundEvent event, float volume, float pitch, CallbackInfo ci) {
+    private void jafa_playSound(SoundEvent event, float volume, float pitch, CallbackInfo ci) {
         if (!(((Object) this) instanceof LivingEntity self)) return;
         SoundEvent s = TransplantHeadSound.routePlayback(self, event);
         if (s != null) {

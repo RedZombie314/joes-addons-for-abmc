@@ -19,7 +19,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public abstract class MobAmbientSoundMixin {
 
     @Inject(method = "getAmbientSound", at = @At("HEAD"), cancellable = true)
-    private void jafm_getAmbientSound(CallbackInfoReturnable<SoundEvent> cir) {
+    private void jafa_getAmbientSound(CallbackInfoReturnable<SoundEvent> cir) {
         SoundEvent s = TransplantHeadSound.getAmbient((LivingEntity) (Object) this);
         if (s != null) cir.setReturnValue(s);
     }

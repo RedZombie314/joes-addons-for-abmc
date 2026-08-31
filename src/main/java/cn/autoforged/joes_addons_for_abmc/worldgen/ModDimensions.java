@@ -6,6 +6,7 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.data.worldgen.BootstrapContext;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.valueproviders.ConstantInt;
 import net.minecraft.util.valueproviders.UniformInt;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
@@ -72,6 +73,25 @@ public class ModDimensions {
         ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "note_block_universe")
     );
 
+    public static final ResourceKey<DimensionType> CREEPER_CLAN_DIM_TYPE = ResourceKey.create(
+        Registries.DIMENSION_TYPE,
+        ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "creeper_clan_dim_type")
+    );
+
+    public static final ResourceKey<LevelStem> CREEPER_CLAN_DIMENSION = ResourceKey.create(
+        Registries.LEVEL_STEM,
+        ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "creeper_clan")
+    );
+
+    public static final ResourceKey<Level> CREEPER_CLAN_DIM_LEVEL = ResourceKey.create(
+        Registries.DIMENSION,
+        ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "creeper_clan")
+    );
+
+    /** Creeper Clan 维度的自定义特效 ID（客户端据此注册对应的天空颜色）。 */
+    public static final ResourceLocation CREEPER_CLAN_EFFECTS =
+        ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "creeper_clan");
+
     public static void bootstrapDimensionType(BootstrapContext<DimensionType> context) {
         context.register(LUCKY_DIM_TYPE, new DimensionType(
             OptionalLong.empty(),
@@ -127,6 +147,25 @@ public class ModDimensions {
             0.0F,
             new DimensionType.MonsterSettings(false, true, UniformInt.of(0, 7), 0)
         ));
+
+        // Creeper Clan：与主世界完全一致的地形，但使用自定义维度特效（绿色天空 #79B83F）。
+        context.register(CREEPER_CLAN_DIM_TYPE, new DimensionType(
+            OptionalLong.empty(),
+            true,
+            false,
+            false,
+            true,
+            1.0,
+            true,
+            false,
+            -64,
+            384,
+            384,
+            net.minecraft.tags.BlockTags.INFINIBURN_OVERWORLD,
+            CREEPER_CLAN_EFFECTS,
+            0.0F,
+            new DimensionType.MonsterSettings(false, false, ConstantInt.of(0), 0)
+        ));
     }
 
     public static void bootstrapLevelStem(BootstrapContext<LevelStem> context) {
@@ -158,6 +197,18 @@ public class ModDimensions {
         context.register(NOTE_BLOCK_UNIVERSE, new LevelStem(
             context.lookup(Registries.DIMENSION_TYPE).getOrThrow(NOTE_DIM_TYPE),
             new NoteBlockChunkGenerator(
+                MultiNoiseBiomeSource.createFromPreset(
+                    context.lookup(Registries.MULTI_NOISE_BIOME_SOURCE_PARAMETER_LIST)
+                        .getOrThrow(MultiNoiseBiomeSourceParameterLists.OVERWORLD)),
+                context.lookup(Registries.NOISE_SETTINGS).getOrThrow(NoiseGeneratorSettings.OVERWORLD)
+            )
+        ));
+
+        // Creeper Clan：复用主世界的生物群系参数列表与噪声设置，地形与主世界完全一致；
+        // 使用标准噪声生成器（不替换任何方块），仅维度特效（天空颜色）不同。
+        context.register(CREEPER_CLAN_DIMENSION, new LevelStem(
+            context.lookup(Registries.DIMENSION_TYPE).getOrThrow(CREEPER_CLAN_DIM_TYPE),
+            new NoiseBasedChunkGenerator(
                 MultiNoiseBiomeSource.createFromPreset(
                     context.lookup(Registries.MULTI_NOISE_BIOME_SOURCE_PARAMETER_LIST)
                         .getOrThrow(MultiNoiseBiomeSourceParameterLists.OVERWORLD)),

@@ -23,8 +23,9 @@ public class ModPotions {
     public static final DeferredHolder<Potion, Potion> TRANSPORTATION = POTIONS.register("transportation",
         () -> new Potion(new MobEffectInstance(ModMobEffects.TRANSPORTATION, 1)));
 
-    public static final DeferredHolder<Potion, Potion> STRONG_TRANSPORTATION = POTIONS.register("strong_transportation",
-        () -> new Potion("transportation", new MobEffectInstance(ModMobEffects.TRANSPORTATION, 1, 1)));
+    // 准传送药水：由 闹鬼的药水 + 末影珍珠 酿成；再加下界疣即得 传送药水(transportation)
+    public static final DeferredHolder<Potion, Potion> PRE_TRANSPORTATION = POTIONS.register("pre_transportation",
+        () -> new Potion());
 
     public static final DeferredHolder<Potion, Potion> PRE_TRANSMUTATION = POTIONS.register("pre_transmutation",
         () -> new Potion());
@@ -38,9 +39,4 @@ public class ModPotions {
     public static final DeferredHolder<Potion, Potion> TRANSMUTATION_ANTIDOTE =
         POTIONS.register("transmutation_antidote",
             () -> new Potion(new MobEffectInstance(ModMobEffects.TRANSMUTATION_ANTIDOTE, 1)));
-
-    public static final DeferredHolder<Potion, Potion> STRONG_TRANSMUTATION_ANTIDOTE =
-        POTIONS.register("strong_transmutation_antidote",
-            () -> new Potion("transmutation_antidote",
-                new MobEffectInstance(ModMobEffects.TRANSMUTATION_ANTIDOTE, 1, 1)));
 }

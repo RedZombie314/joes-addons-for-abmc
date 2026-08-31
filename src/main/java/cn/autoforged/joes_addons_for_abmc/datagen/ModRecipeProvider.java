@@ -1,9 +1,11 @@
 package cn.autoforged.joes_addons_for_abmc.datagen;
 
+import cn.autoforged.joes_addons_for_abmc.ModMain;
 import cn.autoforged.joes_addons_for_abmc.item.ModItems;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.data.PackOutput;
 import net.minecraft.data.recipes.*;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.Ingredient;
 
@@ -49,6 +51,21 @@ public class ModRecipeProvider extends RecipeProvider {
             .define('B', Items.NETHERITE_BLOCK)
             .unlockedBy("has_netherite_block", has(Items.NETHERITE_BLOCK))
             .save(output);
+
+        // 命名牌：纸 + 铁粒（无序），与纸 + 金粒（无序）各一条配方
+        ShapelessRecipeBuilder.shapeless(RecipeCategory.MISC, Items.NAME_TAG)
+            .requires(Items.PAPER)
+            .requires(Ingredient.of(Items.IRON_NUGGET))
+            .unlockedBy("has_paper", has(Items.PAPER))
+            .save(output, ResourceLocation.fromNamespaceAndPath(
+                cn.autoforged.joes_addons_for_abmc.ModMain.MODID, "name_tag_paper_iron_nugget"));
+
+        ShapelessRecipeBuilder.shapeless(RecipeCategory.MISC, Items.NAME_TAG)
+            .requires(Items.PAPER)
+            .requires(Ingredient.of(Items.GOLD_NUGGET))
+            .unlockedBy("has_paper", has(Items.PAPER))
+            .save(output, ResourceLocation.fromNamespaceAndPath(
+                cn.autoforged.joes_addons_for_abmc.ModMain.MODID, "name_tag_paper_gold_nugget"));
 
         ShapedRecipeBuilder.shaped(RecipeCategory.COMBAT, ModItems.PRISMARINE_BOW.get())
             .pattern(" PC")

@@ -40,10 +40,10 @@ public final class DebugStringRenderer {
     // 叠加混合（additive）渲染类型：把像素颜色叠加到帧缓冲上，使贴图更亮、呈发光效果。
     // 仅 string 使用；whitedot 因端点处会被明亮 string 淹没，故用普通半透明混合保持清晰。
     private static final RenderType STRING_RENDER_TYPE = createAdditive(
-        "jafm_string_additive", STRING_TEX);
+        "jafa_string_additive", STRING_TEX);
     // whitedot 用普通半透明混合（非叠加），在端点处保持清晰，不被明亮的 string 淹没。
     private static final RenderType DOT_RENDER_TYPE = createTranslucent(
-        "jafm_whitedot", DOT_TEX);
+        "jafa_whitedot", DOT_TEX);
 
     private static RenderType createAdditive(String name, ResourceLocation tex) {
         // bufferSize 设得足够大：命令高频率执行时同帧会有大量线段顶点。
@@ -57,6 +57,7 @@ public final class DebugStringRenderer {
                     .setTransparencyState(RenderStateShard.ADDITIVE_TRANSPARENCY)
                     .setCullState(RenderStateShard.NO_CULL)
                     .setWriteMaskState(RenderStateShard.COLOR_WRITE)
+                    .setLightmapState(RenderStateShard.LIGHTMAP)
                     .setOverlayState(RenderStateShard.OVERLAY)
                     .createCompositeState(true));
     }
@@ -70,6 +71,7 @@ public final class DebugStringRenderer {
                     .setTransparencyState(RenderStateShard.TRANSLUCENT_TRANSPARENCY)
                     .setCullState(RenderStateShard.NO_CULL)
                     .setWriteMaskState(RenderStateShard.COLOR_WRITE)
+                    .setLightmapState(RenderStateShard.LIGHTMAP)
                     .setOverlayState(RenderStateShard.OVERLAY)
                     .createCompositeState(true));
     }

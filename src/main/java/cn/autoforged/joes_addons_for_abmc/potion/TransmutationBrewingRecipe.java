@@ -8,13 +8,16 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.server.packs.resources.ResourceManager;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.alchemy.Potion;
 import net.minecraft.world.item.alchemy.PotionContents;
+import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.level.block.Block;
 import net.neoforged.neoforge.common.brewing.IBrewingRecipe;
 import net.neoforged.neoforge.server.ServerLifecycleHooks;
@@ -26,6 +29,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.ToIntFunction;
 
 public class TransmutationBrewingRecipe implements IBrewingRecipe {
@@ -65,6 +69,65 @@ public class TransmutationBrewingRecipe implements IBrewingRecipe {
             || stack.getItem() == Items.LINGERING_POTION;
     }
 
+    // 构造一瓶指定药水颜色、基于“传送药水”的喷溅形态（供定点/定向/随机传送药水使用）
+    private static ItemStack buildTransportSplash(int color) {
+        ItemStack st = new ItemStack(Items.SPLASH_POTION);
+        st.set(DataComponents.POTION_CONTENTS,
+            new PotionContents(Optional.of(ModPotions.TRANSPORTATION), Optional.of(color), List.of()));
+        return st;
+    }
+
+    // 解析 “X Y Z” 形式的坐标字符串；不合法返回 null。
+    // 约束：X、Z 绝对值 < 29999984；Y 在 -64~384 之间。
+    private static Vec3 parseTargetPos(String s) {
+        if (s == null) return null;
+        String[] parts = s.trim().split("\\s+");
+        if (parts.length != 3) return null;
+        try {
+            double x = Double.parseDouble(parts[0]);
+            double y = Double.parseDouble(parts[1]);
+            double z = Double.parseDouble(parts[2]);
+            if (Math.abs(x) >= 29999984.0 || Math.abs(z) >= 29999984.0) return null;
+            if (y < -64.0 || y > 384.0) return null;
+            return new Vec3(x, y, z);
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    // 解析 UUID 字符串（形如 AAA-BBB-CCC-DDD-EEE，含连字符的 UUID）；失败返回 null
+    private static UUID parseUuid(String s) {
+        if (s == null) return null;
+        try {
+            return UUID.fromString(s.trim());
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
+    // 解析单个浮点数（定向传送药水的前进格数）；非单个浮点返回 null
+    private static Double parseSingleDouble(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        if (t.split("\\s+").length != 1) return null;
+        try {
+            return Double.parseDouble(t);
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    // 在所有已加载维度中按 UUID 查找实体（用于定点实体药水命名）；找不到返回 null
+    private static Entity findEntityForBrewing(UUID uuid) {
+        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+        if (server == null) return null;
+        for (ServerLevel l : server.getAllLevels()) {
+            Entity e = l.getEntity(uuid);
+            if (e != null) return e;
+        }
+        return null;
+    }
+
     @Override
     public boolean isInput(ItemStack input) {
         if (!isPotionItem(input)) return false;
@@ -74,7 +137,8 @@ public class TransmutationBrewingRecipe implements IBrewingRecipe {
         ResourceKey<Potion> key = potion.getKey();
         return key.equals(ModPotions.PRE_TRANSMUTATION.getKey())
             || key.equals(ModPotions.TRANSMUTATION.getKey())
-            || key.equals(ModPotions.LONG_TRANSMUTATION.getKey());
+            || key.equals(ModPotions.LONG_TRANSMUTATION.getKey())
+            || key.equals(ModPotions.PRE_TRANSPORTATION.getKey());
     }
 
     @Override
@@ -98,6 +162,63 @@ public class TransmutationBrewingRecipe implements IBrewingRecipe {
         ResourceKey<Potion> inputKey = inputPotion.getKey();
 
         boolean isPreTransmutation = inputKey.equals(ModPotions.PRE_TRANSMUTATION.getKey());
+        boolean isPreTransportation = inputKey.equals(ModPotions.PRE_TRANSPORTATION.getKey());
+
+        // 准传送药水 + 地狱疣（按地狱疣自定义名分类）：
+        //  · "X Y Z" 坐标(三数) → 定点传送药水（目标坐标）
+        //  · 合法 UUID（AAA-BBB-CCC-DDD-EEE）→ 定点传送药水（目标：该实体 5 格内）
+        //  · 单个浮点数 "X" → 定向传送药水（按投掷方向水平前进 X 格）
+        //  · 其余/无名 → 随机传送药水（TRANSPORT_MODE="random"）
+        if (isPreTransportation) {
+            if (ingredient.getItem() == Items.NETHER_WART) {
+                String name = ingredient.getHoverName().getString();
+
+                // 定点传送药水（黑色，目标坐标）：命名“传送至<坐标>附近”
+                Vec3 target = parseTargetPos(name);
+                if (target != null) {
+                    ItemStack tp = buildTransportSplash(0x000000);
+                    tp.set(ModDataComponents.TRANSPORT_MODE.get(), "point");
+                    tp.set(ModDataComponents.TARGET_POS.get(), target);
+                    tp.set(DataComponents.CUSTOM_NAME,
+                        Component.literal("传送至").append(Component.literal(name)).append(Component.literal("附近")));
+                    return tp;
+                }
+                // 定点传送药水（黑色，目标实体）：命名“传送至<实体名>”
+                UUID uuid = parseUuid(name);
+                if (uuid != null) {
+                    Entity ent = findEntityForBrewing(uuid);
+                    ItemStack tp = buildTransportSplash(0x000000);
+                    tp.set(ModDataComponents.TRANSPORT_MODE.get(), "point");
+                    if (ent != null) {
+                        tp.set(ModDataComponents.TARGET_ENTITY_UUID.get(), uuid);
+                        Component dn = ent.getCustomName();
+                        if (dn == null) dn = ent.getType().getDescription();
+                        tp.set(DataComponents.CUSTOM_NAME, Component.literal("传送至").append(dn));
+                    } else {
+                        // 该实体当前不在服务器/未加载：存全零 UUID 哨兵，命名“传送至§kMissingno”，命中不创建传送门
+                        tp.set(ModDataComponents.TARGET_ENTITY_UUID.get(), new UUID(0L, 0L));
+                        tp.set(DataComponents.CUSTOM_NAME, Component.literal("传送至§kMissingno"));
+                    }
+                    return tp;
+                }
+                // 定向传送药水（白色）：命名“传送至前方<距离>格”
+                Double dist = parseSingleDouble(name);
+                if (dist != null) {
+                    ItemStack tp = buildTransportSplash(0xFFFFFF);
+                    tp.set(ModDataComponents.TRANSPORT_MODE.get(), "directional");
+                    tp.set(ModDataComponents.TARGET_DIST.get(), dist);
+                    tp.set(DataComponents.CUSTOM_NAME,
+                        Component.literal("传送至前方").append(Component.literal(name)).append(Component.literal("格")));
+                    return tp;
+                }
+                // 随机传送药水（灰色，名称不变）
+                ItemStack tp = buildTransportSplash(0x808080);
+                tp.set(ModDataComponents.TRANSPORT_MODE.get(), "random");
+                tp.set(DataComponents.CUSTOM_NAME, Component.literal("随机传送药水"));
+                return tp;
+            }
+            return ItemStack.EMPTY; // 准传送药水不可用于其它酿造
+        }
 
         if (ingredient.getItem() == Items.REDSTONE) {
             if (isPreTransmutation) return ItemStack.EMPTY;

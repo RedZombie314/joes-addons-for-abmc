@@ -642,6 +642,10 @@ public class ClientEvents {
         net.minecraft.client.renderer.ItemBlockRenderTypes.setRenderLayer(
             cn.autoforged.joes_addons_for_abmc.block.ModBlocks.NOTE_PORTAL.get(),
             RenderType.translucent());
+        // Creeper Clan 传送门：半透明渲染层，使 80% 透明度的贴图 alpha 生效
+        net.minecraft.client.renderer.ItemBlockRenderTypes.setRenderLayer(
+            cn.autoforged.joes_addons_for_abmc.block.ModBlocks.CREEPER_PORTAL.get(),
+            RenderType.translucent());
         // 冰块权杖霜冰：强制半透明渲染层，使 50% 透明度的贴图 alpha 生效（否则会被当作不透明方块而忽略 alpha）。
         net.minecraft.client.renderer.ItemBlockRenderTypes.setRenderLayer(
             cn.autoforged.joes_addons_for_abmc.block.ModBlocks.JOB_FROSTED_ICE.get(),
@@ -655,6 +659,7 @@ public class ClientEvents {
             cn.autoforged.joes_addons_for_abmc.entity.TransmutationFallingBlockRenderer::new);
         event.registerEntityRenderer(ModEntities.DRIPSTONE_FALLING_BLOCK.get(), DripstoneFallingBlockRenderer::new);
         event.registerEntityRenderer(ModEntities.PORTAL.get(), PortalRenderer::new);
+        event.registerEntityRenderer(ModEntities.POTION_PORTAL.get(), cn.autoforged.joes_addons_for_abmc.entity.PotionPortalRenderer::new);
         event.registerEntityRenderer(ModEntities.HEROBRINE_HEAD.get(), HerobrineHeadRenderer::new);
         event.registerEntityRenderer(ModEntities.PLAYER_SHELL.get(), PlayerShellRenderer::new);
         event.registerEntityRenderer(ModEntities.TNT_STAFF_PRIMED_TNT.get(), TntRenderer::new);
@@ -694,16 +699,44 @@ public class ClientEvents {
         }
     }
 
-    /** 变形中：彻底隐藏本地玩家自身的渲染（含手持物与穿戴装备），实现完全隐身。 */
+    /** 变形渲染：本地玩家自身——若为“渲染替换”生物形态则取消默认玩家渲染并改画成对应生物；
+     *  否则（物品/方块/壳）完全隐藏自身渲染，实现完全隐身。 */
     @SubscribeEvent
     public static void onRenderLivingHideTransmuted(net.neoforged.neoforge.client.event.RenderLivingEvent.Pre event) {
         try {
-            if (event.getEntity() == net.minecraft.client.Minecraft.getInstance().player
-                && cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.isTransmuted()) {
+            net.minecraft.world.entity.Entity ent = event.getEntity();
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            if (ent != mc.player || !cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.isTransmuted()) {
+                return;
+            }
+            if (cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.isMorphActive()) {
+                // 渲染替换：取消玩家本体模型，改画内存代理生物
+                event.setCanceled(true);
+                renderMorphProxy(event);
+            } else {
+                // 物品/方块/壳形态：完全隐藏本地玩家自身渲染
                 event.setCanceled(true);
             }
         } catch (Exception ignored) {
         }
+    }
+
+    /** 在玩家位置渲染“渲染替换”的代理生物。 */
+    private static void renderMorphProxy(net.neoforged.neoforge.client.event.RenderLivingEvent.Pre event) {
+        net.minecraft.world.entity.LivingEntity proxy =
+            cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.getMorphProxy();
+        if (proxy == null) return;
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        net.minecraft.client.renderer.entity.EntityRenderer<?> renderer =
+            mc.getEntityRenderDispatcher().getRenderer(proxy);
+        if (renderer == null) return;
+        @SuppressWarnings("unchecked")
+        net.minecraft.client.renderer.entity.EntityRenderer<net.minecraft.world.entity.Entity> r =
+            (net.minecraft.client.renderer.entity.EntityRenderer<net.minecraft.world.entity.Entity>) renderer;
+        // pose 已由 RenderLivingEvent.Pre 定位到玩家底部并加入玩家朝向的一部分；
+        // 代理生物的朝向已与玩家同步，直接在此绘制即可。
+        r.render(proxy, proxy.getYRot(), event.getPartialTick(), event.getPoseStack(),
+            event.getMultiBufferSource(), event.getPackedLight());
     }
 
     /** 移植头/移植脚（Post）：还原被隐藏的原头/原腿部部件，避免影响同类型其余实体。 */

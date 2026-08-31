@@ -1,0 +1,11 @@
+{
+  "type": "joes_addons_for_abmc:creeper_clan_dim_type",
+  "generator": {
+    "type": "minecraft:noise",
+    "biome_source": {
+      "type": "minecraft:multi_noise",
+      "preset": "minecraft:overworld"
+    },
+    "settings": "minecraft:overworld"
+  }
+}

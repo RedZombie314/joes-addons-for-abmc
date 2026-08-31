@@ -25,7 +25,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public abstract class PistonBaseBlockMixin {
 
     @Inject(method = "getNeighborSignal", at = @At("HEAD"), cancellable = true)
-    private void jafm_staffDrivenSignal(SignalGetter signalGetter, BlockPos pos, Direction direction,
+    private void jafa_staffDrivenSignal(SignalGetter signalGetter, BlockPos pos, Direction direction,
                                         CallbackInfoReturnable<Boolean> cir) {
         if (signalGetter instanceof Level level && ModMain.isPistonStaffExtending(level.dimension(), pos)) {
             cir.setReturnValue(true);

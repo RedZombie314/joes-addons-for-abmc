@@ -147,6 +147,9 @@ public class ModCreativeTab {
 
                 // 变形解药（喷溅）：使被溅射到的变身方块/物品提前复原为生物形态
                 output.accept(splashPotion(ModPotions.TRANSMUTATION_ANTIDOTE, 0x7FBF7F));
+
+                // 仅保留随机传送药水（定点/定向需用命名地狱疣酿制获得）
+                addTransportPotion(output, "random", 0x808080, "随机传送");
             })
             .build()
     );
@@ -157,5 +160,14 @@ public class ModCreativeTab {
         stack.set(DataComponents.POTION_CONTENTS,
             new PotionContents(Optional.of(potion), Optional.of(color), List.of()));
         return stack;
+    }
+
+    // 构造一种传送药水模式：基于传送药水，记录模式、配色并自定义命名
+    private static void addTransportPotion(CreativeModeTab.Output output,
+            String mode, int color, String name) {
+        ItemStack stack = splashPotion(ModPotions.TRANSPORTATION, color);
+        stack.set(ModDataComponents.TRANSPORT_MODE.get(), mode);
+        stack.set(DataComponents.CUSTOM_NAME, Component.literal(name + "药水"));
+        output.accept(stack);
     }
 }

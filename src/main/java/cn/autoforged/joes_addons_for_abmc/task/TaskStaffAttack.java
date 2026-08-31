@@ -63,6 +63,9 @@ public class TaskStaffAttack implements IAttackTask {
     /** 红石块权杖方块形态：由 MaidRedstoneStaffAttackTask 提供充能为 8 的红石激光攻击。 */
     public static final String REDSTONE_STAFF_TYPE = "redstone_block";
 
+    /** 命令方块权杖方块形态：由 MaidCommandStaffAttackTask 按主人的权杖模式执行 kill/禁AI 行为。 */
+    public static final String COMMAND_STAFF_TYPE = "command_block";
+
     /** 索敌半径（格）：权杖攻击固定 64 格，不受女仆工作范围限制。 */
     public static final float SEARCH_RADIUS = 64.0F;
 
@@ -101,7 +104,8 @@ public class TaskStaffAttack implements IAttackTask {
         // 通用走位（仅在“非 Him 权杖且非红石块权杖”时启用），供普通权杖走近目标近战。
         tasks.add(Pair.of(5, new ConditionalBehavior(
             m -> !MaidHimStaffAttackTask.isHimStaff(m.getMainHandItem())
-                && !MaidRedstoneStaffAttackTask.isRedstoneStaff(m.getMainHandItem()),
+                && !MaidRedstoneStaffAttackTask.isRedstoneStaff(m.getMainHandItem())
+                && !MaidCommandStaffAttackTask.isCommandStaff(m.getMainHandItem()),
             SetWalkTargetFromAttackTargetIfTargetOutOfReach.create(0.6F)
         )));
         return tasks;
@@ -151,11 +155,16 @@ public class TaskStaffAttack implements IAttackTask {
         // 红石块权杖激光音效会话管理：宽限期结束后结束音效会话、换下权杖时立即结束（laser_end）。
         BehaviorControl<? super EntityMaid> redstoneSound = new MaidRedstoneLaserSoundTask();
 
+        // 命令方块权杖专属行为：按主人设置的权杖模式，击杀模式→瞄准敌怪用 kill 命令击杀并渲染白线；
+        // 启用/禁用AI模式→瞄准敌怪，若其 NoAI=0b 则设为 1b（禁AI）并渲染白线；护盾模式由常驻反弹处理；抓取/无模式无行为。
+        BehaviorControl<? super EntityMaid> commandAttack = new MaidCommandStaffAttackTask();
+
         // 通用近战用自研 MaidStaffMeleeAttack（不依赖传感器缓存，且无法移动时近战自卫范围更大）；
         // 与 Him/红石专属行为条件互斥，避免同一刻双重攻击。
         BehaviorControl<? super EntityMaid> meleeAttack = new ConditionalBehavior(
             m -> !MaidHimStaffAttackTask.isHimStaff(m.getMainHandItem())
-                && !MaidRedstoneStaffAttackTask.isRedstoneStaff(m.getMainHandItem()),
+                && !MaidRedstoneStaffAttackTask.isRedstoneStaff(m.getMainHandItem())
+                && !MaidCommandStaffAttackTask.isCommandStaff(m.getMainHandItem()),
             new MaidStaffMeleeAttack()
         );
         BehaviorControl<? super EntityMaid> useShield = new MaidUseShieldTask();
@@ -166,6 +175,7 @@ public class TaskStaffAttack implements IAttackTask {
             Pair.of(5, himAttack),
             Pair.of(5, redstoneAttack),
             Pair.of(5, redstoneSound),
+            Pair.of(5, commandAttack),
             Pair.of(5, meleeAttack),
             Pair.of(5, useShield)
         );
@@ -187,7 +197,8 @@ public class TaskStaffAttack implements IAttackTask {
         String blockType = stack.getOrDefault(ModDataComponents.BLOCKTYPE.get(), "empty");
         return PASSIVE_STAFF_TYPES.contains(blockType)
             || HIM_STAFF_TYPE.equals(blockType)
-            || REDSTONE_STAFF_TYPE.equals(blockType);
+            || REDSTONE_STAFF_TYPE.equals(blockType)
+            || COMMAND_STAFF_TYPE.equals(blockType);
     }
 
     /**

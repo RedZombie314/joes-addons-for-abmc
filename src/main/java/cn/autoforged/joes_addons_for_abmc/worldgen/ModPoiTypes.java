@@ -32,4 +32,15 @@ public class ModPoiTypes {
             ModBlocks.NOTE_PORTAL.get().getStateDefinition().getPossibleStates());
         return new PoiType(states, 0, 1);
     });
+
+    /** Creeper Clan 传送门的 POI 类型。 */
+    public static final ResourceKey<PoiType> CREEPER_PORTAL =
+        ResourceKey.create(Registries.POINT_OF_INTEREST_TYPE,
+            ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "creeper_portal"));
+
+    public static final Supplier<PoiType> CREEPER_PORTAL_POI = POI_TYPES.register("creeper_portal", () -> {
+        Set<net.minecraft.world.level.block.state.BlockState> states = ImmutableSet.copyOf(
+            ModBlocks.CREEPER_PORTAL.get().getStateDefinition().getPossibleStates());
+        return new PoiType(states, 0, 1);
+    });
 }

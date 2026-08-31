@@ -22,13 +22,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public abstract class LivingEntitySoundMixin {
 
     @Inject(method = "getHurtSound", at = @At("HEAD"), cancellable = true)
-    private void jafm_getHurtSound(DamageSource source, CallbackInfoReturnable<SoundEvent> cir) {
+    private void jafa_getHurtSound(DamageSource source, CallbackInfoReturnable<SoundEvent> cir) {
         SoundEvent s = TransplantHeadSound.getHurt((LivingEntity) (Object) this, source);
         if (s != null) cir.setReturnValue(s);
     }
 
     @Inject(method = "getDeathSound", at = @At("HEAD"), cancellable = true)
-    private void jafm_getDeathSound(CallbackInfoReturnable<SoundEvent> cir) {
+    private void jafa_getDeathSound(CallbackInfoReturnable<SoundEvent> cir) {
         SoundEvent s = TransplantHeadSound.getDeath((LivingEntity) (Object) this);
         if (s != null) cir.setReturnValue(s);
     }

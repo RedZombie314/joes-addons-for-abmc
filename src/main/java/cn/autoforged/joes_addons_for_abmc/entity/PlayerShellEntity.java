@@ -42,6 +42,12 @@ public class PlayerShellEntity extends PathfinderMob {
         this.noCulling = true;
     }
 
+    /** 允许右键互动穿透变形空壳（不阻挡玩家点击/交互）。 */
+    @Override
+    public boolean isPickable() {
+        return false;
+    }
+
     @Override
     protected void defineSynchedData(SynchedEntityData.Builder builder) {
         super.defineSynchedData(builder);

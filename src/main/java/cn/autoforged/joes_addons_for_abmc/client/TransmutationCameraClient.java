@@ -30,6 +30,12 @@ public final class TransmutationCameraClient {
     /** 被变成实体的实体ID（服务端每 tick 会把它的位置设到玩家处；客户端再贴一层保证平滑）。 */
     private static volatile int followEntityId = -1;
 
+    /** “渲染替换”目标生物实体类型 id（如 "minecraft:creeper"）；非生物形态为空串。 */
+    private static volatile String morphEntityType = "";
+
+    /** 内存中的代理生物实体（不进世界），仅用于把玩家渲染成对应生物。 */
+    private static net.minecraft.world.entity.LivingEntity morphProxy;
+
     /** 上一 tick 我们为实体设置的位置（用作渲染插值起点 xo/yo/zo），保证平滑过渡。 */
     private static double lastFollowX, lastFollowY, lastFollowZ;
     private static boolean hasLastFollow = false;
@@ -58,10 +64,50 @@ public final class TransmutationCameraClient {
         return transmuted;
     }
 
+    /** 本地玩家被变成的跟随实体ID（未变形时为 -1）。供客户端穿透判定：投药水等右键操作需穿过自己的壳。 */
+    public static int getFollowEntityId() {
+        return followEntityId;
+    }
+
+    /** 是否处于“渲染替换”生物形态（客户端把玩家渲染为 {@link #morphEntityType} 对应的生物）。 */
+    public static boolean isMorphActive() {
+        return transmuted && morphEntityType != null && !morphEntityType.isBlank();
+    }
+
+    /** 渲染替换的目标生物实体类型 id（空串表示非生物形态）。 */
+    public static String getMorphEntityType() {
+        return morphEntityType;
+    }
+
+    /** 渲染替换用的代理生物实体（无则返回 null）。 */
+    public static net.minecraft.world.entity.LivingEntity getMorphProxy() {
+        return morphProxy;
+    }
+
+    /** 渲染替换的目标生物默认碰撞箱尺寸（供 Player#getDimensions 用）；非变形时返回 null。 */
+    public static net.minecraft.world.entity.EntityDimensions morphDimensionsLocal() {
+        if (!isMorphActive()) return null;
+        net.minecraft.resources.ResourceLocation rl =
+            net.minecraft.resources.ResourceLocation.tryParse(morphEntityType);
+        if (rl == null || !net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.containsKey(rl)) {
+            return null;
+        }
+        return net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.get(rl).getDimensions();
+    }
+
     /** 服务端通知变形开始/结束（{@link cn.autoforged.joes_addons_for_abmc.network.TransmutationStatePayload}）。 */
-    public static void onTransmutationState(boolean t, int entityId) {
+    public static void onTransmutationState(boolean t, int entityId, String morphType) {
         transmuted = t;
         followEntityId = t ? entityId : -1;
+        morphEntityType = (t && morphType != null) ? morphType : "";
+        morphProxy = null;
+        // 本地玩家碰撞箱尺寸同步：变形开始/结束都刷新一次，使客户端本地玩家立即采用/释放生物尺寸，
+        // 否则尺寸只在服务端生效，客户端要等姿势变化(下蹲)才重算，导致“必须下蹲才调整”，
+        // 且小碰撞箱穿缝时被客户端默认大碰撞箱拖慢。
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        if (mc.player != null) {
+            mc.player.refreshDimensions();
+        }
         // 重置平滑跟随的基准：新的变形过程从实体当前位置重新起步
         hasLastFollow = false;
         hasPrevPlayer = false;
@@ -71,6 +117,8 @@ public final class TransmutationCameraClient {
     public static void reset() {
         transmuted = false;
         followEntityId = -1;
+        morphEntityType = "";
+        morphProxy = null;
         hasLastFollow = false;
         hasPrevPlayer = false;
     }
@@ -85,7 +133,13 @@ public final class TransmutationCameraClient {
      *    导致完全没有插值、呈现一卡一卡的步进感，故这里必须改用 setPos）。
      */
     public static void tickFollow(Minecraft mc) {
-        if (!transmuted || followEntityId < 0) return;
+        if (!transmuted) return;
+        // 渲染替换形态：维护一个内存代理生物，把玩家渲染成它（无独立跟随实体）
+        if (isMorphActive()) {
+            tickMorphProxy(mc);
+            return;
+        }
+        if (followEntityId < 0) return;
         if (mc.player == null || mc.level == null) return;
         Entity e = mc.level.getEntity(followEntityId);
         if (e == null) return;
@@ -149,5 +203,86 @@ public final class TransmutationCameraClient {
         // 清除可能残留的运动量，避免客户端自身物理把实体拖走造成抖动
         e.setDeltaMovement(Vec3.ZERO);
         e.setNoGravity(true);
+    }
+
+    /** 渲染替换：每客户端 tick 维护一个内存代理生物实体（不进世界），供渲染时把它画在玩家位置。
+     *  关键：勿用 moveTo 每帧复位旋转（会重置 yRotO 等导致头部鬼畜来回看），须把玩家带动画的
+     *  旋转旧值/位移/四肢摆动字段同步给代理，才能正确走路且头不乱转。 */
+    private static void tickMorphProxy(Minecraft mc) {
+        if (mc.player == null || mc.level == null) return;
+        if (morphProxy == null) {
+            net.minecraft.resources.ResourceLocation rl =
+                net.minecraft.resources.ResourceLocation.tryParse(morphEntityType);
+            if (rl == null || !net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.containsKey(rl)) {
+                return;
+            }
+            net.minecraft.world.entity.Entity e =
+                net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.get(rl).create(mc.level);
+            if (e instanceof net.minecraft.world.entity.LivingEntity le) {
+                morphProxy = le;
+            } else {
+                return;
+            }
+        }
+        Player player = mc.player;
+        // 每 tick 强制本地玩家碰撞箱为生物尺寸，抵抗姿势切换/其他 refreshDimensions 用默认箱覆盖（否则钻细缝减速）
+        net.minecraft.world.entity.EntityDimensions md = morphDimensionsLocal();
+        if (md != null) {
+            player.dimensions = md;
+            // 低矮空间：MC 会按玩家身高把其置为“游泳/爬行(crawl)”导致减速；箱已变小可直接站立钻过，
+            // 故非水中却处于 SWIMMING(即爬行) 时强制回站立，以正常走路速度通过一格高空间。
+            if (player.getPose() == net.minecraft.world.entity.Pose.SWIMMING && !player.isInWater()) {
+                player.setPose(net.minecraft.world.entity.Pose.STANDING);
+            }
+        }
+        // 1) 先同步 tick 所依赖的状态
+        morphProxy.setPos(player.getX(), player.getY(), player.getZ());
+        morphProxy.onGround = player.onGround;
+        morphProxy.setDeltaMovement(player.getDeltaMovement());
+        morphProxy.setPortalCooldown(300); // 抑制传送门附近触发传送动画/粒子
+        // 2) 让代理真正 tick 一次：推进其内部默认动画字段（鸡/鹦鹉的 flap/flapSpeed、末影螨摆动等）。
+        //    客户端 tick 只推进动画与状态、不执行移动物理（travel 仅在服务端 aiStep 调用），故安全。
+        try {
+            morphProxy.tick();
+        } catch (Throwable ignored) {
+        }
+        // 防御：极端情况下代理被判定死亡/内部伤害时，重置存活与状态
+        if (morphProxy.getHealth() <= 0.0F) {
+            morphProxy.setHealth(morphProxy.getMaxHealth());
+        }
+        // 3) 用玩家状态覆盖 tick 可能改动的旋转/位置/插值，保证渲染正确
+        morphProxy.moveTo(player.getX(), player.getY(), player.getZ(),
+            player.getYRot(), player.getXRot());
+        morphProxy.onGround = player.onGround;
+        morphProxy.fallDistance = player.fallDistance;
+        // 依赖实体的“渲染年龄(tickCount)”的默认动画持续播放（如末影螨左右摆动、僵尸臂摆动等）。
+        // 以玩家的 tickCount 作为其动画时间轴，随游戏时间推进。
+        morphProxy.tickCount = player.tickCount;
+        // 位置插值旧值
+        morphProxy.xo = player.xo;
+        morphProxy.yo = player.yo;
+        morphProxy.zo = player.zo;
+        morphProxy.xOld = player.xOld;
+        morphProxy.yOld = player.yOld;
+        morphProxy.zOld = player.zOld;
+        // 旋转平滑：同步新旧值，避免头部鬼畜
+        morphProxy.yRotO = player.yRotO;
+        morphProxy.xRotO = player.xRotO;
+        morphProxy.yBodyRotO = player.yBodyRotO;
+        morphProxy.setYBodyRot(player.yBodyRot);
+        morphProxy.yHeadRotO = player.yHeadRotO;
+        morphProxy.setYHeadRot(player.yHeadRot);
+        // 走路动画：位移同步玩家（四肢摆动由 updateWalkAnimation 驱动）
+        morphProxy.walkDistO = player.walkDistO;
+        morphProxy.walkDist = player.walkDist;
+        // 用玩家本帧 XZ 位移驱动代理四肢摆动，从而产生走/跑的腿脚动画（Morph 由玩家移动驱动生物动画）
+        try {
+            float mx = (float) (player.getX() - player.xo);
+            float mz = (float) (player.getZ() - player.zo);
+            ((cn.autoforged.joes_addons_for_abmc.mixin.LivingEntityAccessorMixin) (Object) morphProxy)
+                .jafa_updateWalkAnimation((float) Math.sqrt(mx * mx + mz * mz));
+        } catch (Throwable ignored) {
+        }
+        morphProxy.setDeltaMovement(player.getDeltaMovement());
     }
 }

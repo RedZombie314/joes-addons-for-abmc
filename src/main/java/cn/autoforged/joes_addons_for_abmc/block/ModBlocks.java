@@ -49,6 +49,16 @@ public class ModBlocks {
                 .sound(SoundType.GLASS)
                 .pushReaction(net.minecraft.world.level.material.PushReaction.BLOCK)));
 
+    public static final DeferredBlock<CreeperPortalBlock> CREEPER_PORTAL =
+        BLOCKS.register("creeper_portal",
+            () -> new CreeperPortalBlock(BlockBehaviour.Properties.of()
+                .noCollission()
+                .strength(-1.0F, 3600000.0F)
+                .noLootTable()
+                .lightLevel(state -> 11)
+                .sound(SoundType.GLASS)
+                .pushReaction(net.minecraft.world.level.material.PushReaction.BLOCK)));
+
     // 冰块权杖生成的“霜冰”：½速融化、融化/破坏均还原原方块、破坏时结算被困生物伤害
     public static final DeferredBlock<JobFrostedIceBlock> JOB_FROSTED_ICE =
         BLOCKS.register("job_frosted_ice",

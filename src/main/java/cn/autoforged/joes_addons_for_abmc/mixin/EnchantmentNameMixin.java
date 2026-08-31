@@ -25,7 +25,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public abstract class EnchantmentNameMixin {
 
     @Inject(method = "getFullname", at = @At("HEAD"), cancellable = true)
-    private static void jafm_romanFullname(Holder<Enchantment> enchantment, int level,
+    private static void jafa_romanFullname(Holder<Enchantment> enchantment, int level,
                                            CallbackInfoReturnable<Component> cir) {
         MutableComponent mutablecomponent = enchantment.value().description().copy();
         if (enchantment.is(EnchantmentTags.CURSE)) {

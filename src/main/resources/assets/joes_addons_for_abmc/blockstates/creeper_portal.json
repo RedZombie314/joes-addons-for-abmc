@@ -1,0 +1,10 @@
+{
+  "variants": {
+    "axis=x": {
+      "model": "joes_addons_for_abmc:block/creeper_portal_ns"
+    },
+    "axis=z": {
+      "model": "joes_addons_for_abmc:block/creeper_portal_ew"
+    }
+  }
+}
