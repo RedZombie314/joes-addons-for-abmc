@@ -1,0 +1,25 @@
+{
+    "vertex": "joes_addons_for_abmc:omega_absorb",
+    "fragment": "joes_addons_for_abmc:omega_absorb",
+    "attributes": [
+        "Position"
+    ],
+    "samplers": [
+        { "name": "DiffuseSampler" }
+    ],
+    "uniforms": [
+        { "name": "ProjMat", "type": "matrix4x4", "count": 16, "values": [ 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0 ] },
+        { "name": "OutSize", "type": "float", "count": 2, "values": [ 1.0, 1.0 ] },
+        { "name": "ElapsedTime", "type": "float", "count": 1, "values": [ 0.0 ] },
+        { "name": "Count", "type": "float", "count": 1, "values": [ 2.0 ] },
+        { "name": "StartPos0X", "type": "float", "count": 1, "values": [ 0.0 ] },
+        { "name": "StartPos0Y", "type": "float", "count": 1, "values": [ 0.0 ] },
+        { "name": "StartPos0Z", "type": "float", "count": 1, "values": [ 0.0 ] },
+        { "name": "StartPos1X", "type": "float", "count": 1, "values": [ 0.0 ] },
+        { "name": "StartPos1Y", "type": "float", "count": 1, "values": [ 0.0 ] },
+        { "name": "StartPos1Z", "type": "float", "count": 1, "values": [ 0.0 ] },
+        { "name": "StartPos2X", "type": "float", "count": 1, "values": [ 0.0 ] },
+        { "name": "StartPos2Y", "type": "float", "count": 1, "values": [ 0.0 ] },
+        { "name": "StartPos2Z", "type": "float", "count": 1, "values": [ 0.0 ] }
+    ]
+}

@@ -109,6 +109,8 @@ public class ModCreativeTab {
                 output.accept(ModItems.PRISMARINE_ARROW.get());
                 output.accept(ModItems.GAME_ICON.get());
                 output.accept(ModItems.OMEGA_GAME_ICON.get());
+                // 女巫Boss 刷怪蛋：右键直接召唤女巫Boss
+                output.accept(ModItems.WITCH_BOSS_SPAWN_EGG.get());
 
                 // ===== 方块 =====
                 output.accept(new ItemStack(ModBlocks.HORIZONTAL_DRIPSTONE.get()));

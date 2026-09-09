@@ -181,17 +181,22 @@ import net.minecraft.world.entity.npc.WanderingTrader;
 import net.minecraft.world.food.FoodData;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.AbstractArrow;
+import net.minecraft.world.entity.projectile.Arrow;
 import net.minecraft.world.entity.projectile.DragonFireball;
 import net.minecraft.world.entity.projectile.Fireball;
 import net.minecraft.world.entity.projectile.FireworkRocketEntity;
 import net.minecraft.world.entity.projectile.LargeFireball;
+import net.minecraft.world.entity.projectile.LlamaSpit;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.projectile.ShulkerBullet;
 import net.minecraft.world.entity.projectile.SmallFireball;
+import net.minecraft.world.entity.projectile.Snowball;
 import net.minecraft.world.entity.projectile.ThrowableProjectile;
+import net.minecraft.world.entity.projectile.ThrownEnderpearl;
 import net.minecraft.world.entity.projectile.ThrownPotion;
 import net.minecraft.world.entity.projectile.ThrownTrident;
 import net.minecraft.world.entity.projectile.WitherSkull;
+import net.minecraft.world.entity.projectile.windcharge.WindCharge;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.entity.TamableAnimal;
 import net.minecraft.world.item.ItemStack;
@@ -340,12 +345,14 @@ public class ModMain {
     private static final String SELLS_COMMAND_BLOCK_TAG = "SellsCommandBlock";
     private static final String COMMAND_BLOCK_OFFERED_TAG = "CommandBlockTradeOffered";
     private static final String COMMAND_BLOCK_SOLD_TAG = "CommandBlockTradeSold";
+    /** 预制决定标签：在村民成为图书管理员时决定是否将来能卖命令方块，用于提前发光。 */
+    private static final String COMMAND_BLOCK_DECIDED_TAG = "CommandBlockDecided";
     // 大师级交易每格放入 64 个绿宝石块，共 27 格 = 1728 个
     private static final int COMMAND_BLOCK_TRADE_SLOTS = 27;
     private static final int EMERALD_BLOCKS_PER_SLOT = 64;
 
     // --- 女巫小屋（沼泽小屋）·女巫 Boss 变种：1% 概率取代小屋女巫生成；200 座小屋未出现则第 201 座必出 ---
-    private static final String WITCH_BOSS_TAG = "jafa_is_witch_boss";
+    public static final String WITCH_BOSS_TAG = "jafa_is_witch_boss";
     // 女巫 Boss 玩家察觉（一次性）：首次将「玩家」（生存/冒险模式）锁定为攻击目标时写入。
     // 仅作为“发现过玩家”的凭证：发现后第一次进入「要喝迅捷药水」的场景时（WitchMixin 中）进行一次
     // 70% 隐身 roll（无论成败只此一次），之后所有场景均为常规 10% roll。
@@ -377,17 +384,19 @@ public class ModMain {
     /** 已登记的女巫Boss UUID 集：由 {@link #updateWitchBossBar} 每刻遍历，替代“全世界扫描所有女巫”。
      *  每个被标记为女巫Boss 的实体在此登记，避免每刻 getEntitiesOfClass 全图遍历造成卡顿。 */
     private static final Set<UUID> WITCH_BOSS_TRACKED = ConcurrentHashMap.newKeySet();
+    /** 血条跟踪中但实体暂时查不到的连续 tick 计数（宽限 200 tick 防时序误删）。 */
+    private static final java.util.Map<UUID, Integer> WITCH_BOSS_MISS_TICKS = new ConcurrentHashMap<>();
     /** “发现玩家”需连续索敌的刻数，避免召唤瞬间/擦肩而过就触发（防止立刻喝隐身药水）。 */
     private static final String WITCH_BOSS_NOTICE_TICKS_TAG = "jafa_witch_boss_notice_ticks";
     private static final int WITCH_BOSS_NOTICE_REQUIRED_TICKS = 40; // 2秒
     // 女巫Boss 随身药水量计数器：变形药水36 / 变形解药12 / 传送药水9 / 隐身药水6（喷溅与直饮共享）
-    private static final String WITCH_BOSS_AMMO_TRANSMUTATION_TAG = "jafa_witch_boss_ammo_transmutation";
-    private static final String WITCH_BOSS_AMMO_ANTIDOTE_TAG = "jafa_witch_boss_ammo_antidote";
-    private static final String WITCH_BOSS_AMMO_TRANSPORT_TAG = "jafa_witch_boss_ammo_transport";
+    public static final String WITCH_BOSS_AMMO_TRANSMUTATION_TAG = "jafa_witch_boss_ammo_transmutation";
+    public static final String WITCH_BOSS_AMMO_ANTIDOTE_TAG = "jafa_witch_boss_ammo_antidote";
+    public static final String WITCH_BOSS_AMMO_TRANSPORT_TAG = "jafa_witch_boss_ammo_transport";
     private static final String WITCH_BOSS_AMMO_INVISIBILITY_TAG = "jafa_witch_boss_ammo_invisibility";
-    private static final int WITCH_BOSS_AMMO_TRANSMUTATION_MAX = 36;
-    private static final int WITCH_BOSS_AMMO_ANTIDOTE_MAX = 12;
-    private static final int WITCH_BOSS_AMMO_TRANSPORT_MAX = 9;
+    public static final int WITCH_BOSS_AMMO_TRANSMUTATION_MAX = 36;
+    public static final int WITCH_BOSS_AMMO_ANTIDOTE_MAX = 12;
+    public static final int WITCH_BOSS_AMMO_TRANSPORT_MAX = 9;
     private static final int WITCH_BOSS_AMMO_INVISIBILITY_MAX = 6;
     /** 任一种药水低于该余量时返回小屋补给。 */
     private static final int WITCH_BOSS_AMMO_LOW = 2;
@@ -423,25 +432,73 @@ public class ModMain {
     private static final long WITCH_BOSS_FLINT_RECORD_INTERVAL = 100L; // 5秒
     private static final long WITCH_BOSS_FLINT_USE_MIN = 60L;   // 3秒
     private static final long WITCH_BOSS_FLINT_USE_JITTER = 21L; // +0~20刻 → 3~4秒
+    /** 第三阶段打火石：女巫需先靠近到目标物品的这个距离后才真正点火。 */
+    private static final double WITCH_BOSS_FLINT_IGNITE_RANGE = 4.0D;
     /** 女巫Boss自我变形成生物后，生物实体携带此标记：需要往脚下丢变形解药让自己还原为 witchboss 本体。 */
     private static final String WITCH_BOSS_SELF_TRANS_TAG = "jafa_witch_boss_self_transmuted";
+    /** 玩家"渲染替换"变身 NBT 持久化：变形形态（TransmutationForm ordinal）。 */
+    private static final String MORPH_FORM_TAG = "jafa_morph_form";
+    /** 玩家"渲染替换"变身 NBT 持久化：变形目标类型 ID（如 minecraft:creeper）。 */
+    private static final String MORPH_TYPE_TAG = "jafa_morph_type";
+    /** 玩家"渲染替换"变身 NBT 持久化：剩余倒计时（刻）。 */
+    private static final String MORPH_REMAINING_TAG = "jafa_morph_remaining";
+    /** 玩家"渲染替换"变身 NBT 持久化：玩家原始最大生命值。 */
+    private static final String MORPH_ORIGINAL_HEALTH_TAG = "jafa_morph_original_health";
+    /** 玩家"渲染替换"变身 NBT 持久化：目标生物最大生命值。 */
+    private static final String MORPH_MOB_HEALTH_TAG = "jafa_morph_mob_health";
+    /** 女巫Boss阶段1血条·累计伤害池字段（float）。阶段1血条容量=floor(最大生命/3)，受击伤害与成功解除自身变形(每成功-1/6)共同耗尽→进阶段2。 */
+    private static final String WITCH_BOSS_STAGE1_DMG_TAG = "jafa_witch_boss_stage1_dmg";
+    /** 女巫Boss阶段2血条：累计伤害池（float）。阶段2血条容量=floor(最大生命*2/5)，耗尽即进入阶段3。 */
+    private static final String WITCH_BOSS_STAGE2_DMG_TAG = "jafa_witch_boss_stage2_dmg";
+    /** 阶段2血条容量比例：最大生命 × 2/5。 */
+    private static final double WITCH_BOSS_STAGE2_CAPACITY_RATIO = 2.0 / 5.0;
+    /** 女巫Boss阶段3血条：累计原始伤害池（float），不受回血影响。阶段3血条容量=floor(最大生命×2/3)，耗尽即血条回零。 */
+    private static final String WITCH_BOSS_STAGE3_DMG_TAG = "jafa_witch_boss_stage3_dmg";
+    /** 阶段3血条容量比例：最大生命 × 2/3。 */
+    private static final double WITCH_BOSS_STAGE3_CAPACITY_RATIO = 2.0 / 3.0;
+    /** 女巫Boss 自变形形态（生物/方块/物品）被摧毁时，损失的最大生命比例（10%）。 */
+    private static final double WITCH_BOSS_SELF_FORM_DEATH_PENALTY = 0.1D;
+    /** entityNbt 顶层标记：原实体是女巫Boss（用于其自变形形态被摧毁时按比例扣血而非秒杀）。 */
+    private static final String WITCH_BOSS_ORIGIN_TAG = "jafa_was_witch_boss_origin";
     /** 女巫Boss血量倍率：普通女巫的 10 倍（普通女巫基础 26 → 260）。 */
     private static final double WITCH_BOSS_HEALTH_MULTIPLIER = 10.0D;
     // 女巫Boss近身逃逸（阶段1/2）：玩家靠得太近时向脚下丢点传送药水，传送到离玩家15~20格处
     private static final String WITCH_BOSS_TP_CD_TAG = "jafa_witch_boss_tp_cd";
     /** 触发逃逸的玩家达到距离（格）：太近判定。 */
-    private static final double WITCH_BOSS_TP_AVOID_RANGE = 3.0D;
+    private static final double WITCH_BOSS_TP_AVOID_RANGE = 4.0D;
     /** 传送目标距玩家的最小/最大距离（格）。 */
     private static final double WITCH_BOSS_TP_DIST_MIN = 10.0D;
     private static final double WITCH_BOSS_TP_DIST_MAX = 15.0D;
     /** 逃逸冷却（刻）：防止连续每刻触发刷距离。 */
-    private static final long WITCH_BOSS_TP_COOLDOWN = 120L;
+    private static final long WITCH_BOSS_TP_COOLDOWN = 40L;
+    /** 女巫Boss离家太远（>50格）时传送回小屋附近（5格内）。 */
+    private static final double WITCH_BOSS_MAX_HOME_DISTANCE = 50.0D;
+    /** 女巫变形不利黑名单：女巫被变形药水变成这些生物时才会对自己丢变形解药。 */
+    private static final Set<String> WITCH_BOSS_BAD_MORPH_BLACKLIST = Set.of(
+        "minecraft:sheep", "minecraft:pig", "minecraft:chicken",
+        "minecraft:cod", "minecraft:salmon", "minecraft:llama", "minecraft:cow"
+    );
     /** 玩家被变形为 TNT：女巫持打火石点燃的距离（格）。 */
     private static final double WITCH_BOSS_TNT_IGNITE_RANGE = 4.0D;
     /** 点燃的 TNT 的 fuse 时长（刻）。 */
     private static final int WITCH_BOSS_TNT_FUSE = 200;
     /** 点燃 TNT 实体上记录的目标玩家 UUID 的 tag。 */
     private static final String WITCH_BOSS_TNT_PLAYER_TAG = "jafa_witch_boss_tnt_player";
+    /** 阶段2喝治疗药水：上次喝药的游戏刻 tag + 冷却（刻）。 */
+    private static final String WITCH_BOSS_HEAL_LAST_TAG = "jafa_witch_boss_stage2_heal_time";
+    private static final long WITCH_BOSS_HEAL_COOLDOWN = 100L; // 5秒
+    /** 阶段3若着火：喝抗火药水的冷却（刻）与上次时间 tag。 */
+    private static final String WITCH_BOSS_FIRERES_LAST_TAG = "jafa_witch_boss_stage3_fireres_time";
+    private static final long WITCH_BOSS_FIRERES_COOLDOWN = 60L; // 3秒
+    /** 女巫Boss阶段1血条：每刻恒定衰减量（0.1/游戏刻）。多次攻击不加速，可与其他扣除机制并存。 */
+    private static final float WITCH_BOSS_STAGE1_TICK_DRAIN = 0.1F;
+    /** 收到“玩家所变生物”命中的上次时间 tag，及之后持续衰减的时间窗（刻）。 */
+    private static final String WITCH_BOSS_STAGE1_DRAIN_TAG = "jafa_witch_boss_stage1_drain_time";
+    private static final String WITCH_BOSS_STAGE1_DRAIN_ACTIVE_TAG = "jafa_witch_boss_stage1_drain_active";
+    private static final long WITCH_BOSS_STAGE1_DRAIN_WINDOW = 100L; // 5秒
+    /** 女巫Boss阶段1·被所变生物攻击时的反击（投掷阶段2方块变形药水）冷却（刻）与上次时间 tag。 */
+    private static final String WITCH_BOSS_RETALIATE_TAG = "jafa_witch_boss_retaliate_time";
+    private static final long WITCH_BOSS_RETALIATE_COOLDOWN = 40L; // 2秒
     private static final int WITCH_BOSS_PITY_HUTS = 200;
     // 拥有女巫 Boss 的小屋周围多少格内不再自然刷新女巫（结构自带的女巫 Boss 除外）
     private static final int WITCH_BOSS_NO_SPAWN_RADIUS = 100;
@@ -461,13 +518,27 @@ public class ModMain {
         public int librarianCount = 0;
         /** 已生成过女巫 Boss 的小屋所在区块（ChunkPos.asLong），这些小屋不再自然刷新女巫。 */
         public final Set<Long> bossHutChunks = new HashSet<>();
+        /** 调试模式：第一只图书管理员是否已处理。 */
+        public boolean debugLibrarianDone = false;
+        /** 调试模式：第一座女巫小屋是否已处理。 */
+        public boolean debugWitchHutDone = false;
+        /** 待放置的女巫Boss小屋：每项 [originX, originY, originZ, bossSpawned(0/1)]。
+         *  世界生成期间（postProcess）只登记；区块加载后由 onChunkLoad 逐区块放置模板/箱子/女巫，
+         *  全部覆盖区块加载且女巫已生成后移除。 */
+        public final java.util.List<int[]> pendingHuts = new java.util.ArrayList<>();
 
         public static SharedCounts load(CompoundTag tag, HolderLookup.Provider registries) {
             SharedCounts c = new SharedCounts();
             c.witchHutCount = tag.getInt("witch_hut_count");
             c.librarianCount = tag.getInt("librarian_count");
+            c.debugLibrarianDone = tag.getBoolean("debug_librarian_done");
+            c.debugWitchHutDone = tag.getBoolean("debug_witch_hut_done");
             for (long l : tag.getLongArray("boss_hut_chunks")) {
                 c.bossHutChunks.add(l);
+            }
+            int[] huts = tag.getIntArray("pending_huts");
+            for (int i = 0; i + 3 < huts.length; i += 4) {
+                c.pendingHuts.add(new int[]{huts[i], huts[i + 1], huts[i + 2], huts[i + 3]});
             }
             return c;
         }
@@ -476,12 +547,23 @@ public class ModMain {
         public CompoundTag save(CompoundTag tag, HolderLookup.Provider registries) {
             tag.putInt("witch_hut_count", this.witchHutCount);
             tag.putInt("librarian_count", this.librarianCount);
+            tag.putBoolean("debug_librarian_done", this.debugLibrarianDone);
+            tag.putBoolean("debug_witch_hut_done", this.debugWitchHutDone);
             long[] chunks = new long[this.bossHutChunks.size()];
             int i = 0;
             for (long l : this.bossHutChunks) {
                 chunks[i++] = l;
             }
             tag.putLongArray("boss_hut_chunks", chunks);
+            int[] huts = new int[this.pendingHuts.size() * 4];
+            for (int j = 0; j < this.pendingHuts.size(); j++) {
+                int[] h = this.pendingHuts.get(j);
+                huts[j * 4] = h[0];
+                huts[j * 4 + 1] = h[1];
+                huts[j * 4 + 2] = h[2];
+                huts[j * 4 + 3] = h[3];
+            }
+            tag.putIntArray("pending_huts", huts);
             return tag;
         }
     }
@@ -491,6 +573,74 @@ public class ModMain {
         ServerLevel overworld = level.getServer().overworld();
         return overworld.getDataStorage().computeIfAbsent(
             new SavedData.Factory<>(SharedCounts::new, SharedCounts::load), SHARED_COUNTS_DATA_NAME);
+    }
+
+    // === 世界生成 worker 线程 ↔ 主线程 的女巫小屋决策通道 ===
+    // postProcess 在世界生成 worker 线程执行，严禁直接访问 SavedData（非线程安全，会导致
+    // 区块生成 future 永不完成 → 客户端等不到地形 → 卡死）。worker 只读写以下并发结构，
+    // 主线程 tick 时统一同步进 SharedCounts 持久化。
+    /** 已替换为 Boss 小屋的区块（ChunkPos.asLong），worker 线程去重/阻止原版小屋重复生成。 */
+    public static final java.util.Set<Long> GEN_BOSS_HUT_CHUNKS = ConcurrentHashMap.newKeySet();
+    /** 连续未出现 Boss 的小屋计数（保底用），worker 线程读写。-1 表示尚未从存档载入。 */
+    public static final java.util.concurrent.atomic.AtomicInteger GEN_WITCH_HUT_COUNT =
+        new java.util.concurrent.atomic.AtomicInteger(-1);
+    /** debug 模式第一座小屋是否已占用。 */
+    public static final java.util.concurrent.atomic.AtomicBoolean GEN_DEBUG_HUT_DONE =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+    /** worker 线程登记的待放置小屋原点队列：每项 [ox,oy,oz]，主线程 tick 时刷入 SharedCounts。 */
+    public static final java.util.Queue<int[]> GEN_PENDING_HUTS = new java.util.concurrent.ConcurrentLinkedQueue<>();
+    /** 并发状态是否已从存档载入（仅主线程置位）。 */
+    private static volatile boolean GEN_STATE_LOADED = false;
+
+    /** 主线程：首次 tick 时把 SharedCounts 载入并发状态。 */
+    private static void ensureGenStateLoaded(ServerLevel overworld) {
+        if (GEN_STATE_LOADED) return;
+        synchronized (ModMain.class) {
+            if (GEN_STATE_LOADED) return;
+            SharedCounts c = getSharedCounts(overworld);
+            GEN_BOSS_HUT_CHUNKS.addAll(c.bossHutChunks);
+            GEN_WITCH_HUT_COUNT.set(c.witchHutCount);
+            GEN_DEBUG_HUT_DONE.set(c.debugWitchHutDone);
+            // 残留 pending（上次未放置完）直接保留：重新入队
+            GEN_STATE_LOADED = true;
+        }
+    }
+
+    /** 主线程每 tick：把 worker 产生的决策结果同步进 SharedCounts 持久化。 */
+    private static void syncGenStateToSharedCounts(ServerLevel overworld) {
+        ensureGenStateLoaded(overworld);
+        SharedCounts c = getSharedCounts(overworld);
+        boolean dirty = false;
+        int[] h;
+        while ((h = GEN_PENDING_HUTS.poll()) != null) {
+            boolean exists = false;
+            for (int[] p : c.pendingHuts) {
+                if (p[0] == h[0] && p[1] == h[1] && p[2] == h[2]) { exists = true; break; }
+            }
+            if (!exists) {
+                c.pendingHuts.add(new int[]{h[0], h[1], h[2], 0});
+                dirty = true;
+            }
+        }
+        if (c.witchHutCount != GEN_WITCH_HUT_COUNT.get()) {
+            c.witchHutCount = GEN_WITCH_HUT_COUNT.get();
+            dirty = true;
+        }
+        if (c.debugWitchHutDone != GEN_DEBUG_HUT_DONE.get()) {
+            c.debugWitchHutDone = GEN_DEBUG_HUT_DONE.get();
+            dirty = true;
+        }
+        if (!c.bossHutChunks.equals(GEN_BOSS_HUT_CHUNKS)) {
+            c.bossHutChunks.clear();
+            c.bossHutChunks.addAll(GEN_BOSS_HUT_CHUNKS);
+            dirty = true;
+        }
+        if (dirty) c.setDirty();
+    }
+
+    /** 公开的静态入口，供 mixin 等外部调用者获取共享计数。 */
+    public static SharedCounts getSharedCountsStatic(ServerLevel level) {
+        return getSharedCounts(level);
     }
 
     private static final Set<UUID> blockingPlayers = new HashSet<>();
@@ -646,8 +796,34 @@ public class ModMain {
         new ConcurrentHashMap<>();
     // 玩家变形形态信息：决定伤害免疫规则与实体缩放
     private static final Map<UUID, PlayerTransmutationInfo> PLAYER_TRANSMUTATION_INFO = new ConcurrentHashMap<>();
+    // 玩家被女巫Boss变形的NBT标记：写在玩家 persistentData 中，不受服务器重启影响。
+    private static final String WITCH_TRANSFORMED_FLAG = "jafa_transmuted_by_witch";
     // 玩家变身后的原始 SCALE 属性值（复原时恢复）
     private static final Map<UUID, Double> PLAYER_ORIGINAL_SCALE = new ConcurrentHashMap<>();
+
+    // ==================== 公开访问方法（供 AwakeningFallingBlockEntity 等外部类使用） ====================
+
+    /** 检查 UUID 对应的玩家是否处于变形状态。 */
+    public static boolean isPlayerTransmuted(UUID uuid) {
+        return TRANSMUTED_ENTITIES.contains(uuid);
+    }
+
+    /** 获取玩家变形信息（null 表示未变形）。 */
+    public static PlayerTransmutationInfo getPlayerTransmutationInfo(UUID uuid) {
+        return PLAYER_TRANSMUTATION_INFO.get(uuid);
+    }
+
+    /** 检查玩家是否处被变形为方块/物品（需要解药帮助）。 */
+    public static boolean isPlayerTransmutedAsBlockOrItem(UUID uuid) {
+        PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(uuid);
+        return info != null && (info.form() == TransmutationForm.BLOCK || info.form() == TransmutationForm.ITEM);
+    }
+
+    /** 检查玩家是否被变形为生物。 */
+    public static boolean isPlayerTransmutedAsMob(UUID uuid) {
+        PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(uuid);
+        return info != null && info.form() == TransmutationForm.MOB;
+    }
     // 玩家“渲染替换”变身的生命信息（玩家UUID -> 原始最大生命值 / 生物最大生命值），
     // 变形开始把玩家最大生命设为生物的最大生命并按比例换算当前生命；复原时恢复并按比例换算回来（向上取整）。
     private static final Map<UUID, MorphHealthInfo> MORPH_HEALTH_INFO = new ConcurrentHashMap<>();
@@ -655,6 +831,19 @@ public class ModMain {
     /** 变形生命换算信息：originalMaxHealth=玩家变形前的最大生命值；mobMaxHealth=目标生物的最大生命值。 */
     record MorphHealthInfo(float originalMaxHealth, float mobMaxHealth) {
     }
+
+    // 玩家"渲染替换"变身的战斗属性信息（攻击力+护甲值），
+    // 变形时保存玩家原始值并应用生物的值；复原时恢复。
+    private static final Map<UUID, MorphCombatInfo> MORPH_COMBAT_INFO = new ConcurrentHashMap<>();
+
+    record MorphCombatInfo(double originalAttackDamage, double originalArmor) {
+    }
+
+    // 玩家变形为飞行生物时，记录原始 mayfly 状态以便复原
+    private static final Map<UUID, Boolean> MORPH_FLIGHT_ORIGINAL = new ConcurrentHashMap<>();
+
+    // 玩家变形为生物后的弹射物冷却时间（记录上次发射的游戏刻）
+    private static final Map<UUID, Long> MORPH_PROJECTILE_COOLDOWN = new ConcurrentHashMap<>();
 
     // /revive 机制：被 /kill 命令杀死的实体存档。外层键为实体 id（如 minecraft:pig），
     // 内层为多次 /kill 累计存入的多份实体 NBT（与变形药水存储格式一致）。
@@ -672,13 +861,39 @@ public class ModMain {
     ) {}
 
     // 生物壳/玩家空壳的变形数据：isPlayerShell 决定死亡播报用“玩家”还是“生物”体验卡消息
+    // originalMaxHealth / shellMaxHealth / currentHealth：像玩家一样按比例换算血量时使用。
+    //   originalMaxHealth = 原生物的最大生命；shellMaxHealth = 壳形态（目标生物）的最大生命；
+    //   currentHealth 每刻刷新为壳当前生命。复原时用 currentHealth/shellMaxHealth*originalMaxHealth 换算回去。
+    //   玩家空壳 / 服务端重载重建等无法确定最大生命时，两 max 传 <=0 以禁用该换算。
     record LivingShellData(
         CompoundTag entityNbt,
         java.util.UUID playerUuid,
         java.util.UUID killerUuid,
         int remainingTicks,
-        boolean isPlayerShell
+        boolean isPlayerShell,
+        float originalMaxHealth,
+        float shellMaxHealth,
+        float currentHealth
     ) {}
+
+    // 进阶变形时从“已是生物/玩家空壳”的目标身上取出的原始归属数据，
+    // 让下一阶段的变形保存最初玩家/生物的 NBT 与归属，从而解药能一步还原回最初形态。
+    record CarriedShellOrigin(
+        CompoundTag entityNbt,
+        java.util.UUID playerUuid,
+        float originalMaxHealth,
+        float shellMaxHealth,
+        float currentHealth
+    ) {}
+
+    // 若目标实体已是跟踪中的生物/玩家空壳，则取出其最初 NBT 与归属并移除旧跟踪记录；否则返回 null。
+    private static CarriedShellOrigin takeCarriedShellOrigin(Level level, LivingEntity entity) {
+        LivingShellData sd = LIVING_SHELLS.get(entity.getUUID());
+        if (sd == null) return null;
+        LIVING_SHELLS.remove(entity.getUUID());
+        return new CarriedShellOrigin(sd.entityNbt(), sd.playerUuid(),
+            sd.originalMaxHealth(), sd.shellMaxHealth(), sd.currentHealth());
+    }
 
     // 玩家变形形态：物品 / 方块 / 玩家空壳 / 生物壳
     enum TransmutationForm { ITEM, BLOCK, PLAYER_SHELL, MOB }
@@ -799,6 +1014,7 @@ public class ModMain {
         ModDamageTypes.DAMAGE_TYPES.register(modEventBus);
         ModCreativeTab.CREATIVE_MODE_TABS.register(modEventBus);
         cn.autoforged.joes_addons_for_abmc.worldgen.ModPoiTypes.POI_TYPES.register(modEventBus);
+        cn.autoforged.joes_addons_for_abmc.loot.ModLootFunctions.LOOT_FUNCTIONS.register(modEventBus);
 
         modContainer.registerConfig(Type.COMMON, ModConfig.SPEC);
 
@@ -830,6 +1046,10 @@ public class ModMain {
         NeoForge.EVENT_BUS.addListener(ModMain::onEntityJoinLevel);
         NeoForge.EVENT_BUS.addListener(ModMain::onBlockPlaced);
         NeoForge.EVENT_BUS.addListener(ModMain::onEntityTickPost);
+        NeoForge.EVENT_BUS.addListener(ModMain::onTransmutedRightClickGuard);
+        NeoForge.EVENT_BUS.addListener(ModMain::onMorphProjectileRightClick);
+        NeoForge.EVENT_BUS.addListener(ModMain::onMorphEntityInteract);
+        NeoForge.EVENT_BUS.addListener(ModMain::onMorphEntityInteractSpecific);
         NeoForge.EVENT_BUS.addListener(ModMain::onLivingBreathe);
         NeoForge.EVENT_BUS.addListener(ModMain::onRegisterBrewingRecipes);
         NeoForge.EVENT_BUS.addListener(ModMain::onMobEffectAdded);
@@ -1126,6 +1346,24 @@ public class ModMain {
             cn.autoforged.joes_addons_for_abmc.network.DebugStringPayload.STREAM_CODEC,
             (payload, context) -> cn.autoforged.joes_addons_for_abmc.client.DebugStringRenderer.activate(payload)
         );
+        // 金色命中闪光：/jafa gold_hit_flash 触发，客户端播放金色四角星后处理闪光。
+        registrar.playToClient(
+            cn.autoforged.joes_addons_for_abmc.network.GoldHitFlashPayload.TYPE,
+            cn.autoforged.joes_addons_for_abmc.network.GoldHitFlashPayload.STREAM_CODEC,
+            (payload, context) -> cn.autoforged.joes_addons_for_abmc.client.GoldHitFlashRenderer.activate()
+        );
+        // Omega 着色器测试：/jafa omega_shader 触发，客户端播放“点汇聚到目标”的后处理着色器视觉。
+        registrar.playToClient(
+            cn.autoforged.joes_addons_for_abmc.network.OmegaShaderPayload.TYPE,
+            cn.autoforged.joes_addons_for_abmc.network.OmegaShaderPayload.STREAM_CODEC,
+            (payload, context) -> cn.autoforged.joes_addons_for_abmc.client.OmegaShaderRenderer.activate()
+        );
+        // 变形生物弹射物：客户端→服务端
+        registrar.playToServer(
+            cn.autoforged.joes_addons_for_abmc.network.MorphProjectilePayload.TYPE,
+            cn.autoforged.joes_addons_for_abmc.network.MorphProjectilePayload.STREAM_CODEC,
+            (payload, context) -> handleMorphProjectile((ServerPlayer) context.player())
+        );
     }
 
     // 是否已因完成全部原版成就而赠送过权杖
@@ -1148,6 +1386,9 @@ public class ModMain {
     private static final String REDSTONE_STAFF_CHARGE_TAG = "jafa_redstone_staff_charge";
     /** 变形物品被摧毁/被漏斗吸走时重建并击杀的原生物标记：跳过 /kill 存档（防内存膨胀与卡顿）。 */
     private static final String TRANSMUTATION_REKILL_TAG = "jafa_transmutation_rekill";
+    // 滞留变形药水生成的效果云上记录的变形目标类型（直接写进实体的 PersistentData，避免依赖
+    // 易受时序影响的 TRANSMUTATION_POTION_ITEM_TYPES 内存表，确保“被状态效果云影响到也能变形”）。
+    private static final String CLOUD_ITEM_TYPE_TAG = "jafa_cloud_item_type";
 
     /** 疯狂模式给生物自体附魔后，记录“给予该状态效果的权杖使用者”（忠诚传送用）。 */
     private static final String ENCHANT_STAFF_GRANTER_TAG = "jafa_enchant_staff_granter";
@@ -1338,6 +1579,8 @@ public class ModMain {
         // 玩家中途退出存档再进入时，若仍处于变形状态（物品/方块/壳仍在世界中），重新同步客户端状态，
         // 避免平滑跟随与彻底隐身失效。
         resyncTransmutationState(serverPlayer);
+        // 恢复"渲染替换"变身状态（NBT 持久化）：退出时保存的形态、倒计时和生命值信息
+        restoreMorphStateFromNbt(serverPlayer);
         // 容错：若玩家并非变形状态（如服务器重启后变形数据已清空），但 SCALE 属性残留了缩放值，
         // 强制恢复为默认 1.0，避免玩家保持微小体型。
         if (!TRANSMUTED_ENTITIES.contains(serverPlayer.getUUID())) {
@@ -1543,6 +1786,34 @@ public class ModMain {
         "/attribute @p generic.shield_size base set 7";
     /** 指令 Text Display 实体的持久数据标记：用于区块加载时识别并清理跨存档遗留实体（退出存档时未销毁、随区块保存的残留）。 */
     private static final String COMMAND_TEXT_TAG = "jafa_command_text";
+
+    /** 觉醒药水下落方块实体持久数据标记：记录激活者（投掷此觉醒药水的人）的 UUID。 */
+    public static final String AWAKENING_OWNER_TAG = "jafa_awakening_owner";
+
+    /** 可被“唤醒”的方块白名单：箱子、酿造台、音符盒、各类头颅（含玩家头）、工作台、命令方块。 */
+    private static final java.util.Set<net.minecraft.world.level.block.Block> AWAKENABLE_BLOCKS =
+        java.util.Set.of(
+            net.minecraft.world.level.block.Blocks.CHEST,
+            net.minecraft.world.level.block.Blocks.BREWING_STAND,
+            net.minecraft.world.level.block.Blocks.NOTE_BLOCK,
+            net.minecraft.world.level.block.Blocks.PLAYER_HEAD,
+            net.minecraft.world.level.block.Blocks.PLAYER_WALL_HEAD,
+            net.minecraft.world.level.block.Blocks.ZOMBIE_HEAD,
+            net.minecraft.world.level.block.Blocks.ZOMBIE_WALL_HEAD,
+            net.minecraft.world.level.block.Blocks.SKELETON_SKULL,
+            net.minecraft.world.level.block.Blocks.SKELETON_WALL_SKULL,
+            net.minecraft.world.level.block.Blocks.CREEPER_HEAD,
+            net.minecraft.world.level.block.Blocks.CREEPER_WALL_HEAD,
+            net.minecraft.world.level.block.Blocks.DRAGON_HEAD,
+            net.minecraft.world.level.block.Blocks.DRAGON_WALL_HEAD,
+            net.minecraft.world.level.block.Blocks.WITHER_SKELETON_SKULL,
+            net.minecraft.world.level.block.Blocks.WITHER_SKELETON_WALL_SKULL,
+            net.minecraft.world.level.block.Blocks.PIGLIN_HEAD,
+            net.minecraft.world.level.block.Blocks.PIGLIN_WALL_HEAD,
+            net.minecraft.world.level.block.Blocks.CRAFTING_TABLE,
+            net.minecraft.world.level.block.Blocks.COMMAND_BLOCK,
+            net.minecraft.world.level.block.Blocks.CHAIN_COMMAND_BLOCK,
+            net.minecraft.world.level.block.Blocks.REPEATING_COMMAND_BLOCK);
 
     /**
      * 客户端请求切换命令方块权杖能力（无 &lt;-&gt; 击杀 &lt;-&gt; 抓取 &lt;-&gt; 启用/禁用AI &lt;-&gt; 护盾 循环），
@@ -3506,10 +3777,14 @@ public class ModMain {
 
     private static void onPlayerLogout(PlayerEvent.PlayerLoggedOutEvent event) {
         UUID uuid = event.getEntity().getUUID();
-        // 玩家下线时若仍处于变形状态（物品/方块/壳），强制终止变形并清理跟踪状态：
-        // 否则 TRANSMUTED_ENTITIES 会残留玩家 UUID，且变形实体随关卡卸载后跟踪数据丢失，
-        // 重进后 onMobEffectAdded 会一直被 IN_TRANSMUTED 拦截，无法再次把自己变成物品/方块。
         if (event.getEntity() instanceof ServerPlayer sp) {
+            // 保存"渲染替换"变身状态到 NBT，以便重进后恢复形态和倒计时
+            saveMorphStateToNbt(sp);
+            // 恢复玩家原始生命值（避免存档记录生物生命值，重进后若恢复变身会重新换算）
+            restoreMorphHealthOnLogout(sp);
+            // 玩家下线时若仍处于变形状态（物品/方块/壳），强制终止变形并清理跟踪状态：
+            // 否则 TRANSMUTED_ENTITIES 会残留玩家 UUID，且变形实体随关卡卸载后跟踪数据丢失，
+            // 重进后 onMobEffectAdded 会一直被 IN_TRANSMUTED 拦截，无法再次把自己变成物品/方块。
             forceEndPlayerTransmutationQuiet(sp);
         }
         COBWEB_PULLING.remove(uuid);
@@ -3801,6 +4076,9 @@ public class ModMain {
             }
             if (!tracked) e.discard();
         }
+
+        // 女巫Boss小屋的放置统一在主线程 tick（tickPendingHuts）中处理，
+        // 区块加载事件内不做任何方块写入，避免事件期间写入导致的问题。
     }
 
     /** 蛛丝免疫期内的摔落：直接取消 LivingFallEvent（摔落伤害的根事件），
@@ -3827,6 +4105,15 @@ public class ModMain {
             if (info != null) {
                 switch (info.form()) {
                     case ITEM -> {
+                        // 着火：免去着火伤害，改为瞬间受“最大生命*10”的物品体验卡到期伤害，
+                        // 死亡时仍播报“XX的物品体验卡到期了”。
+                        if (tSource.is(net.minecraft.tags.DamageTypeTags.IS_FIRE)
+                                && transmutedPlayer instanceof ServerPlayer itSp
+                                && itSp.level() instanceof ServerLevel sl) {
+                            event.setCanceled(true);
+                            itSp.hurt(transmutationDamage(sl, false), itSp.getMaxHealth() * 10.0F);
+                            return;
+                        }
                         // 物品：只受仙人掌、虚空、爆炸、火焰等能伤害到物品的伤害
                         if (!isItemFormDamageAllowed(tSource)) {
                             event.setCanceled(true);
@@ -3845,6 +4132,11 @@ public class ModMain {
                 event.setCanceled(true); // 未知形态：免疫
             }
             return;
+        }
+
+        // --- 变形生物特殊受伤机制：末影人免疫弹射物并传送，烈焰人受雪球额外伤害
+        if (target instanceof ServerPlayer sp && !TRANSMUTED_ENTITIES.contains(sp.getUUID())) {
+            applyMorphIncomingDamage(sp, event);
         }
 
         // --- 附魔状态效果：生物持有物品时，其“魔咒状态效果”视作该物品的等效附魔（消失诅咒除外），
@@ -4346,6 +4638,20 @@ public class ModMain {
             return;
         }
 
+        // 觉醒药水（喷溅，无直饮）：命中方块才触发「方块唤起」——以命中点为圆心、半径 1 的范围效果
+        // （白名单内的方块都会被唤起，非白名单方块不受影响）。
+        // 命中实体则不做该行为（哪怕范围内确有方块）。
+        if (proj instanceof ThrownPotion tp && isAwakeningPotion(tp.getItem())) {
+            if (ray.getType() == HitResult.Type.BLOCK) {
+                BlockPos hitPos = ((BlockHitResult) ray).getBlockPos();
+                // 延长版觉醒药水 8 分钟，普通 3 分钟
+                int dur = isPotionOf(tp.getItem(), cn.autoforged.joes_addons_for_abmc.potion.ModPotions.LONG_AWAKENING)
+                    ? 9600 : 3600;
+                raiseAwakenedBlocks(serverLevel, hitPos, shooter.getLookAngle(), shooter, dur);
+            }
+            return; // 不取消默认行为，药水仍正常溅射施效
+        }
+
         if (ray.getType() != HitResult.Type.ENTITY) return;
         Entity victim = ((EntityHitResult) ray).getEntity();
         if (!(victim instanceof LivingEntity livingVictim) || livingVictim == shooter) return;
@@ -4404,6 +4710,67 @@ public class ModMain {
         if (s.isEmpty()) return false;
         PotionContents c = s.getOrDefault(DataComponents.POTION_CONTENTS, PotionContents.EMPTY);
         return c.potion().map(h -> h.is(holder)).orElse(false);
+    }
+
+    // 是否为觉醒药水（普通喷溅 / 长效）
+    private static boolean isAwakeningPotion(ItemStack s) {
+        return isPotionOf(s, cn.autoforged.joes_addons_for_abmc.potion.ModPotions.AWAKENING)
+            || isPotionOf(s, cn.autoforged.joes_addons_for_abmc.potion.ModPotions.LONG_AWAKENING);
+    }
+
+    /**
+     * 觉醒药水命中方块后的唤起：以命中点为中心、半径 1 的范围效果（3×3×3 区块），
+     * 仅限白名单方块（箱子/酿造台/音符盒）被唤起。仅当该方块上方一格为空气时才唤起为觉醒方块实体。
+     * 觉醒方块携带 3 分钟（延长版 8 分钟）的固化倒计时。
+     */
+    private static void raiseAwakenedBlocks(ServerLevel level, BlockPos center, net.minecraft.world.phys.Vec3 look,
+                                        net.minecraft.world.entity.LivingEntity owner, int durationTicks) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    BlockPos pos = center.offset(dx, dy, dz);
+                    tryAwakenOneBlock(level, pos, look, owner, durationTicks);
+                }
+            }
+        }
+    }
+
+    /**
+     * 尝试唤起单个白名单方块（箱子/酿造台/音符盒），直接觉醒，不要求上方为空。
+     */
+    private static boolean tryAwakenOneBlock(ServerLevel level, BlockPos pos, net.minecraft.world.phys.Vec3 look,
+                                             net.minecraft.world.entity.LivingEntity owner, int durationTicks) {
+        BlockState state = level.getBlockState(pos);
+        if (state.isAir()) return false;
+        // 只允许白名单内的方块被“觉醒”
+        if (!AWAKENABLE_BLOCKS.contains(state.getBlock())) return false;
+        // 无视可破坏性较差的方块（基岩等）
+        if (state.getDestroySpeed(level, pos) < 0) return false;
+
+        cn.autoforged.joes_addons_for_abmc.entity.AwakeningFallingBlockEntity entity =
+            new cn.autoforged.joes_addons_for_abmc.entity.AwakeningFallingBlockEntity(
+                cn.autoforged.joes_addons_for_abmc.entity.ModEntities.AWAKENING_FALLING_BLOCK.get(), level);
+        entity.initFromBlock(level, pos, state);
+        // 设定觉醒固化倒计时（普通3分钟 / 延长版8分钟）
+        entity.setSolidifyTicks(durationTicks);
+        // 标注激活者（投掷觉醒药水的人）
+        if (owner != null) {
+            entity.getPersistentData().putString(AWAKENING_OWNER_TAG, owner.getUUID().toString());
+        }
+        // 摆动轴：取玩家视线在水平面上的投影方向（剔除 Y 后归一化），退化（垂直视线）时回退为 X 轴
+        float hx = (float) look.x;
+        float hz = (float) look.z;
+        float hlen = Mth.sqrt(hx * hx + hz * hz);
+        if (hlen < 1.0E-3F) {
+            hx = 1.0F;
+            hz = 0.0F;
+        } else {
+            hx /= hlen;
+            hz /= hlen;
+        }
+        entity.setWobbleDir(hx, hz);
+        level.addFreshEntity(entity);
+        return true;
     }
 
     /**
@@ -4803,6 +5170,46 @@ public class ModMain {
         LivingEntity target = event.getEntity();
         DamageSource source = event.getSource();
 
+        // --- 女巫Boss 阶段1受击：把本次伤害累加到“阶段1血条”的伤害池（耗尽则进阶段2）。
+        //    注意在其它伤害修正(格挡/附魔减伤等)前用原始伤害量累加，与“血条1=1/3最大生命”口径一致。 ---
+        if (target instanceof Witch witchTarget
+                && witchTarget.getPersistentData().getBoolean(WITCH_BOSS_TAG)) {
+            int stage = getWitchBossStage(witchTarget); // 先记录当前阶段，防止阶段切换后溢出伤害
+            if (stage == WITCH_BOSS_STAGE_ENTITY) {
+                witchBossStage1TakeDamage(witchTarget, event.getNewDamage());
+            } else if (stage == WITCH_BOSS_STAGE_BLOCK) {
+                witchBossStage2TakeDamage(witchTarget, event.getNewDamage());
+            } else if (stage == WITCH_BOSS_STAGE_ITEM) {
+                witchBossStage3TakeDamage(witchTarget, event.getNewDamage());
+            }
+            // 阶段1·对玩家所变的生物“保持中立但会反击”：被该玩家所变的生物攻击时，
+            // 直接投掷“阶段2方块形变药水”（把生物/玩家变成方块）作为反击。
+            if (getWitchBossStage(witchTarget) == WITCH_BOSS_STAGE_ENTITY
+                    && source.getEntity() instanceof ServerPlayer attacker
+                    && isWitchBossThreat(attacker)
+                    && !attacker.level().isClientSide()) {
+                PlayerTransmutationInfo winfo = PLAYER_TRANSMUTATION_INFO.get(attacker.getUUID());
+                LOGGER.info("[DBG-DRAIN] stage1 hit: source={} isPlayer={} threat={} hasInfo={} form={}",
+                    source.getEntity() != null ? source.getEntity().getClass().getSimpleName() : "null",
+                    source.getEntity() instanceof ServerPlayer,
+                    isWitchBossThreat(attacker),
+                    winfo != null,
+                    winfo != null ? winfo.form() : "null");
+                if (winfo != null && winfo.form() == TransmutationForm.MOB
+                        && witchTarget.level() instanceof ServerLevel sl) {
+                    // 被“玩家所变的生物”命中：刷新阶段1血条的恒定衰减时间窗（每次命中都续，但不加速）
+                    // 被"玩家所变的生物"命中：开启阶段1血条持续衰减（直到血条耗尽或切换阶段）
+                    witchTarget.getPersistentData().putBoolean(WITCH_BOSS_STAGE1_DRAIN_ACTIVE_TAG, true);
+                    // 反击（带冷却）：直接投掷阶段2方块形变药水
+                    if (sl.getGameTime() - witchTarget.getPersistentData()
+                            .getLong(WITCH_BOSS_RETALIATE_TAG) >= WITCH_BOSS_RETALIATE_COOLDOWN) {
+                        witchTarget.getPersistentData().putLong(WITCH_BOSS_RETALIATE_TAG, sl.getGameTime());
+                        throwWitchBossBlockPotion(witchTarget, attacker);
+                    }
+                }
+            }
+        }
+
         // --- Omega 游戏图标 / Omega 权杖：持有者免疫除虚空伤害以外的所有伤害 ---
         if (target instanceof Player omegaPlayer && OMEGA_POWER_PLAYERS.contains(omegaPlayer.getUUID())) {
             // 虚空伤害（掉出世界 / 拆解 Omega 权杖造成的 fellOutOfWorld，均映射为 FELL_OUT_OF_WORLD）不免疫
@@ -4957,6 +5364,17 @@ public class ModMain {
             return;
         }
 
+        // ITEM/BLOCK 形态：手中非药水工具视为空气（左键攻击/权杖技能失效），药水不受影响
+        if (player instanceof ServerPlayer sp && isTransmutedToolAsAir(sp, player.getMainHandItem())) {
+            event.setCanceled(true);
+            return;
+        }
+
+        // 变形生物攻击附加效果：尸壳附加饥饿，洞穴蜘蛛附加中毒
+        if (player instanceof ServerPlayer sp) {
+            applyMorphAttackEffects(sp, target);
+        }
+
         ItemStack mainStack = player.getMainHandItem();
         if (!(mainStack.getItem() instanceof StaffItem)) return;
 
@@ -4987,6 +5405,137 @@ public class ModMain {
         if (d != null) return pu.equals(d.playerUuid());
         LivingShellData s = LIVING_SHELLS.get(tu);
         return s != null && pu.equals(s.playerUuid());
+    }
+
+    /** 变形生物攻击附加效果：尸壳→饥饿I(30秒)，洞穴蜘蛛→中毒I(30秒)。 */
+    private static void applyMorphAttackEffects(ServerPlayer player, Entity target) {
+        PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(player.getUUID());
+        if (info == null || info.form() != TransmutationForm.MOB) return;
+        String entityTypeId = info.itemType();
+        if (entityTypeId == null) return;
+        if (!(target instanceof LivingEntity livingTarget)) return;
+
+        switch (entityTypeId) {
+            case "minecraft:husk" ->
+                livingTarget.addEffect(new MobEffectInstance(MobEffects.HUNGER, 600, 0));
+            case "minecraft:cave_spider" ->
+                livingTarget.addEffect(new MobEffectInstance(MobEffects.POISON, 600, 0));
+        }
+    }
+
+    /** 变形生物特殊受伤机制：末影人免疫弹射物并传送，烈焰人受雪球额外伤害。 */
+    private static void applyMorphIncomingDamage(ServerPlayer player, LivingIncomingDamageEvent event) {
+        PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(player.getUUID());
+        if (info == null || info.form() != TransmutationForm.MOB) return;
+        String entityTypeId = info.itemType();
+        if (entityTypeId == null) return;
+        DamageSource src = event.getSource();
+
+        switch (entityTypeId) {
+            case "minecraft:enderman" -> {
+                // 末影人：免疫弹射物伤害，被击中时传送
+                if (src.getDirectEntity() instanceof Projectile) {
+                    event.setCanceled(true);
+                    teleportMorphEnderman(player);
+                }
+            }
+            case "minecraft:blaze" -> {
+                // 烈焰人：雪球造成3点伤害
+                if (src.getDirectEntity() instanceof Snowball) {
+                    event.setAmount(3.0F);
+                }
+            }
+        }
+    }
+
+    /** 变形生物环境伤害：烈焰人/雪傀儡/末影人/炽足兽的水/雨/温度/细雪伤害。 */
+    private static void applyMorphEnvironmentalDamage(ServerPlayer player) {
+        PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(player.getUUID());
+        if (info == null || info.form() != TransmutationForm.MOB) return;
+        String entityTypeId = info.itemType();
+        if (entityTypeId == null) return;
+        if (player.isCreative() || player.isSpectator()) return;
+
+        ServerLevel level = player.serverLevel();
+        boolean inWater = player.isInWaterRainOrBubble();
+        boolean inPowderSnow = player.getTicksFrozen() > 0;
+        boolean isRaining = level.isRaining() && level.canSeeSky(player.blockPosition());
+
+        switch (entityTypeId) {
+            case "minecraft:blaze" -> {
+                if (inWater || isRaining || inPowderSnow) {
+                    player.hurt(player.damageSources().drown(), 1.0F);
+                }
+            }
+            case "minecraft:snow_golem" -> {
+                // 火抗可抵御
+                if (player.hasEffect(MobEffects.FIRE_RESISTANCE)) return;
+                boolean hotBiome = level.getBiome(player.blockPosition()).value()
+                    .getBaseTemperature() > 1.0F;
+                if (inWater || hotBiome) {
+                    player.hurt(player.damageSources().onFire(), 1.0F);
+                }
+            }
+            case "minecraft:enderman" -> {
+                if (inWater || isRaining) {
+                    player.hurt(player.damageSources().drown(), 1.0F);
+                    // 末影人受伤时尝试传送
+                    if (player.getRandom().nextFloat() < 0.5F) {
+                        teleportMorphEnderman(player);
+                    }
+                }
+            }
+            case "minecraft:strider" -> {
+                if (inWater || isRaining || inPowderSnow) {
+                    player.hurt(player.damageSources().drown(), 1.0F);
+                }
+            }
+        }
+    }
+
+    /** 末影人传送：随机传送到10格内的安全位置。 */
+    private static void teleportMorphEnderman(ServerPlayer player) {
+        RandomSource random = player.getRandom();
+        ServerLevel level = player.serverLevel();
+        for (int i = 0; i < 64; i++) {
+            double dx = player.getX() + (random.nextDouble() - 0.5) * 20.0;
+            double dy = player.getY() + (random.nextInt(20) - 10);
+            double dz = player.getZ() + (random.nextDouble() - 0.5) * 20.0;
+            BlockPos pos = BlockPos.containing(dx, dy, dz);
+            if (level.getBlockState(pos).isAir()
+                && level.getBlockState(pos.above()).isAir()
+                && !level.getBlockState(pos.below()).isAir()) {
+                player.teleportTo(dx, dy, dz);
+                level.playSound(null, player.getX(), player.getY(), player.getZ(),
+                    SoundEvents.ENDERMAN_TELEPORT, SoundSource.PLAYERS, 1.0F, 1.0F);
+                return;
+            }
+        }
+    }
+
+    // 变形玩家处于 ITEM/BLOCK 形态时：手中非药水工具视为“空气”（左键/右键技能与攻击均失效）。
+    // 但喷溅/滞留/可饮用药水（Potion / Splash / Lingering）留后门，仍可正常右键投掷或饮用。
+    private static boolean isTransmutedToolAsAir(ServerPlayer p, ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return false;
+        net.minecraft.world.item.Item it = stack.getItem();
+        if (it == net.minecraft.world.item.Items.POTION
+                || it == net.minecraft.world.item.Items.SPLASH_POTION
+                || it == net.minecraft.world.item.Items.LINGERING_POTION) {
+            return false; // 药水类放行
+        }
+        PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(p.getUUID());
+        if (info == null) return false;
+        TransmutationForm f = info.form();
+        return f == TransmutationForm.ITEM || f == TransmutationForm.BLOCK;
+    }
+
+    // ITEM/BLOCK 形态：右键使用非药水工具视为空气（权杖/物品右键技能失效）；药水可正常右键投掷/饮用。
+    private static void onTransmutedRightClickGuard(PlayerInteractEvent.RightClickItem event) {
+        if (event.getLevel().isClientSide()) return;
+        if (event.getEntity() instanceof ServerPlayer sp
+                && isTransmutedToolAsAir(sp, sp.getMainHandItem())) {
+            event.setCanceled(true);
+        }
     }
 
     // 变形玩家攻击自己的壳被取消后，沿视线重定向到真正的攻击目标（排除壳本体），
@@ -5097,6 +5646,7 @@ public class ModMain {
                         .setLevel(1)); // 新手级，随交易升级，命令方块交易只在达到大师级后解锁
                     // 强制标签：保证该图书管理员达到大师级时一定出售命令方块（debug 用）
                     villager.getPersistentData().putBoolean(SELLS_COMMAND_BLOCK_TAG, true);
+                    villager.setGlowingTag(true);  // 从创建时即发光
                     level.addFreshEntity(villager);
                     ctx.getSource().sendSuccess(() -> Component.literal("已召唤新手图书管理员（大师级解锁命令方块交易）"), true);
                     return 1;
@@ -5130,6 +5680,7 @@ public class ModMain {
                     // 直接打上女巫 Boss 标签，供调试/测试（与女巫小屋生成的 Boss 行为一致）
                     witch.getPersistentData().putBoolean(WITCH_BOSS_TAG, true);
                     WITCH_BOSS_TRACKED.add(witch.getUUID());
+                    witch.setPersistenceRequired(); // 永不移除/不自然刷走
                     initWitchBossHealth(witch);
                     initWitchBossHome(witch, witch.position()); // 调试召唤的家 = 召唤位
                     initWitchBossAmmo(witch);
@@ -5161,7 +5712,49 @@ public class ModMain {
             // /jafa witchhut：连着女巫小屋一起生成女巫Boss（模拟生存中遇到的小屋女巫Boss），
             // 并把该小屋中心认定为女巫Boss的基地（回城补给的“家”）。
             .then(Commands.literal("witchhut")
-                .executes(ctx -> spawnWitchBossWithHut(ctx.getSource()))));
+                .executes(ctx -> spawnWitchBossWithHut(ctx.getSource())))
+            // /jafa solidify：固化玩家 64 格以内的所有觉醒方块（调试用）。
+            .then(Commands.literal("solidify")
+                .executes(ctx -> solidifyAwakenedBlocks(ctx.getSource())))
+            // /jafa gold_hit_flash：在玩家视野中央播放一段金色命中闪光（后处理着色器测试）。
+            .then(Commands.literal("gold_hit_flash")
+                .executes(ctx -> {
+                    ServerPlayer player = ctx.getSource().getPlayerOrException();
+                    net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
+                        new cn.autoforged.joes_addons_for_abmc.network.GoldHitFlashPayload());
+                    ctx.getSource().sendSuccess(() -> Component.literal("已触发金色命中闪光"), true);
+                    return 1;
+                }))
+            // /jafa omega_shader：独立静态测试——着色器在屏幕中心播放“点汇聚到目标”的 3D 视觉（暂未接 Omega 吸收真实坐标）。
+            .then(Commands.literal("omega_shader")
+                .executes(ctx -> {
+                    ServerPlayer player = ctx.getSource().getPlayerOrException();
+                    net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
+                        new cn.autoforged.joes_addons_for_abmc.network.OmegaShaderPayload());
+                    ctx.getSource().sendSuccess(() -> Component.literal("已触发 Omega 着色器测试"), true);
+                    return 1;
+                })));
+    }
+
+    /** /jafa solidify：把玩家 64 格以内的所有“觉醒的方块”直接固化回方块（调试用）。 */
+    private static int solidifyAwakenedBlocks(CommandSourceStack source) {
+        if (!(source.getEntity() instanceof ServerPlayer sp)) {
+            source.sendFailure(Component.literal("该命令需由玩家在游戏内执行"));
+            return 0;
+        }
+        ServerLevel level = sp.serverLevel();
+        java.util.List<cn.autoforged.joes_addons_for_abmc.entity.AwakeningFallingBlockEntity> awaken =
+            new java.util.ArrayList<>(level.getEntitiesOfClass(
+                cn.autoforged.joes_addons_for_abmc.entity.AwakeningFallingBlockEntity.class,
+                sp.getBoundingBox().inflate(64.0)));
+        int n = 0;
+        for (cn.autoforged.joes_addons_for_abmc.entity.AwakeningFallingBlockEntity e : awaken) {
+            e.solidify();
+            n++;
+        }
+        final int count = n;
+        source.sendSuccess(() -> Component.literal("已固化 " + count + " 个觉醒方块"), true);
+        return n > 0 ? 1 : 0;
     }
 
     /** /jafa witchhut：在执行者位置手动搭一座小型“女巫小屋”并在其中心召唤女巫Boss，
@@ -5173,42 +5766,274 @@ public class ModMain {
         }
         ServerLevel level = sp.serverLevel();
         BlockPos center = sp.blockPosition();
-        buildWitchHut(level, center);
+        if (!buildWitchHut(level, center)) {
+            source.sendFailure(Component.literal("未找到小屋结构文件 witchbosshut.nbt"));
+            return 0;
+        }
         // 登记该小屋所在区块为“Boss 小屋”：阻止此区域自然刷新普通女巫（只保留下方生成的 WitchBoss）
         SharedCounts counts = getSharedCounts(level);
         counts.bossHutChunks.add(new net.minecraft.world.level.ChunkPos(center).toLong());
         counts.setDirty();
         Vec3 home = new Vec3(center.getX() + 0.5, center.getY() + 1.0, center.getZ() + 0.5);
 
-        Witch witch = EntityType.WITCH.create(level);
-        if (witch == null) return 0;
-        witch.setPos(home.x, home.y, home.z);
-        witch.getPersistentData().putBoolean(WITCH_BOSS_TAG, true);
-        WITCH_BOSS_TRACKED.add(witch.getUUID());
-        initWitchBossHealth(witch);
-        initWitchBossHome(witch, home); // 基地 = 小屋中心（补给点）
-        initWitchBossAmmo(witch);
-        level.addFreshEntity(witch);
+        Witch boss = spawnStandaloneWitchBoss(level, home);
+        if (boss == null) return 0;
         source.sendSuccess(() -> Component.literal("已生成一座女巫小屋及女巫Boss（基地=小屋中心）"), true);
         return 1;
     }
 
-    /** 照搬原版沼泽小屋（swamp_hut）结构：直接套用原版 {@code /place structure minecraft:swamp_hut}
-     *  命令的完整放置逻辑（走命令调度器），可靠生成工作台、炼药锅、花盆+红蘑菇、藤蔓、
-     *  四角橡木原木柱、云杉木板与云杉楼梯屋顶等全部原版细节。
-     *  结构原点放在“玩家脚下方块”，省去自己逐方块放置所遇到的方块状态/依附判定等坑。 */
-    private static void buildWitchHut(ServerLevel level, BlockPos center) {
-        net.minecraft.server.MinecraftServer server = level.getServer();
+    /** 在指定位置单独生成一只女巫Boss（不附带小屋），完成全部初始化：
+     *  持久化标记、血条跟踪、永不移除、10x生命、基地(home)、初始弹药。返回生成的女巫；失败返回 null。 */
+    public static Witch spawnStandaloneWitchBoss(ServerLevel level, Vec3 home) {
+        Witch witch = EntityType.WITCH.create(level);
+        if (witch == null) return null;
+        witch.setPos(home.x, home.y, home.z);
+        witch.getPersistentData().putBoolean(WITCH_BOSS_TAG, true);
+        WITCH_BOSS_TRACKED.add(witch.getUUID());
+        witch.setPersistenceRequired(); // 永不移除/不自然刷走
+        initWitchBossHealth(witch);
+        initWitchBossHome(witch, home); // 基地 = 生成点（补给点）
+        initWitchBossAmmo(witch);
+        level.addFreshEntity(witch);
+        return witch;
+    }
+
+    /** 使用自定义 NBT 结构文件放置女巫小屋。返回 true 表示成功。 */
+    private static boolean buildWitchHut(ServerLevel level, BlockPos center) {
         try {
-            var dispatcher = server.getCommands().getDispatcher();
-            net.minecraft.commands.CommandSourceStack src = server.createCommandSourceStack();
-            String cmd = "place structure minecraft:swamp_hut "
-                + center.getX() + " " + (center.getY() - 1) + " " + center.getZ();
-            int code = dispatcher.execute(cmd, src);
-            LOGGER.info("已通过 /place structure 放置女巫小屋，返回码={}", code);
+            net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate template =
+                level.getStructureManager().getOrCreate(
+                    net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("joes_addons_for_abmc", "witchbosshut"));
+            if (template == null || template.getSize().equals(net.minecraft.core.BlockPos.ZERO)) {
+                LOGGER.warn("[witchhut] 未找到结构 joes_addons_for_abmc:witchbosshut");
+                return false;
+            }
+            template.placeInWorld(level, center, center,
+                new net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings()
+                    .setMirror(net.minecraft.world.level.block.Mirror.NONE)
+                    .setRotation(net.minecraft.world.level.block.Rotation.NONE)
+                    .setIgnoreEntities(false),
+                level.getRandom(), 2);
+            LOGGER.info("[witchhut] 已放置自定义小屋结构 witchbosshut.nbt，中心={}", center);
+
+            // 后处理：仅扫描大箱子（双箱），清除 Items 并设置战利品表 witch_crate
+            // 小箱子不处理，留给玩家通过 data merge 手动设置
+            setupLargeChests(level, template, center, null);
+            return true;
         } catch (Exception e) {
-            LOGGER.warn("/place structure 放置女巫小屋失败：{}", e.getMessage());
+            LOGGER.warn("[witchhut] 放置小屋结构失败：{}", e.getMessage());
+            return false;
         }
+    }
+
+    /**
+     * 世界生成期间（SwampHutPieceMixin 调用）：决定是否替换为女巫Boss小屋，并登记待放置。
+     * 注意：FEATURES 生成步骤只能写中心区块+相邻1圈（blockStateWriteRadius=1），寻岸后结构可能
+     * 远在数格外导致写入被 WorldGenRegion.ensureCanWrite 拒绝（房子被切块、水丢失的根因），
+     * 因此这里只计算原点并登记 pendingHuts，实际放置延迟到 {@link #onChunkLoad}
+     * （区块完全生成后 LevelChunk 可自由写入）。
+     * 返回 true=已登记（Mixin 取消原版小屋）；false=回退原版。
+     *
+     * 锚点：模板以小屋东北角（模板 x=12,z=0）对齐原版片段东北角 (minX+6, minZ)；
+     * 模板 y=2 为水面顶层，对齐世界水面 y=62 → origin.y = 片段minY(64) - 4 = 60。
+     * 女巫Boss 在模板 (8,7,4)（结构方块西4南4上3处）。
+     */
+    public static boolean scheduleBossHut(
+            net.minecraft.world.level.WorldGenLevel level,
+            net.minecraft.world.level.levelgen.structure.BoundingBox pieceBox) {
+        try {
+            int ox = pieceBox.minX() + 6 - 12;   // 模板 x=12 ↔ 片段东北角 minX+6
+            int oz = pieceBox.minZ();             // 模板 z=0  ↔ 片段东北角北端 minZ
+            int oy = pieceBox.minY() - 4;         // 模板 y=2 水面 ↔ 世界 y=62
+
+            // 水域检测：以结构覆盖区中心列扫描 y56~66（水面方块在 y62，只测 y63 会永远判为陆地）
+            int centerX = ox + 6;
+            int centerZ = oz + 3;
+            if (hasWaterColumn(level, centerX, centerZ, 56, 66)) {
+                net.minecraft.core.BlockPos shore = findNearbyLandColumn(level, centerX, centerZ, 64, 56, 66);
+                if (shore == null) {
+                    return false;
+                }
+                int dx = shore.getX() - centerX;
+                int dz = shore.getZ() - centerZ;
+                ox += dx;
+                oz += dz;
+            }
+
+            // worker 线程：只入并发队列，主线程 tick 时再持久化进 SharedCounts
+            GEN_PENDING_HUTS.add(new int[]{ox, oy, oz});
+            return true;
+        } catch (Exception e) {
+            LOGGER.warn("[witchhut-gen] 登记小屋失败：{}", e.getMessage());
+            return false;
+        }
+    }
+
+    /** worker 线程决策：是否替换为 Boss 小屋。仅使用并发内存结构，禁止访问 SavedData。 */
+    public static boolean genRollBossHut(net.minecraft.util.RandomSource random, boolean debugMode) {
+        if (!GEN_STATE_LOADED) return false; // 存档状态未载入前保守不替换
+        if (debugMode && GEN_DEBUG_HUT_DONE.compareAndSet(false, true)) {
+            GEN_WITCH_HUT_COUNT.set(0);
+            return true; // debug：仅第一座必中
+        }
+        // 普通路径：1% 概率，连续 200 座保底
+        if (GEN_WITCH_HUT_COUNT.get() >= 200) {
+            GEN_WITCH_HUT_COUNT.set(0);
+            return true;
+        }
+        boolean hit = random.nextInt(100) < 1;
+        if (hit) {
+            GEN_WITCH_HUT_COUNT.set(0);
+        } else {
+            GEN_WITCH_HUT_COUNT.incrementAndGet();
+        }
+        return hit;
+    }
+
+    /** 女巫Boss小屋结构模板尺寸（X/Y/Z），与 witchbosshut.nbt 一致。 */
+    private static final int HUT_TPL_X = 13;
+    private static final int HUT_TPL_Y = 10;
+    private static final int HUT_TPL_Z = 7;
+    /** 女巫Boss 在模板内的相对坐标（结构方块西4南4上3，结构方块位于模板 (12,4,0) 一带）。 */
+    private static final net.minecraft.core.BlockPos HUT_BOSS_OFFSET = new net.minecraft.core.BlockPos(8, 7, 4);
+
+    /**
+     * 主线程每 tick：待放置小屋覆盖的区块列（结构 13×7 格，最多 2×2 区块）全部加载后，
+     * 一次性完整放置结构（不裁剪）、强制水为静止水源、设置箱子战利品、召唤女巫Boss，然后移除登记。
+     * 逐区块裁剪放置会导致房子被切块、水在中间态流体 tick 流失、方块实体邻接信息缺失，
+     * 故必须在结构完整后一次放置。
+     */
+    private static void tickPendingHuts(ServerLevel serverLevel) {
+        SharedCounts counts = getSharedCounts(serverLevel);
+        if (counts.pendingHuts.isEmpty()) return;
+
+        var it = counts.pendingHuts.iterator();
+        while (it.hasNext()) {
+            int[] hut = it.next();
+            int ox = hut[0], oy = hut[1], oz = hut[2];
+
+            // 等待结构覆盖的所有区块列加载完成（hasChunk 不触发加载，仅检查已就位）
+            int cx0 = ox >> 4, cx1 = (ox + HUT_TPL_X - 1) >> 4;
+            int cz0 = oz >> 4, cz1 = (oz + HUT_TPL_Z - 1) >> 4;
+            boolean allLoaded = true;
+            for (int cx = cx0; cx <= cx1 && allLoaded; cx++) {
+                for (int cz = cz0; cz <= cz1; cz++) {
+                    if (!serverLevel.hasChunk(cx, cz)) { allLoaded = false; break; }
+                }
+            }
+            if (!allLoaded) continue;
+
+            net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate template =
+                serverLevel.getStructureManager().getOrCreate(
+                    net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("joes_addons_for_abmc", "witchbosshut"));
+            if (template == null || template.getSize().equals(net.minecraft.core.Vec3i.ZERO)) continue;
+
+            net.minecraft.core.BlockPos origin = new net.minecraft.core.BlockPos(ox, oy, oz);
+            net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings settings =
+                new net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings()
+                    .setMirror(net.minecraft.world.level.block.Mirror.NONE)
+                    .setRotation(net.minecraft.world.level.block.Rotation.NONE)
+                    .setIgnoreEntities(false);
+
+            // 一次性完整放置（flag 2：同步客户端但不发邻接更新，避免流体/地形级联）
+            template.placeInWorld(serverLevel, origin, origin, settings, serverLevel.getRandom(), 2);
+
+            // 模板水方块强制为静止水源，防止岸边放置后流体 tick 导致水流失
+            for (net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate.StructureBlockInfo info :
+                    template.filterBlocks(origin, settings, net.minecraft.world.level.block.Blocks.WATER)) {
+                serverLevel.setBlock(info.pos(), net.minecraft.world.level.block.Blocks.WATER.defaultBlockState(), 2);
+            }
+
+            // 双箱战利品表
+            setupLargeChests(serverLevel, template, origin, null);
+
+            // 召唤女巫Boss（结构已完整，Boss 必在屋内）
+            net.minecraft.core.BlockPos bossPos = origin.offset(HUT_BOSS_OFFSET);
+            net.minecraft.world.entity.monster.Witch witch =
+                net.minecraft.world.entity.EntityType.WITCH.create(serverLevel);
+            if (witch != null) {
+                witch.moveTo(bossPos.getX() + 0.5, bossPos.getY(), bossPos.getZ() + 0.5, 0.0F, 0.0F);
+                witch.getPersistentData().putBoolean(WITCH_BOSS_TAG, true);
+                WITCH_BOSS_TRACKED.add(witch.getUUID());
+                witch.setPersistenceRequired();
+                initWitchBossHealth(witch);
+                initWitchBossHome(witch, new net.minecraft.world.phys.Vec3(
+                    ox + 6.5, oy + 4.0, oz + 3.5));
+                initWitchBossAmmo(witch);
+                serverLevel.addFreshEntity(witch);
+            }
+
+            it.remove();
+            counts.setDirty();
+        }
+    }
+
+    /** 扫描结构范围内的大箱子（双箱），清除 Items 并设置战利品表 witch_crate。
+     *  clip 非空时只处理该盒内的方块（区块加载逐区块放置时使用）。 */
+    private static void setupLargeChests(net.minecraft.world.level.Level level,
+                                         net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate template,
+                                         net.minecraft.core.BlockPos origin,
+                                         net.minecraft.world.level.levelgen.structure.BoundingBox clip) {
+        net.minecraft.core.Vec3i size = template.getSize();
+        net.minecraft.core.BlockPos min = origin;
+        net.minecraft.core.BlockPos max = origin.offset(size.getX() - 1, size.getY() - 1, size.getZ() - 1);
+        for (int x = min.getX(); x <= max.getX(); x++) {
+            for (int y = min.getY(); y <= max.getY(); y++) {
+                for (int z = min.getZ(); z <= max.getZ(); z++) {
+                    net.minecraft.core.BlockPos pos = new net.minecraft.core.BlockPos(x, y, z);
+                    if (clip != null && !clip.isInside(pos)) continue;
+                    net.minecraft.world.level.block.entity.BlockEntity be = level.getBlockEntity(pos);
+                    if (be instanceof net.minecraft.world.level.block.entity.ChestBlockEntity) {
+                        net.minecraft.world.level.block.state.BlockState state = level.getBlockState(pos);
+                        if (state.getBlock() instanceof net.minecraft.world.level.block.ChestBlock
+                            && state.getValue(net.minecraft.world.level.block.ChestBlock.TYPE)
+                                != net.minecraft.world.level.block.state.properties.ChestType.SINGLE) {
+                            net.minecraft.nbt.CompoundTag tag = be.saveWithoutMetadata(level.registryAccess());
+                            tag.remove("Items");
+                            net.minecraft.resources.ResourceLocation lootTable =
+                                net.minecraft.resources.ResourceLocation.fromNamespaceAndPath(
+                                    "joes_addons_for_abmc", "witch_crate");
+                            tag.putString("LootTable", lootTable.toString());
+                            tag.putLong("LootTableSeed", 0L);
+                            be.loadWithComponents(tag, level.registryAccess());
+                            LOGGER.info("[witchhut-gen] 已为大箱子 {} 设置战利品表 witch_crate", pos);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** 检测方块是否为水。 */
+    private static boolean isWaterBlock(net.minecraft.world.level.LevelAccessor level, net.minecraft.core.BlockPos pos) {
+        net.minecraft.world.level.block.state.BlockState state = level.getBlockState(pos);
+        return state.is(net.minecraft.world.level.block.Blocks.WATER) || state.getFluidState().isSource();
+    }
+
+    /** 检测 (x,z) 列 yFrom~yTo 是否含水方块。 */
+    private static boolean hasWaterColumn(net.minecraft.world.level.LevelAccessor level, int x, int z, int yFrom, int yTo) {
+        for (int y = yFrom; y <= yTo; y++) {
+            if (isWaterBlock(level, new net.minecraft.core.BlockPos(x, y, z))) return true;
+        }
+        return false;
+    }
+
+    /** 从 (cx,cz) 逐环向外搜索最近的"无水列"陆地（仅横向，Y 不变），半径 maxDist。 */
+    private static net.minecraft.core.BlockPos findNearbyLandColumn(
+            net.minecraft.world.level.LevelAccessor level, int cx, int cz, int maxDist, int yFrom, int yTo) {
+        for (int r = 1; r <= maxDist; r++) {
+            for (int dx = -r; dx <= r; dx++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    if (Math.abs(dx) != r && Math.abs(dz) != r) continue; // 只检查环边界
+                    int x = cx + dx;
+                    int z = cz + dz;
+                    if (!hasWaterColumn(level, x, z, yFrom, yTo)) {
+                        return new net.minecraft.core.BlockPos(x, 0, z);
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     /** /jafa togglewitchbossstage <1-4>：对执行者 128 格内的在场全部女巫Boss 切换阶段（模拟）。 */
@@ -5226,7 +6051,7 @@ public class ModMain {
             return 0;
         }
         String stageName = switch (stage) {
-            case 1 -> "实体阶段"; case 2 -> "方块阶段"; case 3 -> "物品阶段";
+            case 1 -> "生物阶段"; case 2 -> "方块阶段"; case 3 -> "物品阶段";
             default -> "被击败"; };
         for (Witch boss : bosses) {
             setWitchBossStage(level, boss, stage);
@@ -6445,45 +7270,73 @@ public class ModMain {
             handleCommandStaffFlight(player);
             handleHerobrineStaffFlight(player);
         }
+
+        // 变形生物环境伤害：烈焰人/雪傀儡/末影人/炽足兽的水/雨/温度/细雪伤害
+        if (entity instanceof ServerPlayer sp) {
+            applyMorphEnvironmentalDamage(sp);
+        }
     }
 
     private static void handleCommandBlockLibrarianTick(Villager villager) {
         CompoundTag tag = villager.getPersistentData();
         boolean forced = tag.getBoolean(SELLS_COMMAND_BLOCK_TAG);
         boolean offered = tag.getBoolean(COMMAND_BLOCK_OFFERED_TAG);
+        boolean decided = tag.getBoolean(COMMAND_BLOCK_DECIDED_TAG);
 
-        // 未授予过交易：仅在大师级时授予（强制标签的 debug 村民也会等到大师级才解锁）
-        if (!offered && villager.getVillagerData().getLevel() >= VillagerData.MAX_VILLAGER_LEVEL) {
-            tag.putBoolean(COMMAND_BLOCK_OFFERED_TAG, true);
+        // 强制标签的村民：从创建时即发光（setGlowingTag 已在命令中设置）
+        if (forced && !villager.hasEffect(MobEffects.GLOWING)) {
+            villager.addEffect(new MobEffectInstance(MobEffects.GLOWING, MobEffectInstance.INFINITE_DURATION, 0, false, false), villager);
+        }
+
+        // === 第一步：在成为图书管理员时预判是否将来能卖命令方块（不等大师级） ===
+        if (!decided && !forced) {
             ServerLevel level = (ServerLevel) villager.level();
             SharedCounts counts = getSharedCounts(level);
-            boolean grant;
-            if (forced) {
-                // debug 强制标签：必定授予，不参与共享保底计数
-                grant = true;
+            boolean willSell;
+
+            if (ModConfig.DEBUG_MODE.get() && !counts.debugLibrarianDone) {
+                // 调试模式：仅第一只图书管理员必定卖
+                willSell = true;
+                counts.debugLibrarianDone = true;
+                counts.librarianCount = 0;
             } else if (counts.librarianCount >= LIBRARIAN_PITY_COUNT) {
-                // 保底：已连续 300 只未卖出 → 本次必给
-                grant = true;
+                // 保底
+                willSell = true;
                 counts.librarianCount = 0;
             } else {
-                // 1% 概率授予
-                grant = villager.getRandom().nextInt(100) < 1;
-                if (grant) {
+                // 1% 概率
+                willSell = villager.getRandom().nextInt(100) < 1;
+                if (willSell) {
                     counts.librarianCount = 0;
                 } else {
                     counts.librarianCount++;
                 }
             }
-            if (grant) {
-                villager.getOffers().add(createCommandBlockOffer());
-                // 卖命令方块的图书管理员永久自带发光状态效果
+
+            tag.putBoolean(COMMAND_BLOCK_DECIDED_TAG, willSell);
+            counts.setDirty();
+
+            if (willSell) {
+                // 预判能卖：立即发光
                 villager.addEffect(new MobEffectInstance(MobEffects.GLOWING, MobEffectInstance.INFINITE_DURATION, 0, false, false), villager);
             }
-            counts.setDirty();
+            return; // 本次 tick 仅做预判，授权交易等到大师级
+        }
+
+        // === 第二步：达到大师级时授予交易 ===
+        // forced 或 decided=true 的村民，在达到大师级时授予交易
+        boolean willSell = forced || tag.getBoolean(COMMAND_BLOCK_DECIDED_TAG);
+        if (!offered && willSell && villager.getVillagerData().getLevel() >= VillagerData.MAX_VILLAGER_LEVEL) {
+            tag.putBoolean(COMMAND_BLOCK_OFFERED_TAG, true);
+            villager.getOffers().add(createCommandBlockOffer());
+            // 非强制标签的村民发光已在第一步设置，这里做安全网
+            if (!forced && !villager.hasEffect(MobEffects.GLOWING)) {
+                villager.addEffect(new MobEffectInstance(MobEffects.GLOWING, MobEffectInstance.INFINITE_DURATION, 0, false, false), villager);
+            }
             return;
         }
 
-        // 已售出：保持所有命令方块交易永久缺货，即使补货也不会恢复
+        // 已售出：保持所有命令方块交易永久缺货
         if (tag.getBoolean(COMMAND_BLOCK_SOLD_TAG)) {
             for (MerchantOffer offer : villager.getOffers()) {
                 if (offer.getResult().is(Items.COMMAND_BLOCK)) {
@@ -6536,6 +7389,7 @@ public class ModMain {
         if (boss) {
             witch.getPersistentData().putBoolean(WITCH_BOSS_TAG, true);
             WITCH_BOSS_TRACKED.add(witch.getUUID());
+            witch.setPersistenceRequired(); // 永不移除/不自然刷走
             initWitchBossHealth(witch);
             // 记录“家”（小屋中心）坐标，供弹药不足时回城补给
             net.minecraft.world.level.levelgen.structure.BoundingBox bb = start.getBoundingBox();
@@ -6653,76 +7507,173 @@ public class ModMain {
         witch.getPersistentData().putBoolean(WITCH_BOSS_DISCOVERED_TAG, true);
     }
 
-    /** 女巫Boss近身逃逸（阶段1/2，每刻调用）：
-     *  当有存活玩家靠得足够近（< {@link #WITCH_BOSS_TP_AVOID_RANGE} 格）时：
-     *  1) 提前计算一个“离该玩家 15~20 格、且能容纳女巫尺寸”的合适坐标；
+    /** 女巫Boss近身逃逸/窒息逃逸（每刻调用）：
+     *  ● 窒息时（头卡进方块）：任意阶段都尝试丢传送药水逃逸，避免被持续窒息伤害耗死；
+     *  ● 非窒息（任意阶段）：“玩家/自身仇恨目标”靠得足够近（< {@link #WITCH_BOSS_TP_AVOID_RANGE} 格）
+     *    时也会丢传送药水逃逸，且该“目标过近传送避险”优先于其余所有行为。
+     *  流程：1) 提前计算一个“离参照点 15~20 格、且能容纳女巫尺寸”的合适坐标；
      *  2) 据此造一瓶点传送药水（TRANSPORT_MODE=point + 目标坐标）并让其手持；
      *  3) 女巫把这瓶药水朝着自身脚下丢出 → 落地生成入口门，出口门在目标坐标旁，女巫随即被传送过去。
-     *  带冷却防刷；仅阶段1/2触发（阶段3不触发）。 */
+     *  带冷却防刷。 */
     private static void handleWitchBossRetreatTeleport(Witch witch, ServerLevel level) {
-        // 阶段限制：仅阶段1(实体)逃逸传送；阶段2(方块)起改为主动靠近近战，不再传送逃逸
-        int stage = getWitchBossStage(witch);
-        if (stage != WITCH_BOSS_STAGE_ENTITY) return;
         // 冷却
         long gameTime = level.getGameTime();
         long lastTp = witch.getPersistentData().getLong(WITCH_BOSS_TP_CD_TAG);
         if (gameTime - lastTp < WITCH_BOSS_TP_COOLDOWN) return;
 
-        // 找一个靠得太近的存活玩家（观战/创造不计入近身威胁的“被动触发”，但观战肯定不算）
-        Player near = null;
-        for (Player p : level.players()) {
-            if (!p.isAlive() || p.isSpectator()) continue;
-            if (witch.distanceTo(p) < WITCH_BOSS_TP_AVOID_RANGE) { near = p; break; }
+        boolean suffocating = witch.isInWall(); // 正在窒息（卡进实体方块内部）
+        // 窒息：任何阶段都尝试逃逸传送（否则会被困在方块里窒息而死）；
+        // 非窒息：任意阶段，只要“玩家/自身仇恨目标”靠得太近（< WITCH_BOSS_TP_AVOID_RANGE）就逃逸传送。
+        net.minecraft.world.entity.LivingEntity threat = null;
+        if (!suffocating) {
+            for (Player p : level.players()) {
+                if (!isWitchBossThreat(p) || witch.distanceTo(p) >= WITCH_BOSS_TP_AVOID_RANGE) continue;
+                // 阶段2：被变成方块的玩家是静止目标，女巫应接近挖掘而非丢传送药水逃离
+                PlayerTransmutationInfo pinfo = PLAYER_TRANSMUTATION_INFO.get(p.getUUID());
+                if (pinfo != null && pinfo.form() == TransmutationForm.BLOCK) continue;
+                threat = p; break;
+            }
+            // 也针对自身的仇恨目标（非玩家实体，如攻击过女巫的生物）：靠太近同样逃逸。
+            // 若该仇恨目标是女巫第二阶段要挖掘的方块玩家，同样不逃逸。
+            if (threat == null && witch.getTarget() instanceof net.minecraft.world.entity.LivingEntity tg
+                    && tg.isAlive() && !tg.isSpectator()
+                    && witch.distanceTo(tg) < WITCH_BOSS_TP_AVOID_RANGE) {
+                boolean blockTarget = (tg instanceof Player tp)
+                    && PLAYER_TRANSMUTATION_INFO.get(tp.getUUID()) instanceof PlayerTransmutationInfo pinfo2
+                    && pinfo2.form() == TransmutationForm.BLOCK;
+                if (!blockTarget) threat = tg;
+            }
         }
-        if (near == null) return;
+        if (!suffocating && threat == null) return;
 
-        // 提前计算合适坐标：在“背对玩家方向/随机方向”上，距玩家15~20格找可容纳女巫的空间
-        Vec3 nearPos = near.position();
+        // 提前计算合适坐标：在“参照实体方向/随机方向”上距参照点 15~20 格找可容纳女巫的空间。
+        // 窒息时以自身为参照原点（避开卡住自己的方块）；否则以威胁目标位置为参照。
+        Vec3 origin = (threat != null) ? threat.position() : witch.position();
         java.util.Random rand = new java.util.Random(witch.getRandom().nextLong());
         Vec3 exitPos = null;
         for (int tries = 0; tries < 10 && exitPos == null; tries++) {
             double ang = rand.nextDouble() * Math.PI * 2.0;
             double dist = WITCH_BOSS_TP_DIST_MIN
                 + rand.nextDouble() * (WITCH_BOSS_TP_DIST_MAX - WITCH_BOSS_TP_DIST_MIN);
-            Vec3 rawTarget = nearPos.add(
+            Vec3 rawTarget = origin.add(
                 new Vec3(Math.cos(ang), 0.0, Math.sin(ang)).scale(dist));
             if (Math.abs(rawTarget.x) >= 29999984.0 || Math.abs(rawTarget.z) >= 29999984.0) continue;
             exitPos = findPortalExitNear(level, rawTarget, 6, witch.getBbWidth(), witch.getBbHeight());
         }
         if (exitPos == null) return;
 
-        // 造一瓶点传送药水（目标坐标 = 出口位置）
-        ItemStack potion = new ItemStack(net.minecraft.world.item.Items.SPLASH_POTION);
-        potion.set(ModDataComponents.TRANSPORT_MODE.get(), "point");
-        potion.set(ModDataComponents.TARGET_POS.get(), exitPos);
-
-        // 女巫手持该药水，朝自身脚下丢出（入口门落在脚下，出口门在 exitPos 旁 → 被传送）
-        witch.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, potion);
-        net.minecraft.world.entity.projectile.ThrownPotion tp =
-            new net.minecraft.world.entity.projectile.ThrownPotion(level, witch);
-        tp.setItem(potion);
-        tp.setPos(witch.getX(), witch.getEyeY() - 0.1, witch.getZ());
-        tp.shoot((rand.nextDouble() - 0.5) * 0.3, -1.0, (rand.nextDouble() - 0.5) * 0.3, 0.5F, 0.0F);
-        level.addFreshEntity(tp);
+        // 按女巫当前运动抛物线/脚下，向目标出口丢一瓶“定点传送”药水（入口门落在抛物线接触处/脚下）
+        throwWitchTeleportPotion(witch, level, exitPos);
 
         // 丢出逃逸传送药水 → 消耗传送药水计数（不足则转回屋补给）
         consumeWitchBossAmmo(witch, WITCH_BOSS_AMMO_TRANSPORT_TAG, 1);
         witch.getPersistentData().putLong(WITCH_BOSS_TP_CD_TAG, gameTime);
     }
 
+    /** 造一瓶“定点传送到 targetPos”的传送药水，并往女巫脚下丢出——
+     *  入口门落在脚下，出口门在 targetPos 旁，女巫随即被传送过去。 */
+    private static void throwWitchTeleportPotion(Witch witch, ServerLevel level, Vec3 targetPos) {
+        ItemStack potion = new ItemStack(net.minecraft.world.item.Items.SPLASH_POTION);
+        potion.set(ModDataComponents.TRANSPORT_MODE.get(), "point");
+        potion.set(ModDataComponents.TARGET_POS.get(), targetPos);
+        witch.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, potion);
+        net.minecraft.world.entity.projectile.ThrownPotion tp =
+            new net.minecraft.world.entity.projectile.ThrownPotion(level, witch);
+        tp.setItem(potion);
+        tp.setPos(witch.getX(), witch.getEyeY() - 0.1, witch.getZ());
+        tp.shoot((witch.getRandom().nextDouble() - 0.5) * 0.3, -1.0,
+            (witch.getRandom().nextDouble() - 0.5) * 0.3, 0.5F, 0.0F);
+        level.addFreshEntity(tp);
+    }
+
+    /** 阶段2：若身边存在即将爆炸(fuse<20)的 TNT 实体，则丢传送药水逃逸到“周围无 TNT 实体”的安全位置。
+     *  返回 true 表示发生躲避（调用方应跳过当前挖掘）。 */
+    private static boolean witchBossStage2AvoidNearbyTnt(Witch witch, ServerLevel level) {
+        // 冷却
+        long gameTime = level.getGameTime();
+        long lastTp = witch.getPersistentData().getLong(WITCH_BOSS_TP_CD_TAG);
+        if (gameTime - lastTp < WITCH_BOSS_TP_COOLDOWN) return false;
+        // 找 fuse<20 的 TNT 实体
+        net.minecraft.world.entity.item.PrimedTnt danger = null;
+        for (net.minecraft.world.entity.item.PrimedTnt t : level.getEntitiesOfClass(
+                net.minecraft.world.entity.item.PrimedTnt.class,
+                witch.getBoundingBox().inflate(16.0))) {
+            if (t.getFuse() < 20) { danger = t; break; }
+        }
+        if (danger == null) return false;
+
+        // 在随机方向 15~20 格找“能容纳女巫且周围无任何 TNT 实体”的落点
+        java.util.Random rand = new java.util.Random(witch.getRandom().nextLong());
+        Vec3 exitPos = null;
+        for (int tries = 0; tries < 12 && exitPos == null; tries++) {
+            double ang = rand.nextDouble() * Math.PI * 2.0;
+            double dist = WITCH_BOSS_TP_DIST_MIN
+                + rand.nextDouble() * (WITCH_BOSS_TP_DIST_MAX - WITCH_BOSS_TP_DIST_MIN);
+            Vec3 raw = witch.position().add(new Vec3(Math.cos(ang), 0.0, Math.sin(ang)).scale(dist));
+            if (Math.abs(raw.x) >= 29999984.0 || Math.abs(raw.z) >= 29999984.0) continue;
+            Vec3 cand = findPortalExitNear(level, raw, 6, witch.getBbWidth(), witch.getBbHeight());
+            if (cand == null) continue;
+            // 候选点周围 8 格内不得有任何 TNT 实体
+            boolean hasTnt = !level.getEntitiesOfClass(net.minecraft.world.entity.item.PrimedTnt.class,
+                new net.minecraft.world.phys.AABB(cand.x - 8, cand.y - 8, cand.z - 8,
+                    cand.x + 8, cand.y + 8, cand.z + 8)).isEmpty();
+            if (!hasTnt) exitPos = cand;
+        }
+        if (exitPos == null) return false;
+
+        // 按女巫运动抛物线/脚下丢传送药水（出口 = 安全落点）
+        throwWitchTeleportPotion(witch, level, exitPos);
+        consumeWitchBossAmmo(witch, WITCH_BOSS_AMMO_TRANSPORT_TAG, 1);
+        witch.getPersistentData().putLong(WITCH_BOSS_TP_CD_TAG, gameTime);
+        return true;
+    }
+
+    /** 阶段2·点燃一处“生物变成的 TNT 方块”：将该方块从 BLOCK_TRANSMUTATIONS 移除，
+     *  原位生成 fuse=200 的点燃 TNT 实体并把生物数据转入 TNT_TRANSMUTATIONS（爆炸瞬间才判死生物）。
+     *  播放打火石音效。 */
+    private static void witchBossIgniteTransmutedTnt(Witch witch, ServerLevel level,
+            net.minecraft.core.BlockPos pos,
+            Map<BlockPos, java.util.List<TransmutationData>> dimMap) {
+        java.util.List<TransmutationData> list = dimMap.remove(pos);
+        if (list == null || list.isEmpty()) return;
+        // 移除该位置的 TNT 方块（透明方块实体），生成点燃的 TNT
+        level.removeBlock(pos, false);
+        net.minecraft.world.entity.item.PrimedTnt tnt =
+            new net.minecraft.world.entity.item.PrimedTnt(level, pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, witch);
+        tnt.setFuse(WITCH_BOSS_TNT_FUSE);
+        level.addFreshEntity(tnt);
+        TNT_TRANSMUTATIONS.put(tnt.getUUID(), list.get(0)); // 爆炸瞬间才判死原生物
+        level.playSound(null, pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5,
+            net.minecraft.sounds.SoundEvents.FLINTANDSTEEL_USE,
+            net.minecraft.sounds.SoundSource.BLOCKS, 1.0F, 1.0F);
+    }
+
     /** 该女巫“此刻是否进入近身逃逸判定”（供 RangedAttackGoalMixin 做优先级判断）：
-     *  阶段1/2 + 有靠得太近的存活玩家 + 逃逸冷却已到 → true，表示本应优先实施逃逸，
+     *  窒息(任意阶段)或 任意阶段 + 有靠得太近(< {@link #WITCH_BOSS_TP_AVOID_RANGE} 格)的存活玩家/仇恨目标
+     *  + 逃逸冷却已到 → true，表示本应优先实施逃逸，
      *  而不是执行弹道自伤“退位调整”、甚至不应丢弃攻击药水。实际丢药水由
      *  {@link #handleWitchBossRetreatTeleport} 在实体 tick 阶段完成。 */
     public static boolean isWitchBossRetreatingNow(Witch witch, ServerLevel level) {
-        int stage = getWitchBossStage(witch);
-        if (stage != WITCH_BOSS_STAGE_ENTITY) return false; // 仅阶段1逃逸
+        boolean suffocating = witch.isInWall(); // 正在窒息：优先逃逸
         long gameTime = level.getGameTime();
         if (gameTime - witch.getPersistentData().getLong(WITCH_BOSS_TP_CD_TAG) < WITCH_BOSS_TP_COOLDOWN) return false;
+        if (suffocating) return true; // 窒息：无视距离，直接逃逸
         for (Player p : level.players()) {
-            if (p.isAlive() && !p.isSpectator() && witch.distanceTo(p) < WITCH_BOSS_TP_AVOID_RANGE) {
+            if (isWitchBossThreat(p) && witch.distanceTo(p) < WITCH_BOSS_TP_AVOID_RANGE) {
+                // 被变成方块的玩家：女巫应接近挖掘而非丢传送药水逃离，不触发逃逸
+                PlayerTransmutationInfo pinfo = PLAYER_TRANSMUTATION_INFO.get(p.getUUID());
+                if (pinfo != null && pinfo.form() == TransmutationForm.BLOCK) continue;
                 return true;
             }
+        }
+        // 自身仇恨目标（非玩家实体）靠得太近也触发逃逸（方块玩家除外）
+        if (witch.getTarget() instanceof net.minecraft.world.entity.LivingEntity tg
+            && tg.isAlive() && !tg.isSpectator()
+            && witch.distanceTo(tg) < WITCH_BOSS_TP_AVOID_RANGE) {
+            boolean blockTarget = (tg instanceof Player tp)
+                && PLAYER_TRANSMUTATION_INFO.get(tp.getUUID()) instanceof PlayerTransmutationInfo pinfo2
+                && pinfo2.form() == TransmutationForm.BLOCK;
+            if (!blockTarget) return true;
         }
         return false;
     }
@@ -6730,6 +7681,26 @@ public class ModMain {
     /** 女巫Boss是否处于近战状态（阶段3持剑近战，用于高位禁止远程投掷/规避/逃逸）。 */
     public static boolean isWitchBossInMelee(Witch witch) {
         return witch.getPersistentData().getBoolean(WITCH_BOSS_MELEE_TAG);
+    }
+
+    /** 是否为女巫Boss 的敌对反应目标：必须存活、非观战、且非创造模式。
+     *  创造类玩家（测试/建造等）不应喝药传送、掏打火石、掏工具攻击等。 */
+    private static void registerWitchBossAfterRebuild(Entity revived) {
+        if (revived instanceof Witch w && w.isAlive()
+                && w.getPersistentData().getBoolean(WITCH_BOSS_TAG)) {
+            // 还原生成的是一只是因为还原会新开 UUID（原 UUID 已随销毁实体 removed）
+            // 需按新 UUID 重新登记到血条跟踪，否则血条事件在 updateWitchBossBar 清理时丢失。
+            WITCH_BOSS_TRACKED.add(w.getUUID());
+        }
+    }
+
+    /** 是否为女巫Boss 的敌对反应目标：必须存活、非观战、且非创造模式。
+     *  创造类玩家（测试/建造等）不应喝药传送、掏打火石、掏工具攻击等。 */
+    private static boolean isWitchBossThreat(net.minecraft.world.entity.player.Player p) {
+        if (p == null || !p.isAlive() || p.isSpectator()) return false;
+        if (p instanceof net.minecraft.server.level.ServerPlayer sp
+            && sp.gameMode.getGameModeForPlayer() == net.minecraft.world.level.GameType.CREATIVE) return false;
+        return true;
     }
 
     /** 女巫Boss阶段3近战（每刻调用）：
@@ -6753,7 +7724,7 @@ public class ModMain {
         Player near = null;
         double best = Double.MAX_VALUE;
         for (Player p : level.players()) {
-            if (!p.isAlive() || p.isSpectator()) continue;
+            if (!isWitchBossThreat(p)) continue;
             double d = witch.distanceTo(p);
             if (d < best) { best = d; near = p; }
         }
@@ -6793,6 +7764,19 @@ public class ModMain {
         return PLAYER_TRANSMUTATION_INFO.containsKey(player.getUUID());
     }
 
+    /** 玩家是否已是“生物形态”（MOB 渲染替换）变形。 */
+    private static boolean isPlayerTransmutedMob(ServerPlayer sp) {
+        PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(sp.getUUID());
+        return info != null && info.form() == TransmutationForm.MOB;
+    }
+
+    /** 女巫Boss阶段2：对已是“生物形态”的玩家投掷方块变形药水（把生物→方块，像对待正常玩家一样）。 */
+    public static boolean shouldTossBlockPotionAtMorphedMob(Witch witch, ServerPlayer sp) {
+        return !isWitchBossInMelee(witch)
+            && getWitchBossStage(witch) == WITCH_BOSS_STAGE_BLOCK
+            && isPlayerTransmutedMob(sp);
+    }
+
     /** 该维度是否存在“已变形成方块”的玩家。 */
     private static boolean hasBlockTransmutedPlayer(ServerLevel level) {
         for (Player p : level.players()) {
@@ -6811,42 +7795,73 @@ public class ModMain {
         return false;
     }
 
+    /** 该维度是否存在“已变形成生物（MOB 渲染替换）”的存活玩家（供阶段1命中/血条判断）。 */
+    private static boolean hasMorphedMobPlayer(ServerLevel level) {
+        for (Player p : level.players()) {
+            if (!p.isAlive() || p.isSpectator()) continue;
+            PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(p.getUUID());
+            if (info != null && info.form == TransmutationForm.MOB) return true;
+        }
+        return false;
+    }
+
     /** 阶段2：主动靠近目标并用对应工具攻击。
      *  优先锁定“已变形成方块”的玩家（按其方块种类掏对应工具）；若无变方块玩家，
      *  则锁定最近的存活玩家并主动靠近近战。目标超出攻击范围时用寻路持续追赶（不传送），
      *  追到范围内才挥击。 */
     private static void handleWitchBossToolAttack(Witch witch, ServerLevel level) {
         if (getWitchBossStage(witch) != WITCH_BOSS_STAGE_BLOCK) return;
-        Player target = null;
-        Player nearest = null;
-        double bestD = Double.MAX_VALUE;
+        // 目标可为玩家也可为自身仇恨目标（被女巫攻击/猎杀的非玩家生物）
+        net.minecraft.world.entity.LivingEntity target = null;
+        String blockId = null;
+        // 仅锁定“已变形成方块”的玩家（TNT 交给点燃逻辑处理，不用工具攻击）。
+        // 不追踪普通/未变形的玩家，避免女巫在玩家变方块前就朝其移动、导致扔出的药水砸到自己。
         for (Player p : level.players()) {
             if (!p.isAlive() || p.isSpectator()) continue;
+            // 不追踪创造/观战玩家（创造模式下自测变方块的女巫不追击）
+            if (!isWitchBossThreat(p)) continue;
             PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(p.getUUID());
-            if (info != null && info.form == TransmutationForm.BLOCK) { target = p; break; }
-            double d = witch.distanceTo(p);
-            if (d < bestD) { bestD = d; nearest = p; }
+            if (info != null && info.form == TransmutationForm.BLOCK) {
+                if ("minecraft:tnt".equals(info.itemType())) continue; // 已经/待点燃的 TNT 不在此列
+                target = p; blockId = info.itemType(); break;
+            }
         }
-        // 无变方块玩家时，退而主动靠近最近玩家（不再原地不动等目标上门）
-        if (target == null) target = nearest;
-        if (target == null) return;
-        String blockId = PLAYER_TRANSMUTATION_INFO.get(target.getUUID()) != null
-            ? PLAYER_TRANSMUTATION_INFO.get(target.getUUID()).itemType() : null;
+        if (target == null) {
+            // 阶段2 无方块玩家可挖掘：清空手持工具、停止寻路（不追踪普通玩家）
+            witch.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+            witch.getNavigation().stop();
+            return;
+        }
+        // 按目标类型掏工具：变方块玩家→对应工具；其余(生物/普通玩家)→剑
         witch.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND,
             new ItemStack(pickToolForBlock(blockId)));
         double dist = witch.distanceTo(target);
         if (dist > WITCH_BOSS_MELEE_RANGE) {
-            // 超出攻击范围：用寻路持续追赶玩家（写入移动AI路径，而非传送）
+            // 超出攻击范围：用寻路持续追赶目标（写入移动AI路径，而非传送）。
+            // vanilla 目标也锁到该目标，避免原版女巫 AI 取消手动寻路。
+            witch.setTarget(target);
             witch.getNavigation().moveTo(target, 1.0D);
+            // 兜底：直接指定移动控制目标点。原版女巫 AI 在寻路失败/目标被清空时，
+            // 会因配 nav 已 done 而停在原地；MoveControl 足以按该点持续逼近，保证女巫主动移动过去。
+            witch.getMoveControl().setWantedPosition(target.getX(), target.getY(), target.getZ(), 1.0D);
             return;
         }
-        // 已到范围内：按攻击间隔挥击
-        long t = level.getGameTime();
-        CompoundTag data = witch.getPersistentData();
-        if (t - data.getLong(WITCH_BOSS_TOOL_LAST_TAG) >= WITCH_BOSS_TOOL_COOLDOWN) {
-            target.hurt(level.damageSources().mobAttack(witch), WITCH_BOSS_TOOL_DAMAGE);
-            data.putLong(WITCH_BOSS_TOOL_LAST_TAG, t);
+        // 已进入攻击范围：仅对“方块形态玩家”（有对应方块类型）用工具挥击破坏；
+        // 对普通玩家/生物不做近战（符合“移除二阶段普通近战”）。
+        // 伤害 = 目标最大生命/4 的真实伤害（无视护甲、抗性提升与附魔减伤）。
+        if (blockId != null) {
+            long t = level.getGameTime();
+            CompoundTag toolData = witch.getPersistentData();
+            if (t - toolData.getLong(WITCH_BOSS_TOOL_LAST_TAG) >= WITCH_BOSS_TOOL_COOLDOWN) {
+                net.minecraft.world.damagesource.DamageSource toolSrc =
+                    level.damageSources().source(
+                        cn.autoforged.joes_addons_for_abmc.damage.ModDamageTypes.WITCH_BOSS_TOOL.getKey(),
+                        witch);
+                target.hurt(toolSrc, target.getMaxHealth() / 4.0F);
+                toolData.putLong(WITCH_BOSS_TOOL_LAST_TAG, t);
+            }
         }
+        return;
     }
 
     /** 根据方块 id 选择对应工具：泥土/沙类→锹，木头/原木→斧，石头/矿石→镐，其余→剑。 */
@@ -6871,7 +7886,216 @@ public class ModMain {
         return net.minecraft.world.item.Items.DIAMOND_SWORD;
     }
 
-    /** 阶段3（非药水/非近战状态下）：手持打火石，每 5 秒记录一次玩家坐标，延迟 3~4 秒后在记录坐标点一次火。 */
+    /** 女巫Boss正在挖掘的生物方块：pos=目标方块，startTick=开始挖掘时序，totalTicks=该方块总挖掘时长。 */
+    private static final class WitchBossMine {
+        final net.minecraft.core.BlockPos pos;
+        final long startTick;
+        final int totalTicks;
+        WitchBossMine(net.minecraft.core.BlockPos p, long s, int total) {
+            pos = p; startTick = s; totalTicks = total;
+        }
+    }
+    /** 女巫Boss uuid → 其正在挖掘的方块状态。 */
+    private static final java.util.concurrent.ConcurrentHashMap<
+        java.util.UUID, WitchBossMine> WITCH_BOSS_MINING = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 阶段2（方块形态）：若女巫生命低于最大生命，则手持治疗药水直饮（与原版女巫喝药机制一致）。
+     *  带冷却防连喝；喝药期间由调用方跳过持武器行为以免覆盖药水打断喝药。 */
+    private static void handleWitchBossStage2Heal(Witch witch, ServerLevel level) {
+        if (getWitchBossStage(witch) != WITCH_BOSS_STAGE_BLOCK) return;
+        if (witch.isDrinkingPotion()) return; // 正在喝，等喝完
+        if (witch.getHealth() >= witch.getMaxHealth() - 0.01F) return; // 满血不喝
+        CompoundTag data = witch.getPersistentData();
+        long t = level.getGameTime();
+        if (t - data.getLong(WITCH_BOSS_HEAL_LAST_TAG) < WITCH_BOSS_HEAL_COOLDOWN) return;
+        // 手持治疗药水并开始饮用
+        ItemStack potion = new ItemStack(net.minecraft.world.item.Items.POTION);
+        potion.set(net.minecraft.core.component.DataComponents.POTION_CONTENTS,
+            new net.minecraft.world.item.alchemy.PotionContents(net.minecraft.world.item.alchemy.Potions.STRONG_HEALING));
+        witch.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, potion);
+        witch.startUsingItem(net.minecraft.world.InteractionHand.MAIN_HAND);
+        data.putLong(WITCH_BOSS_HEAL_LAST_TAG, t);
+    }
+
+    /** 阶段3：女巫若着火且未拥有抗火效果，喝下抗火药水（带冷却防刷）。 */
+    private static void handleWitchBossDrinkFireResistance(Witch witch, ServerLevel level) {
+        if (getWitchBossStage(witch) != WITCH_BOSS_STAGE_ITEM) return;
+        if (!witch.isOnFire()) return;
+        if (witch.isDrinkingPotion()) return; // 正在喝，等喝完
+        if (witch.hasEffect(net.minecraft.world.effect.MobEffects.FIRE_RESISTANCE)) return;
+        CompoundTag data = witch.getPersistentData();
+        long t = level.getGameTime();
+        if (t - data.getLong(WITCH_BOSS_FIRERES_LAST_TAG) < WITCH_BOSS_FIRERES_COOLDOWN) return;
+        ItemStack potion = new ItemStack(net.minecraft.world.item.Items.POTION);
+        potion.set(net.minecraft.core.component.DataComponents.POTION_CONTENTS,
+            new net.minecraft.world.item.alchemy.PotionContents(net.minecraft.world.item.alchemy.Potions.FIRE_RESISTANCE));
+        witch.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, potion);
+        witch.startUsingItem(net.minecraft.world.InteractionHand.MAIN_HAND);
+        data.putLong(WITCH_BOSS_FIRERES_LAST_TAG, t);
+    }
+
+    /** 任何阶段：未被变形时若离家超过{@link #WITCH_BOSS_MAX_HOME_DISTANCE}格，
+     *  丢传送药水返回小屋附近5格内（消耗传送药水计数，有冷却）。 */
+    private static void handleWitchBossHomingTeleport(Witch witch, ServerLevel level) {
+        // 仅在未被变形（非自我变形形态）时触发
+        if (witch.getPersistentData().getBoolean(WITCH_BOSS_SELF_TRANS_TAG)) return;
+        Vec3 home = getWitchBossHome(witch);
+        if (home == null) return;
+        if (witch.distanceToSqr(home) <= WITCH_BOSS_MAX_HOME_DISTANCE * WITCH_BOSS_MAX_HOME_DISTANCE) return;
+        // 冷却
+        long gameTime = level.getGameTime();
+        long lastTp = witch.getPersistentData().getLong(WITCH_BOSS_TP_CD_TAG);
+        if (gameTime - lastTp < WITCH_BOSS_TP_COOLDOWN) return;
+        // 在小屋附近5格内找安全落点
+        java.util.Random rand = new java.util.Random(witch.getRandom().nextLong());
+        Vec3 targetPos = null;
+        for (int tries = 0; tries < 10 && targetPos == null; tries++) {
+            double ox = home.x + (rand.nextDouble() - 0.5) * 10.0;
+            double oz = home.z + (rand.nextDouble() - 0.5) * 10.0;
+            Vec3 candidate = new Vec3(ox, home.y, oz);
+            targetPos = findPortalExitNear(level, candidate, 6, witch.getBbWidth(), witch.getBbHeight());
+        }
+        if (targetPos == null) targetPos = home;
+        // 消耗传送药水并丢出
+        consumeWitchBossAmmo(witch, WITCH_BOSS_AMMO_TRANSPORT_TAG, 1);
+        throwWitchTeleportPotion(witch, level, targetPos);
+        witch.getPersistentData().putLong(WITCH_BOSS_TP_CD_TAG, gameTime);
+    }
+
+    /** 阶段2：女巫Boss持对应工具，寻路到“生物变成的方块”跟前，模拟挖掘——
+     *  方块表面出现逐渐增大的裂痕（destroy progress 0→9），挖约 1.3~1.7 秒后该方块碎裂，对应的生物死亡。
+     *  玩家变的方块不在此列（玩家为本体，直接由 {@link #handleWitchBossToolAttack} 受击）。
+     *  返回 true 表示正在挖掘（调用方随之跳过持剑工具攻击）。 */
+    private static boolean handleWitchBossMineBlock(Witch witch, ServerLevel level) {
+        if (getWitchBossStage(witch) != WITCH_BOSS_STAGE_BLOCK) return false;
+
+        // 近旁有即将爆炸(fuse<20)的 TNT 实体：无论是否有挖掘目标，都先丢传送药水传送到“无 TNT 实体”的位置躲避
+        if (witchBossStage2AvoidNearbyTnt(witch, level)) {
+            var st = WITCH_BOSS_MINING.remove(witch.getUUID());
+            if (st != null) level.destroyBlockProgress(witch.getId(), st.pos, -1);
+            return true;
+        }
+
+        ResourceLocation dimId = level.dimension().location();
+        Map<BlockPos, java.util.List<TransmutationData>> dimMap = BLOCK_TRANSMUTATIONS.get(dimId);
+
+        // 锁定一个“生物变的方块”（非玩家源）目标，优先近的
+        net.minecraft.core.BlockPos minePos = null;
+        TransmutationData mineData = null;
+        if (dimMap != null) {
+            double best = Double.MAX_VALUE;
+            for (Map.Entry<BlockPos, java.util.List<TransmutationData>> e : dimMap.entrySet()) {
+                for (TransmutationData d : e.getValue()) {
+                    if (d.playerUuid() != null) continue; // 只挖生物的方块
+                    double dx = e.getKey().getX() + 0.5 - witch.getX();
+                    double dz = e.getKey().getZ() + 0.5 - witch.getZ();
+                    double dist = dx * dx + dz * dz;
+                    if (dist < best) { best = dist; minePos = e.getKey(); mineData = d; }
+                }
+            }
+        }
+        if (minePos == null) {
+            // 无生物方块可挖：清除进行中的挖掘（若有）
+            var st = WITCH_BOSS_MINING.remove(witch.getUUID());
+            if (st != null) level.destroyBlockProgress(witch.getId(), st.pos, -1);
+            return false;
+        }
+
+        // 近旁有即将爆炸(fuse<20)的 TNT 实体：不挖掘，先丢传送药水传送到“无 TNT 实体”的位置躲避
+        if (witchBossStage2AvoidNearbyTnt(witch, level)) {
+            var st = WITCH_BOSS_MINING.remove(witch.getUUID());
+            if (st != null) level.destroyBlockProgress(witch.getId(), st.pos, -1);
+            return true;
+        }
+
+        // 锁定目标是 TNT：不挖掘，而是手持打火石将之点燃（近身则当场点燃，否则先寻路靠近）
+        if ("minecraft:tnt".equals(mineData.itemType())) {
+            witch.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND,
+                new ItemStack(net.minecraft.world.item.Items.FLINT_AND_STEEL));
+            double distTnt = witch.distanceToSqr(minePos.getX() + 0.5, minePos.getY() + 0.5, minePos.getZ() + 0.5);
+            var stT = WITCH_BOSS_MINING.remove(witch.getUUID());
+            if (stT != null) level.destroyBlockProgress(witch.getId(), stT.pos, -1);
+            if (Math.sqrt(distTnt) > WITCH_BOSS_TNT_IGNITE_RANGE) {
+                // 未近身：寻路靠近（不显示裂痕、不计时）
+                witch.getNavigation().moveTo(minePos.getX() + 0.5, minePos.getY(), minePos.getZ() + 0.5, 1.0);
+                return true;
+            }
+            // 已近身：当场点燃该 TNT 方块
+            witchBossIgniteTransmutedTnt(witch, level, minePos, dimMap);
+            return true;
+        }
+
+        // 掏对应工具
+        witch.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND,
+            new ItemStack(pickToolForBlock(mineData.itemType())));
+
+        double dist = witch.distanceToSqr(minePos.getX() + 0.5, minePos.getY() + 0.5, minePos.getZ() + 0.5);
+        if (Math.sqrt(dist) > WITCH_BOSS_MELEE_RANGE) {
+            // 还没走到：寻路接近，不显示裂痕；也不计时（到达前不计入挖掘时长，避免走到门前就已“挖完”瞬间碎裂）
+            witch.getNavigation().moveTo(minePos.getX() + 0.5, minePos.getY(), minePos.getZ() + 0.5, 1.0);
+            var st2 = WITCH_BOSS_MINING.remove(witch.getUUID());
+            if (st2 != null) level.destroyBlockProgress(witch.getId(), st2.pos, -1);
+            return true;
+        }
+
+        // 已走到方块跟前：此刻才开始挖掘计时（1.3~1.7 秒 = 26~34 tick）
+        var state = WITCH_BOSS_MINING.get(witch.getUUID());
+        long t = level.getGameTime();
+        if (state == null || !state.pos.equals(minePos)) {
+            int total = 26 + level.random.nextInt(9);
+            state = new WitchBossMine(minePos, t, total);
+            WITCH_BOSS_MINING.put(witch.getUUID(), state);
+        }
+        // 挖掘裂痕 0→9 逐渐增大
+        int elapsed = (int) (t - state.startTick);
+        int progress = Math.min(9, Math.max(0, elapsed * 10 / state.totalTicks));
+        level.destroyBlockProgress(witch.getId(), state.pos, progress);
+        if (elapsed < state.totalTicks) return true; // 尚未挖完，保持挖掘
+
+        // 挖完：清裂痕、碎裂方块、结算生物死亡
+        level.destroyBlockProgress(witch.getId(), state.pos, -1);
+        WITCH_BOSS_MINING.remove(witch.getUUID());
+        java.util.List<TransmutationData> list = dimMap.remove(minePos);
+        net.minecraft.world.level.block.state.BlockState bs = level.getBlockState(minePos);
+        level.levelEvent(null, 2001, minePos,
+            net.minecraft.world.level.block.Block.getId(bs)); // 碎裂粒子
+        level.playSound(null, minePos, bs.getSoundType().getBreakSound(),
+            net.minecraft.sounds.SoundSource.BLOCKS, 1.0F, 1.0F);
+        level.destroyBlock(minePos, false, null);
+        if (list != null) {
+            for (TransmutationData d : list) {
+                if (d.playerUuid() != null) killTransmutedPlayer(level, d, minePos, true);
+                else handleTransmutationKillCredit(level, d, minePos, null);
+            }
+        }
+        return true;
+    }
+
+    /** 找最近一个“当前已是物品形态”的对象的位置：
+     *  已变为物品的玩家本体（渲染替换时玩家就是该物品），或已变为物品的实体(ItemEntity 壳)。 */
+    private static Vec3 nearestItemTransmutedPos(Witch witch, ServerLevel level) {
+        double best = Double.MAX_VALUE;
+        Vec3 bestPos = null;
+        // 已变物品的玩家（玩家即为物品本体）
+        for (Player pl : level.players()) {
+            if (!isWitchBossThreat(pl)) continue;
+            PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(pl.getUUID());
+            if (info != null && info.form == TransmutationForm.ITEM) {
+                double d = witch.distanceTo(pl);
+                if (d < best) { best = d; bestPos = pl.position(); }
+            }
+        }
+        // 已变物品的实体（非玩家生物 → ItemEntity 壳）
+        for (java.util.UUID uuid : ITEM_TRANSMUTATIONS.keySet()) {
+            Entity e = level.getEntity(uuid);
+            if (e == null || !e.isAlive()) continue;
+            double d = witch.distanceTo(e);
+            if (d < best) { best = d; bestPos = e.position(); }
+        }
+        return bestPos;
+    }
+
+    /** 阶段3（非药水/非近战状态下）：手持打火石，每 5 秒记录一次目标当前坐标，延迟 3~4 秒后在记录坐标点一次火。 */
     private static void handleWitchBossFlintAndSteel(Witch witch, ServerLevel level) {
         if (getWitchBossStage(witch) != WITCH_BOSS_STAGE_ITEM) return;
         if (isWitchBossInMelee(witch)) return; // 近战时不做打火石
@@ -6881,20 +8105,30 @@ public class ModMain {
         if (!pending) {
             // 非打火石记录期：移除打火石期间附加的抗火（若仍残留）
             witch.removeEffect(net.minecraft.world.effect.MobEffects.FIRE_RESISTANCE);
-            // 每 5 秒记录一次玩家当前坐标
+            // 每 5 秒记录一次“要烧的物品”坐标
             if (t - data.getLong(WITCH_BOSS_FLINT_REC_TAG) >= WITCH_BOSS_FLINT_RECORD_INTERVAL) {
-                Player p = null;
-                double best = Double.MAX_VALUE;
-                for (Player pl : level.players()) {
-                    if (!pl.isAlive() || pl.isSpectator()) continue;
-                    double d = witch.distanceTo(pl);
-                    if (d < best) { best = d; p = pl; }
+                // 优先在“目标已变成的物品”对应位置点火（含玩家的物品形态、或生物变的物品实体）
+                Vec3 targetPos = nearestItemTransmutedPos(witch, level);
+                // 若无物品形态目标，退而用自身仇恨目标位置
+                if (targetPos == null && witch.getTarget() instanceof net.minecraft.world.entity.LivingEntity tg
+                        && tg.isAlive() && !tg.isSpectator()) {
+                    targetPos = tg.position();
                 }
-                if (p != null) {
-                    Vec3 pv = p.position();
-                    data.putDouble(WITCH_BOSS_FLINT_X_TAG, pv.x);
-                    data.putDouble(WITCH_BOSS_FLINT_Y_TAG, pv.y);
-                    data.putDouble(WITCH_BOSS_FLINT_Z_TAG, pv.z);
+                // 兜底最近玩家
+                if (targetPos == null) {
+                    Player p = null;
+                    double best = Double.MAX_VALUE;
+                    for (Player pl : level.players()) {
+                        if (!isWitchBossThreat(pl)) continue;
+                        double d = witch.distanceTo(pl);
+                        if (d < best) { best = d; p = pl; }
+                    }
+                    if (p != null) targetPos = p.position();
+                }
+                if (targetPos != null) {
+                    data.putDouble(WITCH_BOSS_FLINT_X_TAG, targetPos.x);
+                    data.putDouble(WITCH_BOSS_FLINT_Y_TAG, targetPos.y);
+                    data.putDouble(WITCH_BOSS_FLINT_Z_TAG, targetPos.z);
                     data.putLong(WITCH_BOSS_FLINT_REC_TAG, t);
                     data.putLong(WITCH_BOSS_FLINT_USE_TAG,
                         t + WITCH_BOSS_FLINT_USE_MIN + (long) (witch.getRandom().nextDouble() * WITCH_BOSS_FLINT_USE_JITTER));
@@ -6909,18 +8143,39 @@ public class ModMain {
                 witch.addEffect(new net.minecraft.world.effect.MobEffectInstance(
                     net.minecraft.world.effect.MobEffects.FIRE_RESISTANCE, 200, 0, false, false, true));
             }
-            // 时刻跟随“被变形成物品”的玩家：用寻路（写入移动AI路径），而非传送，避免呆板
-            Player itemPlayer = null;
-            for (Player pl : level.players()) {
-                if (!pl.isAlive() || pl.isSpectator()) continue;
-                PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(pl.getUUID());
-                if (info != null && info.form == TransmutationForm.ITEM) { itemPlayer = pl; break; }
+            // 时刻跟随“目标已变成的物品”（含玩家物品形态、或生物变的掉落物 ItemEntity 壳）：
+            // 用寻路（写入移动AI路径）而非传送，避免呆板；先靠近再点火。
+            net.minecraft.world.entity.Entity itemEnt = null;
+            for (java.util.UUID uuid : ITEM_TRANSMUTATIONS.keySet()) {
+                Entity e = level.getEntity(uuid);
+                if (e != null && e.isAlive()) { itemEnt = e; break; }
             }
-            if (itemPlayer != null) {
-                witch.getNavigation().moveTo(itemPlayer, 1.0D);
+            Vec3 navTarget = null;
+            if (itemEnt != null) {
+                witch.getNavigation().moveTo(itemEnt, 1.0D);
+                navTarget = itemEnt.position();
+            } else {
+                Player itemPlayer = null;
+                for (Player pl : level.players()) {
+                    if (!pl.isAlive() || pl.isSpectator()) continue;
+                    PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(pl.getUUID());
+                    if (info != null && info.form == TransmutationForm.ITEM) { itemPlayer = pl; break; }
+                }
+                if (itemPlayer != null) {
+                    witch.getNavigation().moveTo(itemPlayer, 1.0D);
+                    navTarget = itemPlayer.position();
+                }
             }
-            if (t >= data.getLong(WITCH_BOSS_FLINT_USE_TAG)) {
-                // 延迟到点：在记录的坐标使用一次打火石（真正点火）
+            // 若已知物品目标，按它的实时位置刷新“点火坐标”，保证被推/移动后也能跟着烧
+            if (navTarget != null) {
+                data.putDouble(WITCH_BOSS_FLINT_X_TAG, navTarget.x);
+                data.putDouble(WITCH_BOSS_FLINT_Y_TAG, navTarget.y);
+                data.putDouble(WITCH_BOSS_FLINT_Z_TAG, navTarget.z);
+            }
+            boolean nearItem = navTarget == null
+                || witch.distanceToSqr(navTarget) <= WITCH_BOSS_FLINT_IGNITE_RANGE * WITCH_BOSS_FLINT_IGNITE_RANGE;
+            if (t >= data.getLong(WITCH_BOSS_FLINT_USE_TAG) && nearItem) {
+                // 延迟到点且已靠近目标后才真正点火
                 useFlintAndSteelAt(level, witch,
                     new Vec3(data.getDouble(WITCH_BOSS_FLINT_X_TAG),
                         data.getDouble(WITCH_BOSS_FLINT_Y_TAG), data.getDouble(WITCH_BOSS_FLINT_Z_TAG)));
@@ -6986,16 +8241,34 @@ public class ModMain {
      *  仅用于朝敌方投掷；药水内容为变形药水(TRANSMUTATION)，ITEM_TYPE 编码该阶段对应的
      *  目标类别（生物壳/方块/物品），命中后目标即变形。 */
     public static void throwWitchBossTransmutationPotion(Witch witch, LivingEntity target) {
+        throwWitchBossTransmutationPotion(witch, target, null);
+    }
+
+    /** 女巫Boss阶段1·反击/进阶用：直接投掷“阶段2方块形变药水”（能把生物/玩家变成方块）。 */
+    public static void throwWitchBossBlockPotion(Witch witch, LivingEntity target) {
+        throwWitchBossTransmutationPotion(witch, target,
+            stageTransmutationItemType(WITCH_BOSS_STAGE_BLOCK, witch.getRandom()));
+    }
+
+    /** 女巫Boss核心投掷实现。forcedItemType != null 时忽略当前阶段、强制用该类别的变形药水。 */
+    public static void throwWitchBossTransmutationPotion(Witch witch, LivingEntity target, String forcedItemType) {
         if (witch.level().isClientSide()) return;
+        // 不对创造模式玩家投变形药水（不将其视为敌对反应目标）
+        if (target instanceof Player p && !isWitchBossThreat(p)) return;
         ServerLevel level = (ServerLevel) witch.level();
         int stage = getWitchBossStage(witch);
-        String itemType = stageTransmutationItemType(stage, witch.getRandom());
+        String itemType = (forcedItemType != null)
+            ? forcedItemType
+            : stageTransmutationItemType(stage, witch.getRandom());
         if (itemType == null) return;
 
         ItemStack basePotion = new ItemStack(net.minecraft.world.item.Items.SPLASH_POTION);
+        int potionColor = getEntityTextureColor(itemType);
         basePotion.set(net.minecraft.core.component.DataComponents.POTION_CONTENTS,
             new net.minecraft.world.item.alchemy.PotionContents(
-                cn.autoforged.joes_addons_for_abmc.potion.ModPotions.TRANSMUTATION));
+                java.util.Optional.of(cn.autoforged.joes_addons_for_abmc.potion.ModPotions.TRANSMUTATION),
+                java.util.Optional.of(potionColor),
+                java.util.List.of()));
         basePotion.set(ModDataComponents.ITEM_TYPE.get(), itemType);
 
         Vec3 from = witch.getEyePosition();
@@ -7072,7 +8345,7 @@ public class ModMain {
     private static void handleWitchBossIgniteTnt(Witch witch, ServerLevel level) {
         Player tntPlayer = null;
         for (Player p : level.players()) {
-            if (!p.isAlive() || p.isSpectator()) continue;
+            if (!isWitchBossThreat(p)) continue;
             PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(p.getUUID());
             if (info != null && info.form == TransmutationForm.BLOCK
                     && "minecraft:tnt".equals(info.itemType())) {
@@ -7081,12 +8354,21 @@ public class ModMain {
             }
         }
         if (tntPlayer == null) return;
+        // 该玩家名下已有一个点燃中的 TNT（跟随中）：不再重复点燃同一处，避免堆叠多个 TNT
+        if (isPlayerTntLit(level, tntPlayer, tntPlayer.getUUID())) return;
         CompoundTag data = witch.getPersistentData();
         double dist = witch.distanceTo(tntPlayer);
         if (dist > WITCH_BOSS_TNT_IGNITE_RANGE) {
+            // 尚未进入点燃范围：手持打火石，主动向该 TNT 玩家寻路靠近（MoveControl 兜底驱动）
             if (data.getBoolean("jafa_witch_boss_tnt_ignited")) {
                 data.putBoolean("jafa_witch_boss_tnt_ignited", false);
             }
+            witch.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND,
+                new ItemStack(net.minecraft.world.item.Items.FLINT_AND_STEEL));
+            witch.setTarget(tntPlayer);
+            witch.getNavigation().moveTo(tntPlayer, 1.0D);
+            witch.getMoveControl().setWantedPosition(
+                tntPlayer.getX(), tntPlayer.getY(), tntPlayer.getZ(), 1.0D);
             return;
         }
         if (data.getBoolean("jafa_witch_boss_tnt_ignited")) return; // 已点燃过，等待爆炸/复原
@@ -7109,6 +8391,11 @@ public class ModMain {
         tnt.setFuse(WITCH_BOSS_TNT_FUSE);
         tnt.getPersistentData().putString(WITCH_BOSS_TNT_PLAYER_TAG, tntPlayer.getUUID().toString());
         level.addFreshEntity(tnt);
+        // 点燃后：玩家本人不再渲染成 TNT（隐藏方块/模组渲染），只保留这个点燃中的 TNT 实体。
+        // 客户端仍保持“变形中”(transmuted=true) 以隐藏玩家本体模型，但 morphType 置空 → 不再画 TNT 方块。
+        if (tntPlayer instanceof ServerPlayer ignitedSp) {
+            sendTransmutationState(ignitedSp, true, -1, "");
+        }
         if (follow != null) {
             // 先移除该下落 TNT 方块实体的变形跟踪，再 discard——
             // 否则 discard 触发 onEntityLeaveLevel 的“未能落地→按破坏结算”，会把玩家瞬间判死，
@@ -7123,6 +8410,19 @@ public class ModMain {
             net.minecraft.sounds.SoundSource.PLAYERS, 1.0F, 1.0F);
     }
 
+    /** 该玩家名下是否已有一个点燃中的 TNT 实体（跟随中，通常在玩家附近）。用于避免女巫在同一处重复点燃多个 TNT。 */
+    private static boolean isPlayerTntLit(net.minecraft.server.level.ServerLevel level, net.minecraft.world.entity.Entity near, java.util.UUID pu) {
+        if (pu == null) return false;
+        for (net.minecraft.world.entity.item.PrimedTnt t : level.getEntitiesOfClass(
+                net.minecraft.world.entity.item.PrimedTnt.class,
+                near.getBoundingBox().inflate(8.0))) {
+            if (pu.toString().equals(t.getPersistentData().getString(WITCH_BOSS_TNT_PLAYER_TAG))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** 被点燃 TNT 的每刻处理：持续跟随其目标玩家，并在 fuse 即将耗尽（爆炸）时使目标玩家死亡（创造/旁观免疫）。 */
     private static void handleIgnitedTntFollow(net.minecraft.server.level.ServerLevel level, net.minecraft.world.entity.item.PrimedTnt tnt) {
         String uuidStr = tnt.getPersistentData().getString(WITCH_BOSS_TNT_PLAYER_TAG);
@@ -7131,18 +8431,35 @@ public class ModMain {
         try { pu = java.util.UUID.fromString(uuidStr); } catch (Exception ex) { return; }
         Player player = level.getServer().getPlayerList().getPlayer(pu);
         if (player != null && player.isAlive() && !player.isSpectator()) {
-            // 跟随玩家
+            // 跟随玩家：用位置插值让动画平滑，避免大步瞬移/抽搐
             Vec3 cur = tnt.position();
-            Vec3 to = player.position().add(0, 0.5, 0).subtract(cur);
-            if (to.length() > 0.5) {
-                Vec3 step = to.normalize().scale(0.4);
-                tnt.setPos(cur.add(step));
+            Vec3 tp = player.position().add(0, 0.5, 0);
+            if (cur.distanceToSqr(tp) > 0.01) {
+                tnt.setNoGravity(true);
+                tnt.setDeltaMovement(Vec3.ZERO);
+                tnt.setPos(cur.lerp(tp, 0.35));
             }
-            // 爆炸瞬间（fuse=1 的最后 tick）判死目标玩家（创造/旁观免疫）
+            // 爆炸瞬间（fuse=1 的最后 tick）判死目标玩家（创造/旁观免疫）。
+            // 玩家被点燃后（TNT 仍带有其 UUID）爆炸即判死；玩家若已用解药复原，TNT 已被解除丢弃，不会再走到这里。
+            // 用可穿透护甲/抗性的“方块体验卡到期”伤害按【当前生命*10】结算；先移除再生等效果，
+            // 防止死亡流程中被回血“救活”导致点不了重生、又被反复打死。
             if (tnt.getFuse() <= 1) {
-                if (!player.isCreative()) {
-                    player.hurt(level.damageSources().explosion(tnt, tnt),
-                        Float.MAX_VALUE);
+                if (!player.isCreative() && player instanceof ServerPlayer spp) {
+                    spp.removeEffect(net.minecraft.world.effect.MobEffects.REGENERATION);
+                    spp.removeEffect(net.minecraft.world.effect.MobEffects.HEALTH_BOOST);
+                    // 先彻底解除变形，让玩家以“普通玩家”身份死亡。
+                    // 否则方块形态的死亡会被“复活到1血”救起：死不掉、无法重生、又被女巫反复鞭尸。
+                    boolean wasMorph = PLAYER_TRANSMUTATION_INFO.containsKey(spp.getUUID())
+                        || MORPH_REMAINING.containsKey(spp.getUUID());
+                    if (wasMorph) revertMorphRenderPlayer(spp);
+                    net.minecraft.world.damagesource.DamageSource blockExpired =
+                        level.damageSources().source(
+                            cn.autoforged.joes_addons_for_abmc.damage.ModDamageTypes.TRANSMUTATION_BLOCK_EXPIRED.getKey());
+                    spp.hurt(blockExpired, spp.getHealth() * 10.0F + 1.0F);
+                    if (spp.getHealth() > 0.0F) {
+                        // 极端情况仍存活：强制走完整死亡流程，确保能点重生
+                        spp.die(level.damageSources().genericKill());
+                    }
                 }
                 tnt.getPersistentData().remove(WITCH_BOSS_TNT_PLAYER_TAG);
             }
@@ -7207,27 +8524,32 @@ public class ModMain {
         return false;
     }
 
-    /** 药水补给：往自己脚下丢一瓶“定点传送回小屋中心”的传送药水，回家并恢复满额药水（可无限次）。 */
+    /** 获取女巫Boss指定类型的药水储量。 */
+    public static int getWitchBossAmmo(Witch witch, String tag) {
+        CompoundTag data = witch.getPersistentData();
+        if (!data.contains(tag)) initWitchBossAmmo(witch);
+        return data.getInt(tag);
+    }
+
+    /** 增加女巫Boss指定类型的药水储量（不超过最大值）。 */
+    public static void addWitchBossAmmo(Witch witch, String tag, int amount) {
+        CompoundTag data = witch.getPersistentData();
+        if (!data.contains(tag)) initWitchBossAmmo(witch);
+        int max = tag.equals(WITCH_BOSS_AMMO_TRANSMUTATION_TAG) ? WITCH_BOSS_AMMO_TRANSMUTATION_MAX
+            : tag.equals(WITCH_BOSS_AMMO_ANTIDOTE_TAG) ? WITCH_BOSS_AMMO_ANTIDOTE_MAX
+            : tag.equals(WITCH_BOSS_AMMO_TRANSPORT_TAG) ? WITCH_BOSS_AMMO_TRANSPORT_MAX
+            : tag.equals(WITCH_BOSS_AMMO_INVISIBILITY_TAG) ? WITCH_BOSS_AMMO_INVISIBILITY_MAX : 0;
+        data.putInt(tag, Math.min(max, data.getInt(tag) + Math.max(0, amount)));
+    }
+
+    /** 药水补给：按女巫运动抛物线/脚下丢一瓶“定点传送回小屋中心”的传送药水，回家并恢复满额药水（可无限次）。 */
     private static void resupplyWitchBoss(Witch witch) {
         if (witch.level().isClientSide()) return;
         ServerLevel level = (ServerLevel) witch.level();
         Vec3 home = getWitchBossHome(witch);
         if (home == null) { restoreWitchBossAmmo(witch); return; }
-        // 造一瓶“定点传送回小屋中心”的传送药水，朝脚下丢出 → 传送回家
-        ItemStack potion = new ItemStack(net.minecraft.world.item.Items.SPLASH_POTION);
-        potion.set(net.minecraft.core.component.DataComponents.POTION_CONTENTS,
-            new net.minecraft.world.item.alchemy.PotionContents(
-                cn.autoforged.joes_addons_for_abmc.potion.ModPotions.TRANSPORTATION));
-        potion.set(ModDataComponents.TRANSPORT_MODE.get(), "point");
-        potion.set(ModDataComponents.TARGET_POS.get(), home);
-
-        net.minecraft.world.entity.projectile.ThrownPotion tp =
-            new net.minecraft.world.entity.projectile.ThrownPotion(level, witch);
-        tp.setItem(potion);
-        tp.setPos(witch.getX(), witch.getEyeY() - 0.1, witch.getZ());
-        tp.shoot((witch.getRandom().nextDouble() - 0.5) * 0.3, -1.0,
-            (witch.getRandom().nextDouble() - 0.5) * 0.3, 0.5F, 0.0F);
-        level.addFreshEntity(tp);
+        // 按运动抛物线/脚下丢“定点传送回小屋中心”药水 → 传送回家
+        throwWitchTeleportPotion(witch, level, home);
         // 补给完成：药水恢复初始值
         restoreWitchBossAmmo(witch);
     }
@@ -7270,19 +8592,410 @@ public class ModMain {
         return stage;
     }
 
-    /** 根据女巫Boss阶段返回原版Boss条颜色：阶段1实体=蓝、阶段2方块=黄、阶段3物品=紫。 */
+    /** 根据女巫Boss阶段返回原版Boss条颜色：阶段1生物=蓝、阶段2方块=黄、阶段3物品=紫。 */
     private static net.minecraft.world.BossEvent.BossBarColor witchBossBarColor(int stage) {
         return switch (stage) {
             case WITCH_BOSS_STAGE_BLOCK -> net.minecraft.world.BossEvent.BossBarColor.YELLOW;
             case WITCH_BOSS_STAGE_ITEM -> net.minecraft.world.BossEvent.BossBarColor.PURPLE;
-            default -> net.minecraft.world.BossEvent.BossBarColor.BLUE; // 实体阶段：浅蓝系
+            default -> net.minecraft.world.BossEvent.BossBarColor.BLUE; // 生物阶段：浅蓝系
         };
+    }
+
+    /** 女巫Boss阶段的玩家可见名称（Boss条标题/命令反馈共用）。 */
+    private static String witchBossStageName(int stage) {
+        return switch (stage) {
+            case WITCH_BOSS_STAGE_BLOCK -> "女巫Boss-方块阶段";
+            case WITCH_BOSS_STAGE_ITEM -> "女巫Boss-物品阶段";
+            default -> "女巫Boss-生物阶段";
+        };
+    }
+
+    /** 阶段1血条容量 = floor(最大生命/3)。例：260 HP → 86，即造成86伤害即可扣光阶段1血条。 */
+    private static float witchBossStage1Capacity(Witch witch) {
+        return (float) Math.floor(witch.getMaxHealth() / 3.0D);
+    }
+
+    /** 阶段1累计伤害：返回当前已累计的伤害池值（0 ~ 容量）。 */
+    private static float witchBossStage1Dmg(Witch witch) {
+        return witch.getPersistentData().getFloat(WITCH_BOSS_STAGE1_DMG_TAG);
+    }
+
+    /** 阶段1受击：把实际伤害累加到阶段1血条的伤害池。耗尽(>=容量)且仍为阶段1时立即进入阶段2。 */
+    private static void witchBossStage1TakeDamage(Witch witch, float amount) {
+        if (amount <= 0) return;
+        CompoundTag data = witch.getPersistentData();
+        if (!data.getBoolean(WITCH_BOSS_TAG)) return;
+        if (getWitchBossStage(witch) != WITCH_BOSS_STAGE_ENTITY) return;
+        float cap = witchBossStage1Capacity(witch);
+        if (cap <= 0) return;
+        float dmg = Math.min(cap, data.getFloat(WITCH_BOSS_STAGE1_DMG_TAG) + amount);
+        data.putFloat(WITCH_BOSS_STAGE1_DMG_TAG, dmg);
+        if (dmg >= cap && witch.level() instanceof ServerLevel sl) {
+            // 阶段1血条见底（受击导致）→ 进入阶段2
+            setWitchBossStage(sl, witch, WITCH_BOSS_STAGE_BLOCK);
+        }
+    }
+
+    /** 阶段1·玩家成功解除女巫自身变形：在女巫头上撒女巫粒子，阶段1血条 -1/6；耗尽→进入阶段2。 */
+    private static void witchBossStage1AntidoteSuccess(Witch witch) {
+        if (witch == null || !witch.isAlive()) return;
+        CompoundTag data = witch.getPersistentData();
+        if (!data.getBoolean(WITCH_BOSS_TAG)) return;
+        if (getWitchBossStage(witch) != WITCH_BOSS_STAGE_ENTITY) return;
+        if (!(witch.level() instanceof ServerLevel sl)) return;
+        float cap = witchBossStage1Capacity(witch);
+        if (cap <= 0) return;
+        // 女巫头上撒女巫粒子
+        double x = witch.getX(), y = witch.getY() + witch.getBbHeight() + 0.4, z = witch.getZ();
+        for (int i = 0; i < 12; i++) {
+            sl.sendParticles(net.minecraft.core.particles.ParticleTypes.WITCH,
+                x + (witch.getRandom().nextDouble() - 0.5) * 0.6,
+                y + (witch.getRandom().nextDouble() - 0.5) * 0.6,
+                z + (witch.getRandom().nextDouble() - 0.5) * 0.6,
+                1, 0, 0, 0, 0.02);
+        }
+        // 血条 -1/6（等价伤害池 +cap/6）
+        float dmg = Math.min(cap, data.getFloat(WITCH_BOSS_STAGE1_DMG_TAG) + cap / 6.0F);
+        data.putFloat(WITCH_BOSS_STAGE1_DMG_TAG, dmg);
+        if (dmg >= cap) {
+            setWitchBossStage(sl, witch, WITCH_BOSS_STAGE_BLOCK); // 见底→进阶段2
+        }
+    }
+
+    /** 阶段1·玩家成功解除自身变形状态（渲染替换形态：被女巫变成的生物/方块/物品本体）。
+     *  找到该维度正在阶段1、且与该玩家交战（目标是该玩家 / 已发现该玩家 / 最近）的女巫Boss，
+     *  对其执行“成功解除”计数（女巫粒子 + 阶段1血条-1/6）。 */
+    private static void witchBossStage1PlayerUnmorphed(ServerLevel level, Player player) {
+        if (player == null || !player.isAlive()) return;
+        Witch chosen = null;
+        double bestD = Double.MAX_VALUE;
+        boolean bestIsTarget = false;
+        for (Witch w : level.getEntitiesOfClass(Witch.class,
+                new net.minecraft.world.phys.AABB(player.blockPosition()).inflate(64.0),
+                v -> v.isAlive() && v.getPersistentData().getBoolean(WITCH_BOSS_TAG)
+                    && getWitchBossStage(v) == WITCH_BOSS_STAGE_ENTITY)) {
+            boolean isTarget = w.getTarget() == player;
+            boolean discovered = w.getPersistentData().getBoolean(WITCH_BOSS_DISCOVERED_TAG);
+            if (!isTarget && !discovered) continue;
+            double d = w.distanceTo(player);
+            if (isTarget && !bestIsTarget) {
+                // 优先“当前目标就是该玩家”的女巫
+                chosen = w; bestIsTarget = true; bestD = d;
+            } else if (isTarget == bestIsTarget && d < bestD) {
+                chosen = w; bestD = d;
+            }
+        }
+        if (chosen == null) {
+            LOGGER.info("[DBG] witchBossStage1PlayerUnmorphed: no engaged witch (64r) at {}",
+                player.blockPosition());
+            // 兜底：全维度最近的阶段1女巫Boss
+            for (Witch w : level.getEntitiesOfClass(Witch.class,
+                    new net.minecraft.world.phys.AABB(player.blockPosition()).inflate(256.0),
+                    v -> v.isAlive() && v.getPersistentData().getBoolean(WITCH_BOSS_TAG)
+                        && getWitchBossStage(v) == WITCH_BOSS_STAGE_ENTITY)) {
+                double d = w.distanceTo(player);
+                if (d < bestD) { bestD = d; chosen = w; }
+            }
+        }
+        if (chosen != null) {
+            LOGGER.info("[DBG] witchBossStage1PlayerUnmorphed: count player={} witch={} dist={}",
+                player.getGameProfile().getName(), chosen.getUUID(), chosen.distanceTo(player));
+            witchBossStage1AntidoteSuccess(chosen);
+        } else {
+            LOGGER.warn("[DBG] witchBossStage1PlayerUnmorphed: NO stage1 witch found in dimension {}",
+                level.dimension().location());
+        }
+    }
+
+    /** 阶段2血条容量 = floor(最大生命 × 2/5)。例：260 HP → 104。 */
+    private static float witchBossStage2Capacity(Witch witch) {
+        return (float) Math.floor(witch.getMaxHealth() * WITCH_BOSS_STAGE2_CAPACITY_RATIO);
+    }
+
+    /** 阶段2受击：把实际伤害累加到阶段2血条的伤害池。耗尽(>=容量)且仍为阶段2时立即进入阶段3。 */
+    private static void witchBossStage2TakeDamage(Witch witch, float amount) {
+        if (amount <= 0) return;
+        CompoundTag data = witch.getPersistentData();
+        if (!data.getBoolean(WITCH_BOSS_TAG)) return;
+        if (getWitchBossStage(witch) != WITCH_BOSS_STAGE_BLOCK) return;
+        float cap = witchBossStage2Capacity(witch);
+        if (cap <= 0) return;
+        float dmg = Math.min(cap, data.getFloat(WITCH_BOSS_STAGE2_DMG_TAG) + amount);
+        data.putFloat(WITCH_BOSS_STAGE2_DMG_TAG, dmg);
+        if (dmg >= cap && witch.level() instanceof ServerLevel sl) {
+            setWitchBossStage(sl, witch, WITCH_BOSS_STAGE_ITEM);
+        }
+    }
+
+    /** 阶段2·玩家成功解除女巫自身变形：阶段2血条 -1/15；耗尽→进入阶段3。 */
+    private static void witchBossStage2AntidoteSuccess(Witch witch) {
+        if (witch == null || !witch.isAlive()) return;
+        CompoundTag data = witch.getPersistentData();
+        if (!data.getBoolean(WITCH_BOSS_TAG)) return;
+        if (getWitchBossStage(witch) != WITCH_BOSS_STAGE_BLOCK) return;
+        if (!(witch.level() instanceof ServerLevel sl)) return;
+        float cap = witchBossStage2Capacity(witch);
+        if (cap <= 0) return;
+        // 女巫头上撒女巫粒子
+        double x = witch.getX(), y = witch.getY() + witch.getBbHeight() + 0.4, z = witch.getZ();
+        for (int i = 0; i < 12; i++) {
+            sl.sendParticles(net.minecraft.core.particles.ParticleTypes.WITCH,
+                x + (witch.getRandom().nextDouble() - 0.5) * 0.6,
+                y + (witch.getRandom().nextDouble() - 0.5) * 0.6,
+                z + (witch.getRandom().nextDouble() - 0.5) * 0.6,
+                1, 0, 0, 0, 0.02);
+        }
+        // 血条 -1/15
+        float dmg = Math.min(cap, data.getFloat(WITCH_BOSS_STAGE2_DMG_TAG) + cap / 15.0F);
+        data.putFloat(WITCH_BOSS_STAGE2_DMG_TAG, dmg);
+        if (dmg >= cap) {
+            setWitchBossStage(sl, witch, WITCH_BOSS_STAGE_ITEM);
+        }
+    }
+
+    /** 阶段2·女巫Boss自变形方块被摧毁：阶段2血条 -1/10。 */
+    private static void witchBossStage2SelfFormDestroyed(Witch witch) {
+        if (witch == null || !witch.isAlive()) return;
+        CompoundTag data = witch.getPersistentData();
+        if (!data.getBoolean(WITCH_BOSS_TAG)) return;
+        if (getWitchBossStage(witch) != WITCH_BOSS_STAGE_BLOCK) return;
+        if (!(witch.level() instanceof ServerLevel sl)) return;
+        float cap = witchBossStage2Capacity(witch);
+        if (cap <= 0) return;
+        float dmg = Math.min(cap, data.getFloat(WITCH_BOSS_STAGE2_DMG_TAG) + cap / 10.0F);
+        data.putFloat(WITCH_BOSS_STAGE2_DMG_TAG, dmg);
+        if (dmg >= cap) {
+            setWitchBossStage(sl, witch, WITCH_BOSS_STAGE_ITEM);
+        }
+    }
+
+    /** 阶段3·女巫Boss自变形方块/物品被摧毁：阶段3血条 -1/15。
+     *  耗尽(>=容量)时判定女巫被击败（快进至阶段4，粒子+音效+消失）。 */
+    private static void witchBossStage3SelfFormDestroyed(Witch witch) {
+        if (witch == null || !witch.isAlive()) return;
+        CompoundTag data = witch.getPersistentData();
+        if (!data.getBoolean(WITCH_BOSS_TAG)) return;
+        if (getWitchBossStage(witch) != WITCH_BOSS_STAGE_ITEM) return;
+        if (!(witch.level() instanceof ServerLevel sl)) return;
+        float cap = witchBossStage3Capacity(witch);
+        if (cap <= 0) return;
+        float dmg = data.getFloat(WITCH_BOSS_STAGE3_DMG_TAG) + cap / 15.0F;
+        data.putFloat(WITCH_BOSS_STAGE3_DMG_TAG, dmg);
+        if (dmg >= cap) {
+            setWitchBossStage(sl, witch, WITCH_BOSS_STAGE_DEFEATED);
+        }
+    }
+
+    /** 阶段2·玩家对自己使用动物类变形药水：阶段2血条 -1/6。 */
+    private static void witchBossStage2AnimalMorphSuccess(Witch witch) {
+        if (witch == null || !witch.isAlive()) return;
+        CompoundTag data = witch.getPersistentData();
+        if (!data.getBoolean(WITCH_BOSS_TAG)) return;
+        if (getWitchBossStage(witch) != WITCH_BOSS_STAGE_BLOCK) return;
+        if (!(witch.level() instanceof ServerLevel sl)) return;
+        float cap = witchBossStage2Capacity(witch);
+        if (cap <= 0) return;
+        float dmg = Math.min(cap, data.getFloat(WITCH_BOSS_STAGE2_DMG_TAG) + cap / 6.0F);
+        data.putFloat(WITCH_BOSS_STAGE2_DMG_TAG, dmg);
+        if (dmg >= cap) {
+            setWitchBossStage(sl, witch, WITCH_BOSS_STAGE_ITEM);
+        }
+    }
+
+    /** 阶段2·玩家对自己使用变形解药（渲染替换形态）：找到该维度正在阶段2且与该玩家交战的女巫Boss，
+     *  对其执行"成功解除"计数（-1/15）。 */
+    private static void witchBossStage2PlayerUnmorphed(ServerLevel level, Player player) {
+        if (player == null || !player.isAlive()) return;
+        Witch chosen = null;
+        double bestD = Double.MAX_VALUE;
+        boolean bestIsTarget = false;
+        for (Witch w : level.getEntitiesOfClass(Witch.class,
+                new net.minecraft.world.phys.AABB(player.blockPosition()).inflate(64.0),
+                v -> v.isAlive() && v.getPersistentData().getBoolean(WITCH_BOSS_TAG)
+                    && getWitchBossStage(v) == WITCH_BOSS_STAGE_BLOCK)) {
+            boolean isTarget = w.getTarget() == player;
+            boolean discovered = w.getPersistentData().getBoolean(WITCH_BOSS_DISCOVERED_TAG);
+            if (!isTarget && !discovered) continue;
+            double d = w.distanceTo(player);
+            if (isTarget && !bestIsTarget) {
+                chosen = w; bestIsTarget = true; bestD = d;
+            } else if (isTarget == bestIsTarget && d < bestD) {
+                chosen = w; bestD = d;
+            }
+        }
+        if (chosen == null) {
+            // 兜底：全维度最近的阶段2女巫Boss
+            for (Witch w : level.getEntitiesOfClass(Witch.class,
+                    new net.minecraft.world.phys.AABB(player.blockPosition()).inflate(256.0),
+                    v -> v.isAlive() && v.getPersistentData().getBoolean(WITCH_BOSS_TAG)
+                        && getWitchBossStage(v) == WITCH_BOSS_STAGE_BLOCK)) {
+                double d = w.distanceTo(player);
+                if (d < bestD) { bestD = d; chosen = w; }
+            }
+        }
+        if (chosen != null) {
+            witchBossStage2AntidoteSuccess(chosen);
+        }
+    }
+
+    /** 阶段2·玩家对自己使用动物类变形药水：找到该维度正在阶段2且与该玩家交战的女巫Boss，
+     *  对其执行"动物变形"计数（-1/6）。 */
+    private static void witchBossStage2PlayerAnimalMorphed(ServerLevel level, Player player) {
+        if (player == null || !player.isAlive()) return;
+        Witch chosen = null;
+        double bestD = Double.MAX_VALUE;
+        boolean bestIsTarget = false;
+        for (Witch w : level.getEntitiesOfClass(Witch.class,
+                new net.minecraft.world.phys.AABB(player.blockPosition()).inflate(64.0),
+                v -> v.isAlive() && v.getPersistentData().getBoolean(WITCH_BOSS_TAG)
+                    && getWitchBossStage(v) == WITCH_BOSS_STAGE_BLOCK)) {
+            boolean isTarget = w.getTarget() == player;
+            boolean discovered = w.getPersistentData().getBoolean(WITCH_BOSS_DISCOVERED_TAG);
+            if (!isTarget && !discovered) continue;
+            double d = w.distanceTo(player);
+            if (isTarget && !bestIsTarget) {
+                chosen = w; bestIsTarget = true; bestD = d;
+            } else if (isTarget == bestIsTarget && d < bestD) {
+                chosen = w; bestD = d;
+            }
+        }
+        if (chosen == null) {
+            for (Witch w : level.getEntitiesOfClass(Witch.class,
+                    new net.minecraft.world.phys.AABB(player.blockPosition()).inflate(256.0),
+                    v -> v.isAlive() && v.getPersistentData().getBoolean(WITCH_BOSS_TAG)
+                        && getWitchBossStage(v) == WITCH_BOSS_STAGE_BLOCK)) {
+                double d = w.distanceTo(player);
+                if (d < bestD) { bestD = d; chosen = w; }
+            }
+        }
+        if (chosen != null) {
+            witchBossStage2AnimalMorphSuccess(chosen);
+        }
+    }
+
+    /** 阶段3血条容量 = floor(最大生命 × 2/3)。例：260 HP → 173。 */
+    private static float witchBossStage3Capacity(Witch witch) {
+        return (float) Math.floor(witch.getMaxHealth() * WITCH_BOSS_STAGE3_CAPACITY_RATIO);
+    }
+
+    /** 阶段3受击：把本次原始伤害累加到阶段3血条的伤害池（不受回血影响，仅计原始伤害量）。
+     *  耗尽(>=容量)时血条归零（由 updateWitchBossBar 渲染）。 */
+    private static void witchBossStage3TakeDamage(Witch witch, float amount) {
+        if (amount <= 0) return;
+        CompoundTag data = witch.getPersistentData();
+        if (!data.getBoolean(WITCH_BOSS_TAG)) return;
+        if (getWitchBossStage(witch) != WITCH_BOSS_STAGE_ITEM) return;
+        float cap = witchBossStage3Capacity(witch);
+        if (cap <= 0) return;
+        float dmg = data.getFloat(WITCH_BOSS_STAGE3_DMG_TAG) + amount;
+        // 不限制上限，持续记录原始伤害总量（不受回血影响）
+        data.putFloat(WITCH_BOSS_STAGE3_DMG_TAG, dmg);
+    }
+
+    /** 阶段3·玩家对自己使用动物类变形药水且变形成功：阶段3血条 -1/15。 */
+    private static void witchBossStage3AnimalMorphSuccess(Witch witch) {
+        if (witch == null || !witch.isAlive()) return;
+        CompoundTag data = witch.getPersistentData();
+        if (!data.getBoolean(WITCH_BOSS_TAG)) return;
+        if (getWitchBossStage(witch) != WITCH_BOSS_STAGE_ITEM) return;
+        if (!(witch.level() instanceof ServerLevel sl)) return;
+        float cap = witchBossStage3Capacity(witch);
+        if (cap <= 0) return;
+        float dmg = data.getFloat(WITCH_BOSS_STAGE3_DMG_TAG) + cap / 15.0F;
+        data.putFloat(WITCH_BOSS_STAGE3_DMG_TAG, dmg);
+    }
+
+    /** 阶段3·玩家对自己使用动物类变形药水：找到该维度正在阶段3且与该玩家交战的女巫Boss，
+     *  对其执行"动物变形"计数（-1/15）。 */
+    private static void witchBossStage3PlayerAnimalMorphed(ServerLevel level, Player player) {
+        if (player == null || !player.isAlive()) return;
+        Witch chosen = null;
+        double bestD = Double.MAX_VALUE;
+        boolean bestIsTarget = false;
+        for (Witch w : level.getEntitiesOfClass(Witch.class,
+                new net.minecraft.world.phys.AABB(player.blockPosition()).inflate(64.0),
+                v -> v.isAlive() && v.getPersistentData().getBoolean(WITCH_BOSS_TAG)
+                    && getWitchBossStage(v) == WITCH_BOSS_STAGE_ITEM)) {
+            boolean isTarget = w.getTarget() == player;
+            boolean discovered = w.getPersistentData().getBoolean(WITCH_BOSS_DISCOVERED_TAG);
+            if (!isTarget && !discovered) continue;
+            double d = w.distanceTo(player);
+            if (isTarget && !bestIsTarget) {
+                chosen = w; bestIsTarget = true; bestD = d;
+            } else if (isTarget == bestIsTarget && d < bestD) {
+                chosen = w; bestD = d;
+            }
+        }
+        if (chosen == null) {
+            for (Witch w : level.getEntitiesOfClass(Witch.class,
+                    new net.minecraft.world.phys.AABB(player.blockPosition()).inflate(256.0),
+                    v -> v.isAlive() && v.getPersistentData().getBoolean(WITCH_BOSS_TAG)
+                        && getWitchBossStage(v) == WITCH_BOSS_STAGE_ITEM)) {
+                double d = w.distanceTo(player);
+                if (d < bestD) { bestD = d; chosen = w; }
+            }
+        }
+        if (chosen != null) {
+            witchBossStage3AnimalMorphSuccess(chosen);
+        }
+    }
+
+    /** 阶段3·玩家成功解除自身变形状态（渲染替换形态：被女巫变成的生物/方块/物品本体）。
+     *  找到该维度正在阶段3、且与该玩家交战的女巫Boss，阶段3血条 -1/15。 */
+    private static void witchBossStage3AntidoteSuccess(Witch witch) {
+        if (witch == null || !witch.isAlive()) return;
+        CompoundTag data = witch.getPersistentData();
+        if (!data.getBoolean(WITCH_BOSS_TAG)) return;
+        if (getWitchBossStage(witch) != WITCH_BOSS_STAGE_ITEM) return;
+        if (!(witch.level() instanceof ServerLevel sl)) return;
+        float cap = witchBossStage3Capacity(witch);
+        if (cap <= 0) return;
+        float dmg = data.getFloat(WITCH_BOSS_STAGE3_DMG_TAG) + cap / 15.0F;
+        data.putFloat(WITCH_BOSS_STAGE3_DMG_TAG, dmg);
+    }
+
+    /** 阶段3·玩家对自己使用变形解药：找到该维度正在阶段3且与该玩家交战的女巫Boss，
+     *  对其执行"成功解除"计数（-1/15）。 */
+    private static void witchBossStage3PlayerUnmorphed(ServerLevel level, Player player) {
+        if (player == null || !player.isAlive()) return;
+        Witch chosen = null;
+        double bestD = Double.MAX_VALUE;
+        boolean bestIsTarget = false;
+        for (Witch w : level.getEntitiesOfClass(Witch.class,
+                new net.minecraft.world.phys.AABB(player.blockPosition()).inflate(64.0),
+                v -> v.isAlive() && v.getPersistentData().getBoolean(WITCH_BOSS_TAG)
+                    && getWitchBossStage(v) == WITCH_BOSS_STAGE_ITEM)) {
+            boolean isTarget = w.getTarget() == player;
+            boolean discovered = w.getPersistentData().getBoolean(WITCH_BOSS_DISCOVERED_TAG);
+            if (!isTarget && !discovered) continue;
+            double d = w.distanceTo(player);
+            if (isTarget && !bestIsTarget) {
+                chosen = w; bestIsTarget = true; bestD = d;
+            } else if (isTarget == bestIsTarget && d < bestD) {
+                chosen = w; bestD = d;
+            }
+        }
+        if (chosen == null) {
+            for (Witch w : level.getEntitiesOfClass(Witch.class,
+                    new net.minecraft.world.phys.AABB(player.blockPosition()).inflate(256.0),
+                    v -> v.isAlive() && v.getPersistentData().getBoolean(WITCH_BOSS_TAG)
+                        && getWitchBossStage(v) == WITCH_BOSS_STAGE_ITEM)) {
+                double d = w.distanceTo(player);
+                if (d < bestD) { bestD = d; chosen = w; }
+            }
+        }
+        if (chosen != null) {
+            witchBossStage3AntidoteSuccess(chosen);
+        }
     }
 
     /** 每服务端刻更新女巫Boss血条（原版 ServerBossEvent，由原版 HUD 自动渲染）：
      *  遍历 {@link #WITCH_BOSS_TRACKED} 中登记的女巫Boss（而非全图扫描），各自维护一个独立Boss条
      *  （颜色随阶段、显示给所有在线玩家）；已死亡/被击败的Boss移除对应Boss条。
-     *  客户端最多同时渲染 4 条并自动与其它Boss条统一计数。 */
+     *  客户端最多同时渲染 4 条并自动与其它Boss条统一计数。
+     *  阶段1血条：进度 = 1 - 累计伤害/容量(floor(maxHP/3))，受击与成功解除自身变形(每次-1/6)共同耗尽→进阶段2；
+     *  阶段2血条：进度 = 1 - 累计伤害/容量(floor(maxHP*2/5))，受击+解药(-1/15)+方块破坏(-1/10)+动物变形(-1/6)耗尽→进阶段3；
+     *  阶段3血条：进度 = 1 - 累计原始伤害/容量(floor(maxHP*2/3))，仅受击伤害累加（不受回血影响），耗尽即血条归零。 */
     private static void updateWitchBossBar(net.minecraft.server.MinecraftServer server) {
         java.util.Set<java.util.UUID> alive = new java.util.HashSet<>();
         for (UUID u : WITCH_BOSS_TRACKED) {
@@ -7294,32 +9007,50 @@ public class ModMain {
                     break;
                 }
             }
-            if (w == null) continue; // 实体已死亡/被移除/未加载：不本刻显示，交由清理逻辑移除
+            if (w == null) {
+                // 实体暂时查不到（区块加载/实体索引时序）：宽限 200 tick（10 秒）再移除，
+                // 避免生成当刻被误删导致血条永久丢失
+                int miss = WITCH_BOSS_MISS_TICKS.merge(u, 1, Integer::sum);
+                if (miss < 200) continue;
+                ServerBossEvent old = WITCH_BOSS_EVENTS.remove(u);
+                if (old != null) { old.setVisible(false); old.removeAllPlayers(); }
+                WITCH_BOSS_MISS_TICKS.remove(u);
+                WITCH_BOSS_TRACKED.remove(u);
+                LOGGER.warn("[witchhut] Boss 失踪超过10秒，移除跟踪 uuid={}", u);
+                continue;
+            }
+            WITCH_BOSS_MISS_TICKS.remove(u);
             alive.add(u);
             int stage = getWitchBossStage(w);
             ServerBossEvent ev = WITCH_BOSS_EVENTS.computeIfAbsent(u,
                 k -> new ServerBossEvent(
-                    net.minecraft.network.chat.Component.literal("女巫Boss"),
+                    net.minecraft.network.chat.Component.literal(witchBossStageName(stage)),
                     witchBossBarColor(stage),
                     net.minecraft.world.BossEvent.BossBarOverlay.PROGRESS));
-            ev.setName(net.minecraft.network.chat.Component.literal("女巫Boss(阶段" + stage + ")"));
+            ev.setName(net.minecraft.network.chat.Component.literal(witchBossStageName(stage)));
             ev.setColor(witchBossBarColor(stage));
-            ev.setProgress(1.0F); // 暂不加入血量扣减
+            // 阶段1：血条随“累计伤害池”递减（受击伤害 + 成功解除自身变形-1/6）
+            float progress = 1.0F;
+            if (stage == WITCH_BOSS_STAGE_ENTITY) {
+                float cap = witchBossStage1Capacity(w);
+                float dmg = w.getPersistentData().getFloat(WITCH_BOSS_STAGE1_DMG_TAG);
+                progress = cap > 0 ? Math.max(0.0F, 1.0F - Math.min(dmg, cap) / cap) : 1.0F;
+            } else if (stage == WITCH_BOSS_STAGE_BLOCK) {
+                float cap = witchBossStage2Capacity(w);
+                float dmg = w.getPersistentData().getFloat(WITCH_BOSS_STAGE2_DMG_TAG);
+                progress = cap > 0 ? Math.max(0.0F, 1.0F - Math.min(dmg, cap) / cap) : 1.0F;
+            } else if (stage == WITCH_BOSS_STAGE_ITEM) {
+                float cap = witchBossStage3Capacity(w);
+                float dmg = w.getPersistentData().getFloat(WITCH_BOSS_STAGE3_DMG_TAG);
+                progress = cap > 0 ? Math.max(0.0F, 1.0F - Math.min(dmg, cap) / cap) : 1.0F;
+            }
+            ev.setProgress(progress);
             ev.setVisible(true);
             for (ServerPlayer sp : server.getPlayerList().getPlayers()) {
                 ev.addPlayer(sp);
             }
         }
-        // 清理：仍在跟踪但实体已消失（死亡/搬运/被击败）的，移除跟踪与Boss条
-        WITCH_BOSS_TRACKED.removeIf(u -> {
-            if (alive.contains(u)) return false;
-            ServerBossEvent ev = WITCH_BOSS_EVENTS.remove(u);
-            if (ev != null) {
-                ev.setVisible(false);
-                ev.removeAllPlayers();
-            }
-            return true;
-        });
+        // 失踪 Boss 的清理已在上方循环内按 200 tick 宽限处理；
         // 兜底：清理未登记但残留的事件（理论不会发生，防御性）
         WITCH_BOSS_EVENTS.entrySet().removeIf(e -> !alive.contains(e.getKey()));
     }
@@ -7335,12 +9066,28 @@ public class ModMain {
                 ev.setVisible(false);
                 ev.removeAllPlayers();
             }
+            // 播放女巫空闲音效
+            boss.level().playSound(null, boss.getX(), boss.getY(), boss.getZ(),
+                SoundEvents.WITCH_AMBIENT, SoundSource.HOSTILE, 1.0F, 1.0F);
             spawnWitchBossDefeatParticles(level, boss);
             boss.discard();
             return;
         }
         boss.getPersistentData().putInt(WITCH_BOSS_STAGE_TAG,
             Mth.clamp(stage, WITCH_BOSS_STAGE_ENTITY, WITCH_BOSS_STAGE_ITEM));
+        // 离开阶段1后清空阶段1伤害池和持续衰减标记，避免未来切回阶段1时残留
+        if (stage != WITCH_BOSS_STAGE_ENTITY) {
+            boss.getPersistentData().remove(WITCH_BOSS_STAGE1_DMG_TAG);
+            boss.getPersistentData().remove(WITCH_BOSS_STAGE1_DRAIN_ACTIVE_TAG);
+        }
+        // 离开阶段2后清空阶段2伤害池
+        if (stage != WITCH_BOSS_STAGE_BLOCK) {
+            boss.getPersistentData().remove(WITCH_BOSS_STAGE2_DMG_TAG);
+        }
+        // 离开阶段3后清空阶段3伤害池
+        if (stage != WITCH_BOSS_STAGE_ITEM) {
+            boss.getPersistentData().remove(WITCH_BOSS_STAGE3_DMG_TAG);
+        }
     }
 
     /** 女巫Boss被击败：原地爆发大量女巫粒子与末影(传送门)粒子。 */
@@ -7582,17 +9329,57 @@ public class ModMain {
         // 叠加为 -3/刻 → 喝药时间缩短至 1/3（丢药间隔由 RangedAttackGoalMixin 单独提速）。
         if (entity instanceof Witch witch) {
             if (witch.getPersistentData().getBoolean(WITCH_BOSS_TAG)) {
+                // 不对创造/观战玩家持续索敌：创造玩家不构成反应目标，避免本能地追击/瞄准
+                if (witch.getTarget() instanceof Player hostile && !isWitchBossThreat(hostile)) {
+                    witch.setTarget(null);
+                }
                 if (witch.isDrinkingPotion() && witch.usingTime > 2) {
                     witch.usingTime -= 2;
                 }
-                // 阶段1/2：玩家靠太近时向脚下丢点传送药水逃逸（近战状态不逃逸）
-                if (!isWitchBossInMelee(witch)) {
-                    handleWitchBossRetreatTeleport(witch, (net.minecraft.server.level.ServerLevel) entity.level());
+                // 阶段1血条：被玩家所变生物命中后开启持续衰减（0.1/刻），直到血条耗尽或切换阶段
+                if (getWitchBossStage(witch) == WITCH_BOSS_STAGE_ENTITY
+                        && witch.getPersistentData().getBoolean(WITCH_BOSS_STAGE1_DRAIN_ACTIVE_TAG)) {
+                    float cap = witchBossStage1Capacity(witch);
+                    if (cap > 0) {
+                        CompoundTag wd = witch.getPersistentData();
+                        float dmg = Math.min(cap, wd.getFloat(WITCH_BOSS_STAGE1_DMG_TAG)
+                            + WITCH_BOSS_STAGE1_TICK_DRAIN);
+                        wd.putFloat(WITCH_BOSS_STAGE1_DMG_TAG, dmg);
+                        if (dmg >= cap) {
+                            setWitchBossStage((net.minecraft.server.level.ServerLevel) entity.level(),
+                                witch, WITCH_BOSS_STAGE_BLOCK);
+                        }
+                    }
                 }
+                // 阶段3血条耗尽判定：累计原始伤害 >= 容量时判定女巫被击败（快进至阶段4）
+                if (getWitchBossStage(witch) == WITCH_BOSS_STAGE_ITEM) {
+                    float cap = witchBossStage3Capacity(witch);
+                    if (cap > 0) {
+                        float dmg = witch.getPersistentData().getFloat(WITCH_BOSS_STAGE3_DMG_TAG);
+                        if (dmg >= cap) {
+                            setWitchBossStage((net.minecraft.server.level.ServerLevel) entity.level(),
+                                witch, WITCH_BOSS_STAGE_DEFEATED);
+                        }
+                    }
+                }
+                // 任意阶段：玩家/仇恨目标靠太近(<4格)时向脚下丢点传送药水逃逸，
+                // 该“目标过近传送避险”优先于其余所有行为（含阶段3近战）。
+                handleWitchBossRetreatTeleport(witch, (net.minecraft.server.level.ServerLevel) entity.level());
                 // 阶段3：玩家靠太近时 50% 进入近战攻击状态（持钻石剑）
                 handleWitchBossMelee(witch, (net.minecraft.server.level.ServerLevel) entity.level());
-                // 阶段2：锁定已变方块玩家，按方块类型掏工具攻击
-                handleWitchBossToolAttack(witch, (net.minecraft.server.level.ServerLevel) entity.level());
+                // 阶段2：生命低于最大生命时，喝治疗药水（同第一阶段）
+                handleWitchBossStage2Heal(witch, (net.minecraft.server.level.ServerLevel) entity.level());
+                // 阶段3：着火且无抗火效果时，喝抗火药水
+                handleWitchBossDrinkFireResistance(witch, (net.minecraft.server.level.ServerLevel) entity.level());
+                // 任意阶段：未被变形时若离家超过50格，丢传送药水返回小屋附近5格内
+                handleWitchBossHomingTeleport(witch, (net.minecraft.server.level.ServerLevel) entity.level());
+                // 阶段2：若存在“生物变成的方块”则持工具寻路挖掘（裂痕逐渐增大，挖 1.3~1.7s 后碎裂致死）；
+                // 否则对已变方块玩家掏工具攻击。喝药期间不持武器（避免覆盖主手药水打断喝药）。
+                if (!witch.isDrinkingPotion()) {
+                    if (!handleWitchBossMineBlock(witch, (net.minecraft.server.level.ServerLevel) entity.level())) {
+                        handleWitchBossToolAttack(witch, (net.minecraft.server.level.ServerLevel) entity.level());
+                    }
+                }
                 // 阶段3（非近战）：手持打火石每5秒记录并延迟3~4秒在玩家坐标打火
                 handleWitchBossFlintAndSteel(witch, (net.minecraft.server.level.ServerLevel) entity.level());
                 // 玩家被变形成 TNT：女巫持打火石接近点燃它
@@ -7611,11 +9398,14 @@ public class ModMain {
                 handleTransmutationKillCredit(sl, td, ignited.blockPosition(), td.killerPlayerUuid());
             }
         }
-        // 女巫Boss自我变形成生物：该生物往脚下丢变形解药，把自己还原为 witchboss 本体（只触发一次）
+        // 女巫Boss自我变形成生物：仅在变形为"不利黑名单"生物时往脚下丢变形解药，把自己还原为 witchboss 本体
         if (entity.getPersistentData().getBoolean(WITCH_BOSS_SELF_TRANS_TAG)) {
             entity.getPersistentData().putBoolean(WITCH_BOSS_SELF_TRANS_TAG, false);
             if (entity instanceof LivingEntity selfTransLiving) {
-                spawnAntidoteBottleAtFeet((net.minecraft.server.level.ServerLevel) entity.level(), selfTransLiving);
+                String entityTypeId = BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString();
+                if (WITCH_BOSS_BAD_MORPH_BLACKLIST.contains(entityTypeId)) {
+                    spawnAntidoteBottleAtFeet((net.minecraft.server.level.ServerLevel) entity.level(), selfTransLiving);
+                }
             }
         }
 
@@ -7689,6 +9479,11 @@ public class ModMain {
 
     private static void onServerTickPre(ServerTickEvent.Pre event) {
         LuckyPortalBlock.clearProcessedThisTick();
+
+        // 世界生成 worker 线程的女巫小屋决策结果同步到主线程持久化
+        syncGenStateToSharedCounts(event.getServer().overworld());
+        // 待放置女巫Boss小屋：覆盖区块全部加载后一次性完整放置
+        tickPendingHuts(event.getServer().overworld());
 
         // 女巫Boss血条（原版 ServerBossEvent 机制）每刻更新
         updateWitchBossBar(event.getServer());
@@ -8632,12 +10427,14 @@ public class ModMain {
         }
 
         // 变形解药：喷溅/滞留药水瓶碎裂的瞬间，把范围内的变身方块/物品提前复原为生物。
+        // fromPlayer：该解药是否由玩家掷出（用于阶段1“玩家成功解除女巫自变形”的计数）。
         if (entity instanceof ThrownPotion potion
             && event.getLevel() instanceof ServerLevel serverLevel
             && isAntidotePotion(potion.getItem())) {
             boolean lingering = potion.getItem().is(Items.LINGERING_POTION);
-            double radius = lingering ? 5.0 : 4.5;
-            applyAntidoteSplash(serverLevel, potion.getX(), potion.getY(), potion.getZ(), radius);
+            double radius = 1.0; // 解药溅射范围：以落地点为中心半径1的球体
+            boolean fromPlayer = potion.getOwner() instanceof Player;
+            applyAntidoteSplash(serverLevel, potion.getX(), potion.getY(), potion.getZ(), radius, fromPlayer);
         }
 
         if (entity instanceof FallingBlockEntity fallingBlock) {
@@ -8724,6 +10521,12 @@ public class ModMain {
             reconstructLivingShell(shell);
         }
 
+        // 女巫Boss：存档重进时重新登记血条跟踪，避免退出重进后 Boss条（ServerBossEvent）消失
+        if (entity instanceof net.minecraft.world.entity.monster.Witch w
+                && w.getPersistentData().getBoolean(WITCH_BOSS_TAG)) {
+            WITCH_BOSS_TRACKED.add(w.getUUID());
+        }
+
         if (entity instanceof ThrownPotion thrownPotion) {
             ItemStack potionStack = thrownPotion.getItem();
             String itemType = potionStack.getOrDefault(ModDataComponents.ITEM_TYPE.get(), null);
@@ -8735,19 +10538,21 @@ public class ModMain {
         if (entity instanceof AreaEffectCloud cloud) {
             for (ThrownPotion nearby : serverLevel.getEntitiesOfClass(ThrownPotion.class,
                 cloud.getBoundingBox().inflate(1.0))) {
+                // 先从内存表取，再从药水瓶自身的数据组件取（事件时序不定时更稳）
                 String itemType = TRANSMUTATION_POTION_ITEM_TYPES.get(nearby.getId());
+                if (itemType == null) {
+                    net.minecraft.world.item.ItemStack ps = nearby.getItem();
+                    if (ps != null && !ps.isEmpty()) {
+                        itemType = ps.getOrDefault(ModDataComponents.ITEM_TYPE.get(), null);
+                    }
+                }
                 if (itemType != null) {
                     TRANSMUTATION_POTION_ITEM_TYPES.put(cloud.getId(), itemType);
+                    // 写入云实体 NBT：即使内存表被清/时序变化，云内的药水效果也能据此拿到目标类型
+                    cloud.getPersistentData().putString(CLOUD_ITEM_TYPE_TAG, itemType);
                     break;
                 }
             }
-        }
-
-        // --- 女巫小屋·女巫 Boss 变种：1% 概率取代小屋女巫；200 座小屋未出现则第 201 座必出。
-        //     女巫小屋结构生成的女巫也会经 PersistentEntitySectionManager 触发本事件（level 为 ServerLevel），
-        //     且此时结构引用已写入区块，可正确判定。已处理过的女巫写入标签，避免重复判定。---
-        if (entity instanceof Witch witch && !witch.getPersistentData().contains(WITCH_BOSS_TAG)) {
-            handleWitchHutBossSpawn(serverLevel, witch);
         }
 
         // 生物变 TNT：方块被点燃时原版会移除 TNT 方块并生成 PrimedTnt。
@@ -8903,8 +10708,8 @@ public class ModMain {
 
         if (!payload.placingExit()) {
             PENDING_ENTRANCE.put(player.getUUID(), portal.getId());
-            player.displayClientMessage(net.minecraft.network.chat.Component.literal(
-                "Entrance placed. Right-click again to place the exit."), true);
+            player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                "message.joes_addons_for_abmc.portal.entrance_placed"), true);
         } else {
             PORTAL_LIFESPANS.put(portal.getId(), 400);
             Integer entranceId = PENDING_ENTRANCE.remove(player.getUUID());
@@ -8921,8 +10726,8 @@ public class ModMain {
             }
             sl.playSound(null, player.getX(), player.getY(), player.getZ(),
                 net.minecraft.sounds.SoundEvents.END_PORTAL_SPAWN, net.minecraft.sounds.SoundSource.PLAYERS, 1.0F, 1.5F);
-            player.displayClientMessage(net.minecraft.network.chat.Component.literal(
-                "Portal pair created! Portals will close in 20 seconds."), true);
+            player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                "message.joes_addons_for_abmc.portal.pair_created"), true);
         }
     }
 
@@ -8951,20 +10756,23 @@ public class ModMain {
                     if (e != null) e.discard();
                 }
             }
-            player.displayClientMessage(net.minecraft.network.chat.Component.literal("Portal creation cancelled."), true);
+            player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                "message.joes_addons_for_abmc.portal.cancelled"), true);
             return;
         }
 
         if (payload.action() == PortalStaffInputPayload.ACTION_COLLAPSE) {
             Integer latestId = PLAYER_LATEST_PAIR.get(uuid);
             if (latestId == null) {
-                player.displayClientMessage(net.minecraft.network.chat.Component.literal("No portal pair to collapse."), true);
+                player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                "message.joes_addons_for_abmc.portal.no_pair"), true);
                 return;
             }
             Integer pairedId = PORTAL_PAIRS.get(latestId);
             if (pairedId == null || findPortalEntity(sl.getServer(), latestId) == null
                 || findPortalEntity(sl.getServer(), pairedId) == null) {
-                player.displayClientMessage(net.minecraft.network.chat.Component.literal("Portal pair no longer exists."), true);
+                player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                "message.joes_addons_for_abmc.portal.pair_gone"), true);
                 return;
             }
             PortalCollapseState cs = new PortalCollapseState();
@@ -8974,7 +10782,8 @@ public class ModMain {
             cs.accel = 0.05;
             PORTAL_COLLAPSES.put(latestId, cs);
             player.playSound(net.minecraft.sounds.SoundEvents.ENDER_EYE_DEATH, 1.0F, 1.0F);
-            player.displayClientMessage(net.minecraft.network.chat.Component.literal("Portals collapsing!"), true);
+            player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                "message.joes_addons_for_abmc.portal.collapsing"), true);
             return;
         }
 
@@ -8992,10 +10801,10 @@ public class ModMain {
             sl.addFreshEntity(preview);
             st.previewId = preview.getId();
             PORTAL_STAFF_STATES.put(uuid, st);
-            player.displayClientMessage(net.minecraft.network.chat.Component.literal(
+            player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                 placingExit
-                    ? "Exit: scroll to set distance, left-click flips it, release to place."
-                    : "Entrance: scroll to set distance, left-click flips it, release to place."), true);
+                    ? "message.joes_addons_for_abmc.portal.exit_guide"
+                    : "message.joes_addons_for_abmc.portal.entrance_guide"), true);
             return;
         }
 
@@ -9678,6 +11487,67 @@ public class ModMain {
         // 左右键同时按下触发整体平移时，抑制普通放置
         if (barrierShiftSuppress.containsKey(player.getUUID())) return;
         executeStaffBlockPlace(player, stack, hand, Blocks.BARRIER);
+    }
+
+    /**
+     * 捕获一个方格的 BlockEntity 数据（若该方块带 BlockEntity）并从方块上解绑，返回其完整 NBT。
+     * <p>必须先解绑再接卸方块：否则 {@code level.removeBlock(pos, false)} 会触发
+     * {@code BaseEntityBlock.onRemove} → {@code Containers.dropContents}，把箱子/木桶等容器的
+     * 内容物掉落一地（且下落方块落地还原数据后又有一份，导致物品被复制）。解绑后 onRemove
+     * 读不到容器，就不会掉落；数据已由调用方（下落方块实体）携带，落地后还原。
+     */
+    public static CompoundTag captureBlockEntityData(Level level, BlockPos pos, BlockState state) {
+        if (state != null && state.hasBlockEntity()) {
+            BlockEntity be = level.getBlockEntity(pos);
+            if (be != null) {
+                CompoundTag data = be.saveWithFullMetadata(level.registryAccess());
+                level.removeBlockEntity(pos);
+                return data;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 放置一个方块并把捕获到的 BlockEntity 数据还原到该方块（用于下落方块实体落地）。
+     * <p>若 {@code setBlock} 未同步创建 BlockEntity（懒加载），则这里显式 {@code createBlockEntity}
+     * 并经 {@code level.setBlockEntity} 注册，再写入 data（含箱/木桶内容物）。必须在
+     * {@code setBlock(pos, state, ...)} 成功放置之后、{@code be.loadWithComponents} 之前调用。
+     */
+    public static void placeBlockEntityData(Level level, BlockPos pos, BlockState state, CompoundTag data) {
+        if (data == null || state == null || !state.hasBlockEntity()) return;
+        BlockEntity be = level.getBlockEntity(pos);
+        if (be == null && state.getBlock() instanceof net.minecraft.world.level.block.EntityBlock eb) {
+            be = eb.newBlockEntity(pos, state);
+            if (be != null) level.setBlockEntity(be);
+        }
+        if (be == null) return;
+        net.minecraft.nbt.ListTag items = data.getList("Items", 10);
+        // 只加载 Items 列表，不合并其他键（避免 Components/id/x/y/z 等覆盖新物品）
+        net.minecraft.nbt.CompoundTag cleanTag = new net.minecraft.nbt.CompoundTag();
+        net.minecraft.nbt.ListTag copyItems = items.copy();
+        // 修复 Slot 编号：确保所有物品的 Slot 在 0-26 且不重复
+        java.util.Set<Integer> usedSlots = new java.util.HashSet<>();
+        for (int i = 0; i < copyItems.size(); i++) {
+            net.minecraft.nbt.CompoundTag ct = copyItems.getCompound(i);
+            int slot = ct.getInt("Slot");
+            if (slot < 0 || slot >= 27 || usedSlots.contains(slot)) {
+                int newSlot = 0;
+                while (usedSlots.contains(newSlot) && newSlot < 27) newSlot++;
+                if (newSlot >= 27) newSlot = i % 27;
+                ct.putByte("Slot", (byte) newSlot);
+                usedSlots.add(newSlot);
+            } else {
+                usedSlots.add(slot);
+            }
+        }
+        cleanTag.put("Items", copyItems);
+        try {
+            be.loadWithComponents(cleanTag, level.registryAccess());
+        } catch (Exception e) {
+            LOGGER.error("placeBlockEntityData: failed at {} for {}: {}", pos, state.getBlock(), e.getMessage());
+        }
+        be.setChanged();
     }
 
     /**
@@ -11535,6 +13405,11 @@ public class ModMain {
 
         if (grabbed instanceof LapisFallingBlockEntity lfe) {
             lfe.grabbed = false;
+            // 转移被抓取下落方块携带的 BlockEntity 数据（含箱/木桶等内容物），
+            // 否则经 initFromBlockState 新建的发射实体没有 myBlockData，落地后内容物会丢失。
+            if (lfe.myBlockData != null) {
+                launched.myBlockData = lfe.myBlockData.copy();
+            }
         }
         grabbed.discard();
         serverLevel.addFreshEntity(launched);
@@ -12795,8 +14670,8 @@ public class ModMain {
 
         builder.addMix(Potions.WATER, Items.SOUL_SAND, ModPotions.HAUNTED);
 
-        builder.addMix(ModPotions.HAUNTED, Items.CARVED_PUMPKIN, ModPotions.AWAKENING);
-        builder.addMix(ModPotions.AWAKENING, Items.REDSTONE, ModPotions.LONG_AWAKENING);
+        // 觉醒药水：无直饮形式，酿造即喷溅（专用配方 AwakeningBrewingRecipe）
+        builder.addRecipe(new cn.autoforged.joes_addons_for_abmc.potion.AwakeningBrewingRecipe());
 
         builder.addMix(ModPotions.HAUNTED, Items.ENDER_PEARL, ModPotions.PRE_TRANSPORTATION);
         // 准传送药水 + 地狱疣 的配方由 TransmutationBrewingRecipe 处理（无名地狱疣→随机传送药水）
@@ -12867,20 +14742,51 @@ public class ModMain {
             // 自己扔出的变形药水：不豁免，继续下方变形流程
         }
 
-        // 玩家空壳/生物壳实体免疫变形效果（避免被持续存在的作用域云二次变形，导致倒计时被重置）
-        if (target instanceof PlayerShellEntity || LIVING_SHELLS.containsKey(target.getUUID())) {
-            LOGGER.info("[DBG] onMobEffectAdded: SHELL IMMUNE target={} isPlayerShell={} inMap={}",
-                BuiltInRegistries.ENTITY_TYPE.getKey(target.getType()), target instanceof PlayerShellEntity,
-                LIVING_SHELLS.containsKey(target.getUUID()));
-            target.removeEffect(ModMobEffects.TRANSMUTATION);
-            return;
-        }
+        // 生物/玩家空壳可被各类变形药水继续影响（进阶变形）：不豁免，进入下方流程由
+        // performTransmutation 的 carried 机制保留最初 NBT 并一步还原回最初形态。
 
-        // 已处于变身流程中的生物/玩家：忽略过期/重复施加的效果（避免二次变身）
+        // 已处于变身流程中的生物/玩家：仅拦截来自滞留云的重复施加（无邻近投掷物且非饮用），
+        // 避免每 tick 被云重新变身；溅射药水/饮用的「进阶变形」则清理旧状态后允许继续。
         if (TRANSMUTED_ENTITIES.contains(target.getUUID())) {
-            LOGGER.info("[DBG] onMobEffectAdded: IN_TRANSMUTED target={}", BuiltInRegistries.ENTITY_TYPE.getKey(target.getType()));
-            target.removeEffect(ModMobEffects.TRANSMUTATION);
-            return;
+            boolean hasNearbyPotion = false;
+            for (ThrownPotion potion : serverLevel.getEntitiesOfClass(ThrownPotion.class,
+                target.getBoundingBox().inflate(4.0))) {
+                if (isTransmutationPotion(potion.getItem())) {
+                    hasNearbyPotion = true;
+                    break;
+                }
+            }
+            // 饮用变形药水也应视为主动变形（非滞留云重复施加）
+            if (!hasNearbyPotion) {
+                ItemStack usingItem = target.getUseItem();
+                if (usingItem != null && !usingItem.isEmpty() && isTransmutationPotion(usingItem)) {
+                    hasNearbyPotion = true;
+                }
+            }
+            if (!hasNearbyPotion) {
+                LOGGER.info("[DBG] onMobEffectAdded: IN_TRANSMUTED_CLOUD target={}",
+                    BuiltInRegistries.ENTITY_TYPE.getKey(target.getType()));
+                target.removeEffect(ModMobEffects.TRANSMUTATION);
+                return;
+            }
+            // 有邻近溅射药水或正在饮用变形药水 → 仅当玩家处于动物形态(MOB)且未击败女巫时，
+            // 才允许进阶变形；方块/物品/玩家空壳形态或已击败女巫的玩家不得再次变形。
+            if (target instanceof ServerPlayer sp) {
+                PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(sp.getUUID());
+                boolean defeatedWitchBoss = sp.getPersistentData().getBoolean(TRANSFORM_POTION_IMMUNE_TAG);
+                if (info != null && info.form() == TransmutationForm.MOB && !defeatedWitchBoss) {
+                    revertMorphRenderPlayer(sp); // 先还原动物形态的血量/属性，再进入方块形态
+                } else if (info != null) {
+                    // 已有变形状态但非 MOB 或已击败女巫：先清理旧状态再允许进阶变形
+                    revertMorphRenderPlayer(sp); // 先还原旧形态的血量/属性，再进入新形态
+                } else {
+                    LOGGER.info("[DBG] onMobEffectAdded: RE_TRANSMUTE_BLOCKED target={} form={} defeatedWitchBoss={}",
+                        BuiltInRegistries.ENTITY_TYPE.getKey(target.getType()),
+                        info != null ? info.form() : "null", defeatedWitchBoss);
+                    target.removeEffect(ModMobEffects.TRANSMUTATION);
+                    return;
+                }
+            }
         }
 
         // 现在所有生物（凋灵、末影龙、玩家等）都受影响。只有持“掷出者免疫”标记的玩家不受自己扔出的
@@ -12907,6 +14813,13 @@ public class ModMain {
             BuiltInRegistries.ENTITY_TYPE.getKey(target.getType()), itemType, remainingTicks);
 
         target.removeEffect(ModMobEffects.TRANSMUTATION);
+        // 标记是否由女巫Boss变形（用于后续解药扣除血条判断）：
+        // 直接检查 ThrownPotion/AreaEffectCloud 的 owner 是否为女巫Boss，写入玩家 NBT。
+        if (target instanceof ServerPlayer sp && killerUuid == null) {
+            if (isTransmutationSourceWitchBoss(serverLevel, target)) {
+                sp.getPersistentData().putBoolean(WITCH_TRANSFORMED_FLAG, true);
+            }
+        }
         performTransmutation(serverLevel, target, itemType, remainingTicks, killerUuid);
     }
 
@@ -12940,7 +14853,10 @@ public class ModMain {
         for (AreaEffectCloud cloud : level.getEntitiesOfClass(AreaEffectCloud.class,
             target.getBoundingBox().inflate(64.0))) {
             String itemType = TRANSMUTATION_POTION_ITEM_TYPES.get(cloud.getId());
-            if (itemType != null) return itemType;
+            if (itemType == null) {
+                itemType = cloud.getPersistentData().getString(CLOUD_ITEM_TYPE_TAG);
+            }
+            if (itemType != null && !itemType.isEmpty()) return itemType;
         }
 
         for (ThrownPotion potion : level.getEntitiesOfClass(ThrownPotion.class,
@@ -12975,6 +14891,50 @@ public class ModMain {
         return null;
     }
 
+    /** 检查目标生物是否被女巫Boss的变形药水命中（用于区分"女巫变形"与"自变形"）。 */
+    private static boolean isTransmutationByWitchBoss(ServerLevel level, LivingEntity target) {
+        for (ThrownPotion potion : level.getEntitiesOfClass(ThrownPotion.class,
+            target.getBoundingBox().inflate(64.0))) {
+            if (potion.getOwner() instanceof Witch witchOwner
+                    && witchOwner.getPersistentData().getBoolean(WITCH_BOSS_TAG)) {
+                return true;
+            }
+        }
+        for (AreaEffectCloud cloud : level.getEntitiesOfClass(AreaEffectCloud.class,
+            target.getBoundingBox().inflate(64.0))) {
+            if (cloud.getOwner() instanceof Witch witchOwner
+                    && witchOwner.getPersistentData().getBoolean(WITCH_BOSS_TAG)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 检查目标附近的 ThrownPotion/AreaEffectCloud 的 owner 是否为女巫Boss。
+     *  在 onMobEffectAdded 时调用，此时投掷物仍在世界内。 */
+    private static boolean isTransmutationSourceWitchBoss(ServerLevel level, LivingEntity target) {
+        for (ThrownPotion potion : level.getEntitiesOfClass(ThrownPotion.class,
+            target.getBoundingBox().inflate(64.0))) {
+            if (potion.getOwner() instanceof Witch w
+                && w.getPersistentData().getBoolean(WITCH_BOSS_TAG)) {
+                return true;
+            }
+        }
+        for (AreaEffectCloud cloud : level.getEntitiesOfClass(AreaEffectCloud.class,
+            target.getBoundingBox().inflate(64.0))) {
+            if (cloud.getOwner() instanceof Witch w
+                && w.getPersistentData().getBoolean(WITCH_BOSS_TAG)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 玩家是否被女巫Boss变形（读 NBT 标记，不受服务器重启影响）。 */
+    private static boolean wasTransmutedByWitchBoss(ServerPlayer sp) {
+        return sp.getPersistentData().getBoolean(WITCH_TRANSFORMED_FLAG);
+    }
+
     /** 变身开始时把玩家视角切到第三人称并把初始俯仰设为斜向下45°（配置开启时生效）。
      *  Minecraft 的 xRot 正值=低头、负值=抬头，故用 +45 实现斜向下。 */
     private static void forceTransmutationCamera(ServerPlayer player) {
@@ -12984,9 +14944,8 @@ public class ModMain {
         }
     }
 
-    /** 变身开始时初始化玩家：切冒险模式 + 隐身（不被其它生物/宠物察觉）+ 初始化视角。 */
+    /** 变身开始时初始化玩家：隐身（不被其它生物/宠物察觉）+ 初始化视角。不强制切冒险模式——保留玩家原模式。 */
     private static void beginTransmutationView(ServerPlayer sp) {
-        sp.setGameMode(GameType.ADVENTURE);
         sp.addEffect(new MobEffectInstance(MobEffects.INVISIBILITY,
             Integer.MAX_VALUE, 0, false, false, true));
         sp.setInvisible(true);
@@ -13036,6 +14995,10 @@ public class ModMain {
     @SuppressWarnings("deprecation")
     private static void performTransmutation(ServerLevel level, LivingEntity entity,
             String itemType, int remainingTicks, UUID killerUuid) {
+        // 进阶变形：目标若已是“生物/玩家空壳”，先取出其最初 NBT 与归属，供下一形态沿用，
+        // 从而解药能一步还原回最初的玩家/生物（而非只还原上一层）。
+        CarriedShellOrigin carried = takeCarriedShellOrigin(level, entity);
+
         // 女巫Boss 被自己的变形药水命中且目标是“生物”：它确实会变成那个生物；但由
         // performMobShellTransmutation 打上“自我变形”标记，变形后的生物稍后会往脚下丢应对
         // 变形解药把自己还原为 witchboss 本体（变形解药计数 -1）。变方块/物品则无此行为。
@@ -13049,7 +15012,7 @@ public class ModMain {
             String skinName = decodePlayerShellName(itemType);
             LOGGER.info("[DBG] performTransmutation: PLAYER_SHELL skin={} remainingTicks={}",
                 skinName, remainingTicks);
-            performPlayerShellTransmutation(level, entity, skinName, remainingTicks, killerUuid);
+            performPlayerShellTransmutation(level, entity, skinName, remainingTicks, killerUuid, carried);
             return;
         }
 
@@ -13058,26 +15021,28 @@ public class ModMain {
             String entityTypeId = decodeMobShellName(itemType);
             LOGGER.info("[DBG] performTransmutation: MOB_SHELL type={} remainingTicks={}",
                 entityTypeId, remainingTicks);
-            performMobShellTransmutation(level, entity, entityTypeId, remainingTicks, killerUuid);
+            performMobShellTransmutation(level, entity, entityTypeId, remainingTicks, killerUuid, carried);
             return;
         }
 
         CompoundTag entityNbt = new CompoundTag();
-        entity.save(entityNbt);
+        if (carried != null) {
+            entityNbt = carried.entityNbt().copy(); // 沿用最初玩家/生物的 NBT
+        } else {
+            entity.save(entityNbt);
+        }
+
+        // 女巫Boss 自变形为方块/物品：在 entityNbt 顶层打“原生物是女巫Boss”标记，
+        // 供其自变形形态被摧毁时按比例扣血（而非秒杀重建）。
+        if (entity instanceof Witch wOrigin && wOrigin.getPersistentData().getBoolean(WITCH_BOSS_TAG)) {
+            entityNbt.putBoolean(WITCH_BOSS_ORIGIN_TAG, true);
+        }
 
         ResourceLocation itemTypeRl = ResourceLocation.tryParse(itemType);
         if (itemTypeRl == null) return;
 
-        // 黑名单方块（带方块实体的储存类方块）不可作为变形目标：退回随机安全目标，
-        // 防止变身后渲染成空白方块或在落地时死亡（随机目标选择同样已排除黑名单）。
-        if (BuiltInRegistries.BLOCK.containsKey(itemTypeRl)) {
-            Block targetBlock = BuiltInRegistries.BLOCK.get(itemTypeRl);
-            if (isTransmutationBlockBlacklisted(targetBlock)) {
-                itemType = pickRandomTransmutationType();
-                itemTypeRl = ResourceLocation.tryParse(itemType);
-                if (itemTypeRl == null) return;
-            }
-        }
+        // 注：不再做“黑名单方块 → 回退随机安全目标”的处理。下落方块非 MODEL 类的显示问题已由
+        // 客户端 FallingBlockRendererMixin（物品模型回退）解决，箱子/木桶等方块可作为正常变形目标。
 
         double spawnX = entity.getX();
         double spawnY = entity.getY() + 0.2;
@@ -13085,50 +15050,74 @@ public class ModMain {
 
         boolean isBlock = BuiltInRegistries.BLOCK.containsKey(itemTypeRl);
         boolean isPlayer = entity instanceof ServerPlayer;
-        UUID playerUuid = isPlayer ? entity.getUUID() : null;
+        UUID playerUuid = isPlayer ? entity.getUUID()
+            : (carried != null ? carried.playerUuid() : null);
 
         TransmutationData data = new TransmutationData(entityNbt, remainingTicks,
             killerUuid != null ? killerUuid : new UUID(0, 0), itemType, playerUuid);
 
         if (isPlayer) {
-            // 玩家：切冒险模式并隐身（被变成的实体跟随玩家），绝不 discard 玩家。
+            // 玩家变方块/物品：真正成为该方块/物品（Morph 式渲染替换，与变生物一致）——
+            // 不切模式、不隐身、不生成跟随壳实体；玩家本体即目标，客户端把玩家渲染成方块/物品。
             // 记录到 TRANSMUTED_ENTITIES 以阻止滞留云对同一玩家重复二次变身。
             ServerPlayer sp = (ServerPlayer) entity;
-            PLAYER_ORIGINAL_GAMEMODE.put(sp.getUUID(), sp.gameMode.getGameModeForPlayer());
             TRANSMUTED_ENTITIES.add(sp.getUUID());
-            // 记录变形形态（伤害免疫规则用）并设置玩家缩放（物品 0.13 / 方块 0.5）
+            // 记录变形形态（伤害免疫规则用）。注意：不给玩家设置 SCALE 缩放（渲染替换不画玩家本体模型，
+            // 设 SCALE 只会干扰碰撞箱/镜头/复位，且是此前还原后残留 0.5 的根源）。
             PLAYER_TRANSMUTATION_INFO.put(sp.getUUID(),
                 new PlayerTransmutationInfo(isBlock ? TransmutationForm.BLOCK : TransmutationForm.ITEM, itemType));
-            applyTransmutationScale(sp, isBlock ? 0.5 : 0.13);
-            beginTransmutationView(sp);
-        } else {
-            entity.discard();
+            // 玩家变方块/物品：碰撞箱设为对应形态尺寸。方块碰撞箱取 0.98——既能轻松挤入 1×1 洞口
+            // （0.9995 近似 1，几乎无缝隙余量，实际会被卡住钻不进去），又保留少量容许随动；
+            // 视觉方块渲染仍用 0.9995 填满整格（严丝合缝、无可见裂缝），二者解耦：碰撞箱负责“钻得动”，
+            // 视觉负责“不露缝”。
+            MORPH_DIMENSIONS.put(sp.getUUID(), isBlock
+                ? net.minecraft.world.entity.EntityDimensions.fixed(0.98F, 0.98F)
+                : net.minecraft.world.entity.EntityDimensions.fixed(0.25F, 0.25F));
+            sp.refreshDimensions();
+            // 渲染替换会整体重画玩家为方块/物品，不允许 SCALE 缩放残留（清早期版本遗留的 0.5/0.13）
+            {
+                net.minecraft.world.entity.ai.attributes.AttributeInstance sa =
+                    sp.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.SCALE);
+                if (sa != null && sa.getBaseValue() != 1.0) {
+                    sa.setBaseValue(1.0);
+                }
+            }
+            // 变形倒计时：到 0 由通用 revertMorphRenderPlayer 复原
+            MORPH_REMAINING.put(sp.getUUID(), remainingTicks);
+            // 玩家变方块/物品：血量上限设为 10，按比例换算当前血量，并记录原始血量以便复原时反算
+            {
+                float originalMax = sp.getMaxHealth();
+                float blockMax = 10.0F;
+                if (originalMax > 0) {
+                    MORPH_HEALTH_INFO.put(sp.getUUID(), new MorphHealthInfo(originalMax, blockMax));
+                    net.minecraft.world.entity.ai.attributes.AttributeInstance maxHpAttr =
+                        sp.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH);
+                    if (maxHpAttr != null) {
+                        maxHpAttr.setBaseValue(blockMax);
+                    }
+                    float newHealth = sp.getHealth() / originalMax * blockMax;
+                    sp.setHealth(newHealth);
+                }
+            }
+            // 本体即目标：清除可能残留的隐身状态，保持可被看见
+            sp.removeEffect(MobEffects.INVISIBILITY);
+            sp.setInvisible(false);
+            // 通知客户端将本地玩家渲染为对应方块/物品（渲染替换，不再走隐身壳）
+            sendTransmutationState(sp, true, 0, itemType);
+            return;
         }
+        entity.discard();
 
         if (isBlock) {
             Block block = BuiltInRegistries.BLOCK.get(itemTypeRl);
             if (block != null) {
-                Entity fallingBlock;
-                if (isPlayer) {
-                    // 玩家变方块：使用专用下落方块实体——贴地面跟随玩家、永不固化成方块、不因超时消失
-                    TransmutationFallingBlockEntity tfb = new TransmutationFallingBlockEntity(
-                        ModEntities.TRANSMUTATION_FALLING_BLOCK.get(), level);
-                    tfb.initFromBlock(level, BlockPos.containing(spawnX, spawnY, spawnZ),
-                        block.defaultBlockState());
-                    level.addFreshEntity(tfb);
-                    fallingBlock = tfb;
-                } else {
-                    FallingBlockEntity vanillaFall = FallingBlockEntity.fall(level,
-                        BlockPos.containing(spawnX, spawnY, spawnZ), block.defaultBlockState());
-                    vanillaFall.setPos(spawnX, spawnY, spawnZ);
-                    vanillaFall.setDeltaMovement(Vec3.ZERO);
-                    vanillaFall.dropItem = false;
-                    fallingBlock = vanillaFall;
-                }
-                FALLING_TRANSMUTATIONS.put(fallingBlock.getUUID(), data);
-                if (isPlayer) {
-                    sendTransmutationState((ServerPlayer) entity, true, fallingBlock.getId());
-                }
+                // 非玩家变方块：使用原版下落方块实体（落地还原）
+                FallingBlockEntity vanillaFall = FallingBlockEntity.fall(level,
+                    BlockPos.containing(spawnX, spawnY, spawnZ), block.defaultBlockState());
+                vanillaFall.setPos(spawnX, spawnY, spawnZ);
+                vanillaFall.setDeltaMovement(Vec3.ZERO);
+                vanillaFall.dropItem = false;
+                FALLING_TRANSMUTATIONS.put(vanillaFall.getUUID(), data);
             }
         } else {
             net.minecraft.world.item.Item item = BuiltInRegistries.ITEM.get(itemTypeRl);
@@ -13143,9 +15132,6 @@ public class ModMain {
                 ITEM_TRANSMUTATIONS.put(itemEntity.getUUID(), data);
                 ITEM_TRANSMUTATION_POSITIONS.put(itemEntity.getUUID(),
                     BlockPos.containing(spawnX, spawnY, spawnZ));
-                if (isPlayer) {
-                    sendTransmutationState((ServerPlayer) entity, true, itemEntity.getId());
-                }
             }
         }
     }
@@ -13170,26 +15156,37 @@ public class ModMain {
 
     // 将原生物变成指定名字的玩家空壳
     private static void performPlayerShellTransmutation(ServerLevel level, LivingEntity entity,
-            String skinName, int remainingTicks, UUID killerUuid) {
+            String skinName, int remainingTicks, UUID killerUuid, CarriedShellOrigin carried) {
         CompoundTag entityNbt = new CompoundTag();
-        entity.save(entityNbt);
+        if (carried != null) {
+            entityNbt = carried.entityNbt().copy(); // 沿用最初玩家/生物的 NBT
+        } else {
+            entity.save(entityNbt);
+        }
 
         double spawnX = entity.getX();
         double spawnY = entity.getY();
         double spawnZ = entity.getZ();
 
         boolean isPlayer = entity instanceof ServerPlayer;
-        UUID playerUuid = isPlayer ? entity.getUUID() : null;
+        UUID playerUuid = isPlayer ? entity.getUUID()
+            : (carried != null ? carried.playerUuid() : null);
 
         if (isPlayer) {
-            // 玩家：切冒险模式并隐身（被变成的壳跟随玩家），绝不 discard 玩家
+            // 玩家：渲染替换（Morph 式），玩家本体保持操控，客户端渲染为玩家空壳模型
             ServerPlayer sp = (ServerPlayer) entity;
-            PLAYER_ORIGINAL_GAMEMODE.put(sp.getUUID(), sp.gameMode.getGameModeForPlayer());
             TRANSMUTED_ENTITIES.add(sp.getUUID());
-            // 玩家空壳形态：伤害完全免疫；不改缩放
             PLAYER_TRANSMUTATION_INFO.put(sp.getUUID(),
-                new PlayerTransmutationInfo(TransmutationForm.PLAYER_SHELL, "player_shell:" + skinName));
-            beginTransmutationView(sp);
+                new PlayerTransmutationInfo(TransmutationForm.MOB, "player_shell:" + skinName));
+            // 玩家空壳碰撞箱保持玩家默认尺寸（0.6 × 1.8）
+            MORPH_DIMENSIONS.put(sp.getUUID(),
+                net.minecraft.world.entity.EntityDimensions.fixed(0.6F, 1.8F));
+            sp.refreshDimensions();
+            MORPH_REMAINING.put(sp.getUUID(), remainingTicks);
+            sendTransmutationState(sp, true, 0, "player_shell:" + skinName);
+            LOGGER.info("[DBG] playerShell MORPH player={} skin={} remainingTicks={}",
+                sp.getUUID(), skinName, remainingTicks);
+            return;
         } else {
             entity.discard();
         }
@@ -13207,8 +15204,10 @@ public class ModMain {
         shell.setRemainingTicks(remainingTicks);
         level.addFreshEntity(shell);
 
+        // 玩家空壳：玩家本体不变形、不换算血量，max 传 0 禁用按比例换算
         LIVING_SHELLS.put(shell.getUUID(), new LivingShellData(entityNbt, playerUuid,
-            killerUuid != null ? killerUuid : new UUID(0, 0), remainingTicks, true));
+            killerUuid != null ? killerUuid : new UUID(0, 0), remainingTicks, true,
+            0f, 0f, 0f));
         if (playerUuid != null) {
             sendTransmutationState((ServerPlayer) entity, true, shell.getId());
         }
@@ -13218,17 +15217,27 @@ public class ModMain {
 
     // 将原生物变成刷怪蛋对应的生物（使用其 AI）
     private static void performMobShellTransmutation(ServerLevel level, LivingEntity entity,
-            String entityTypeId, int remainingTicks, UUID killerUuid) {
+            String entityTypeId, int remainingTicks, UUID killerUuid, CarriedShellOrigin carried) {
         boolean wasWitchBoss = entity instanceof Witch ww && ww.getPersistentData().getBoolean(WITCH_BOSS_TAG);
         CompoundTag entityNbt = new CompoundTag();
-        entity.save(entityNbt);
+        if (carried != null) {
+            entityNbt = carried.entityNbt().copy(); // 沿用最初玩家/生物的 NBT
+        } else {
+            entity.save(entityNbt);
+        }
+        // 女巫Boss 自变形成生物：在 entityNbt 顶层打“原生物是女巫Boss”标记，
+        // 供其自变形形态被摧毁时按比例扣血（而非秒杀重建）。
+        if (wasWitchBoss) {
+            entityNbt.putBoolean(WITCH_BOSS_ORIGIN_TAG, true);
+        }
 
         double spawnX = entity.getX();
         double spawnY = entity.getY();
         double spawnZ = entity.getZ();
 
         boolean isPlayer = entity instanceof ServerPlayer;
-        UUID playerUuid = isPlayer ? entity.getUUID() : null;
+        UUID playerUuid = isPlayer ? entity.getUUID()
+            : (carried != null ? carried.playerUuid() : null);
 
         if (isPlayer) {
             // 玩家：渲染替换（Morph 式）。不再切冒险/隐形，也不生成独立生物壳——玩家本体保持操控，
@@ -13243,13 +15252,19 @@ public class ModMain {
                 MORPH_DIMENSIONS.put(sp.getUUID(),
                     BuiltInRegistries.ENTITY_TYPE.get(morphRl).getDimensions());
                 sp.refreshDimensions();
+                // 把玩家最大生命值设为该生物的最大生命值，并按比例换算当前生命（向上取整）
+                applyMorphMaxHealth(sp, level, morphRl);
             }
-            // 把玩家最大生命值设为该生物的最大生命值，并按比例换算当前生命（向上取整）
-            applyMorphMaxHealth(sp, level, morphRl);
             MORPH_REMAINING.put(sp.getUUID(), remainingTicks);
             sendTransmutationState(sp, true, 0, entityTypeId);
             LOGGER.info("[DBG] morphRender CREATED player={} type={} remainingTicks={}",
                 sp.getUUID(), entityTypeId, remainingTicks);
+            // 阶段2·玩家对自己使用动物类变形药水：找到交战中的阶段2女巫Boss，血条 -1/6
+            witchBossStage2PlayerAnimalMorphed(level, sp);
+            // 阶段3·玩家对自己使用动物类变形药水：找到交战中的阶段3女巫Boss，血条 -1/15
+            witchBossStage3PlayerAnimalMorphed(level, sp);
+            // 特殊能力：鸡/鹦鹉 → 缓降I（无粒子）
+            applyMorphSpecialAbilities(sp, entityTypeId);
             return; // 玩家走渲染替换，不再生成跟随生物壳
         }
         entity.discard();
@@ -13262,6 +15277,23 @@ public class ModMain {
         if (!(mob instanceof net.minecraft.world.entity.Mob mobEntity)) return;
         mobEntity.setPersistenceRequired();
         mobEntity.setPos(spawnX, spawnY, spawnZ);
+        // 普通生物→生物：像玩家一样按比例换算壳的当前生命（原生物生命/原最大生命*该生物最大生命）
+        // 例如 8/20 的羊变鸡(最大4) → 壳生命 = 8/20*4 = 1.6
+        // 进阶变形（carried != null）时，以上一层壳的当前生命/最大生命为基准继续按比例换算。
+        float origMax, origHealth, carriedOrigMax;
+        if (carried != null && carried.shellMaxHealth() > 0) {
+            origMax = carried.shellMaxHealth();   // 上一层壳的最大生命为换算基准
+            origHealth = carried.currentHealth(); // 上一层壳的当前生命
+            carriedOrigMax = carried.originalMaxHealth() > 0 ? carried.originalMaxHealth() : origMax;
+        } else {
+            origMax = entity.getMaxHealth();
+            origHealth = entity.getHealth();
+            carriedOrigMax = origMax;
+        }
+        float mobMax = mobEntity.getMaxHealth();
+        if (origMax > 0 && mobMax > 0) {
+            mobEntity.setHealth(origHealth / origMax * mobMax);
+        }
         // 玩家变身的壳：禁用 AI，避免其自主寻路/移动与“跟随玩家”贴附逻辑互相拉扯造成抽搐
         if (playerUuid != null) {
             mobEntity.setNoAi(true);
@@ -13287,7 +15319,8 @@ public class ModMain {
             level.getEntity(mob.getUUID()));
 
         LIVING_SHELLS.put(mob.getUUID(), new LivingShellData(entityNbt, playerUuid,
-            killerUuid != null ? killerUuid : new UUID(0, 0), remainingTicks, false));
+            killerUuid != null ? killerUuid : new UUID(0, 0), remainingTicks, false,
+            carriedOrigMax, mobEntity.getMaxHealth(), mobEntity.getHealth()));
         // 女巫Boss自我变形：给变形后的生物打标记，让它稍后往脚下丢变形解药把自己还原为 witchboss 本体
         if (wasWitchBoss && playerUuid == null) {
             mobEntity.getPersistentData().putBoolean(WITCH_BOSS_SELF_TRANS_TAG, true);
@@ -13305,7 +15338,8 @@ public class ModMain {
             shell.getOriginPlayerUuid(),
             shell.getOriginKillerUuid(),
             shell.getRemainingTicks(),
-            true));
+            true,
+            0f, 0f, 0f));
     }
 
     // 生物壳/玩家空壳被杀死：连带杀死原生物（玩家/宠物/普通生物）
@@ -13343,6 +15377,10 @@ public class ModMain {
     // 重建原生物并击杀；宠物用对应“体验卡”自定义伤害，普通生物用通用伤害
     private static void handleLivingShellKillCredit(ServerLevel level, CompoundTag originNbt,
             UUID killerUuid, BlockPos pos, DamageSource petDamageSource) {
+        // 女巫Boss 自变形形态（生物壳）被杀：按比例扣血而非秒杀，并阶段1→阶段2
+        if (witchBossSelfFormDestroyed(level, originNbt, pos)) {
+            return;
+        }
         String entityId = originNbt.getString("id");
         if (!originNbt.contains("id")) return;
         ResourceLocation entityRl = ResourceLocation.tryParse(entityId);
@@ -13432,8 +15470,12 @@ public class ModMain {
                 }
                 makeTransmutedFollowPlayer(shell, player);
             }
+            // 每刻刷新壳当前生命，复原时按比例换算回原生物生命
+            float liveHealth = (shell instanceof net.minecraft.world.entity.LivingEntity leS)
+                ? leS.getHealth() : data.currentHealth();
             LivingShellData nd = new LivingShellData(data.entityNbt(), data.playerUuid(),
-                data.killerUuid(), data.remainingTicks() - 1, data.isPlayerShell());
+                data.killerUuid(), data.remainingTicks() - 1, data.isPlayerShell(),
+                data.originalMaxHealth(), data.shellMaxHealth(), liveHealth);
             entry.setValue(nd);
             if (nd.remainingTicks() <= 0) {
                 LOGGER.info("[DBG] tickLivingShells: COUNTDOWN ZERO -> revert uuid={} playerUuid={} dim={}",
@@ -13446,8 +15488,9 @@ public class ModMain {
         }
     }
 
-    // 复原玩家空壳/生物壳：玩家恢复游玩模式并传送回来，普通生物重新生成回原形态
-    private static void revertLivingShell(ServerLevel level, LivingShellData data, BlockPos pos) {
+    // 复原玩家空壳/生物壳：玩家恢复游玩模式并传送回来，普通生物重新生成回原形态。
+    // 返回复原出的生物实体（若为普通生物），供解药解除女巫Boss自变形形态时计数。
+    private static net.minecraft.world.entity.LivingEntity revertLivingShell(ServerLevel level, LivingShellData data, BlockPos pos) {
         if (data.playerUuid() != null) {
             ServerPlayer player = level.getServer().getPlayerList().getPlayer(data.playerUuid());
             if (player != null) {
@@ -13468,6 +15511,7 @@ public class ModMain {
                     data.playerUuid());
             }
             cleanupPlayerTransmutation(data.playerUuid());
+            return null;
         } else if (data.entityNbt() != null && data.entityNbt().contains("id")) {
             CompoundTag nbt = data.entityNbt().copy();
             nbt.remove("UUID");
@@ -13488,13 +15532,23 @@ public class ModMain {
                 Entity revived = opt.get();
                 revived.setPos(x, y, z);
                 level.addFreshEntity(revived);
+                registerWitchBossAfterRebuild(revived); // 女巫Boss 还原后重新登记血条跟踪（新 UUID）
+                // 像玩家一样按比例换算回原生物生命：壳当前生命/shellMax*originalMax。
+                // 例如 1/4 的鸡复原羊 → 生命 = 1/4*20 = 5/20（保留在鸡形态受到的伤害比例）。
+                if (revived instanceof net.minecraft.world.entity.LivingEntity leRev
+                        && data.shellMaxHealth() > 0 && data.originalMaxHealth() > 0) {
+                    leRev.setHealth(data.currentHealth() / data.shellMaxHealth()
+                        * data.originalMaxHealth());
+                }
                 LOGGER.info("[DBG] revertLivingShell: MOB spawned id={} at={}",
                     nbt.getString("id"), pos);
+                return revived instanceof net.minecraft.world.entity.LivingEntity le ? le : null;
             } else {
                 LOGGER.info("[DBG] revertLivingShell: MOB spawn failed id={} at={}",
                     data.entityNbt().getString("id"), pos);
             }
         }
+        return null;
     }
 
     // ===== Creeper Clan 维度：贴近地面的空气方块随机触发 TNT 爆炸粒子 =====
@@ -13956,8 +16010,11 @@ public class ModMain {
     // 此处 map 已移除对应条目，第二次调用会直接返回，不会重复结算）。
     private static void onLivingDeath(LivingDeathEvent event) {
         if (!(event.getEntity().level() instanceof ServerLevel serverLevel)) return;
-        // 玩家“渲染替换”变身期间死亡：清除变形状态（重生后不再残留生物渲染），本体死亡即“生物死亡”
-        if (event.getEntity() instanceof ServerPlayer deadSp && MORPH_REMAINING.containsKey(deadSp.getUUID())) {
+        // 玩家任意变形形态（生物/方块/物品）死亡：先彻底解除变形，让玩家以“普通玩家”身份完成死亡/重生。
+        // 否则变形（尤其方块/物品）玩家的死亡会被“复活到1血”救起：死不掉、点不了重生、被反复鞭尸。
+        if (event.getEntity() instanceof ServerPlayer deadSp
+            && (MORPH_REMAINING.containsKey(deadSp.getUUID())
+                || PLAYER_TRANSMUTATION_INFO.containsKey(deadSp.getUUID()))) {
             revertMorphRenderPlayer(deadSp);
         }
         handleShipwreckLeaderExpReward(event.getEntity(), event.getSource());
@@ -14134,11 +16191,72 @@ public class ModMain {
         }
     }
 
+    /** 女巫Boss自变形形态（生物/方块/物品）被摧毁/被杀：不秒杀，而是原地重建女巫Boss，
+     *  只损失 {@link #WITCH_BOSS_SELF_FORM_DEATH_PENALTY}(10%) 最大生命；若当前为阶段1则立即进入阶段2。
+     *  返回 true 表示已按“形态被摧毁”处理（调用方应跳过原击杀结算）。 */
+    private static boolean witchBossSelfFormDestroyed(ServerLevel level, CompoundTag entityNbt, BlockPos pos) {
+        if (entityNbt == null || !entityNbt.getBoolean(WITCH_BOSS_ORIGIN_TAG)) return false;
+        // 用原 NBT 重建女巫Boss（本体已随变形 discard，重建以继续作战）
+        CompoundTag nbt = entityNbt.copy();
+        nbt.remove("UUID");
+        nbt.remove("Health"); // 避免沿用旧血量，随后按“已损失10%”设定
+        nbt.remove("DeathTime");
+        nbt.remove("HurtTime");
+        double x = pos.getX() + 0.5;
+        double y = pos.getY() + 0.2;
+        double z = pos.getZ() + 0.5;
+        net.minecraft.nbt.ListTag posList = new net.minecraft.nbt.ListTag();
+        posList.add(net.minecraft.nbt.DoubleTag.valueOf(x));
+        posList.add(net.minecraft.nbt.DoubleTag.valueOf(y));
+        posList.add(net.minecraft.nbt.DoubleTag.valueOf(z));
+        nbt.put("Pos", posList);
+        nbt.put("Motion", new net.minecraft.nbt.ListTag());
+        nbt.getList("Motion", net.minecraft.nbt.Tag.TAG_DOUBLE).add(net.minecraft.nbt.DoubleTag.valueOf(0.0));
+        nbt.getList("Motion", net.minecraft.nbt.Tag.TAG_DOUBLE).add(net.minecraft.nbt.DoubleTag.valueOf(0.0));
+        nbt.getList("Motion", net.minecraft.nbt.Tag.TAG_DOUBLE).add(net.minecraft.nbt.DoubleTag.valueOf(0.0));
+        java.util.Optional<Entity> opt = EntityType.create(nbt, level);
+        if (opt.isEmpty() || !(opt.get() instanceof Witch revived)) return true;
+        revived.getPersistentData().putBoolean(TRANSMUTATION_REKILL_TAG, true); // 避免 /kill 存档膨胀
+        revived.getPersistentData().putBoolean(WITCH_BOSS_TAG, true);
+        revived.setPos(x, y, z);
+        // 已损失 10% 最大生命（下限保留 1）
+        double maxHp = revived.getMaxHealth();
+        revived.setHealth(Math.max(1.0F, (float) (maxHp * (1.0 - WITCH_BOSS_SELF_FORM_DEATH_PENALTY))));
+        level.addFreshEntity(revived);
+        WITCH_BOSS_TRACKED.add(revived.getUUID());
+        // 若当前为阶段1 → 立即进入阶段2
+        if (getWitchBossStage(revived) == WITCH_BOSS_STAGE_ENTITY) {
+            setWitchBossStage(level, revived, WITCH_BOSS_STAGE_BLOCK);
+        }
+        // 若当前为阶段2：自变形方块被摧毁，阶段2血条 -1/10
+        if (getWitchBossStage(revived) == WITCH_BOSS_STAGE_BLOCK) {
+            witchBossStage2SelfFormDestroyed(revived);
+        }
+        // 若当前为阶段3：自变形方块/物品被摧毁，阶段3血条 -1/15（耗尽则判定击败）
+        if (getWitchBossStage(revived) == WITCH_BOSS_STAGE_ITEM) {
+            witchBossStage3SelfFormDestroyed(revived);
+            // 阶段3血条耗尽→女巫已被击败（discard），后续无需再处理
+            if (!revived.isAlive()) return true;
+        }
+        // 播放女巫受伤动画与音效：用真实受击(hurt)让服务端广播受伤事件→客户端“变红”闪白+被击音效。
+        // 用 1.0 点伤害确保广播触发，随后立即还原血量（不真正扣血）。
+        float preHp = revived.getHealth();
+        revived.hurt(level.damageSources().generic(), 1.0F);
+        revived.setHealth(preHp);
+        revived.hurtTime = 10;
+        revived.hurtDuration = 10;
+        return true;
+    }
+
     // 真正的击杀结算：重建原生物，并由责任玩家击杀，触发原版完整的击杀流程
     // （怪物猎人成就、玩家击杀统计、击杀分数与经验）。即使没有责任玩家，
     // 也会用通用伤害击杀，以保证被命名的宠物仍能播报“体验卡过期”与原版死亡消息。
     private static void handleTransmutationKillCredit(ServerLevel serverLevel, TransmutationData data,
             BlockPos pos, UUID destroyerUuid) {
+        // 女巫Boss 自变形形态（方块/物品）被摧毁：按比例扣血而非秒杀，并阶段1→阶段2
+        if (witchBossSelfFormDestroyed(serverLevel, data.entityNbt, pos)) {
+            return;
+        }
         String entityId = data.entityNbt.getString("id");
         if (!data.entityNbt.contains("id")) return;
         ResourceLocation entityRl = ResourceLocation.tryParse(entityId);
@@ -14209,9 +16327,9 @@ public class ModMain {
         return level.damageSources().source(key);
     }
 
-    private static void respawnTransmutedEntity(ServerLevel level, TransmutationData data, BlockPos pos) {
+    private static net.minecraft.world.entity.LivingEntity respawnTransmutedEntity(ServerLevel level, TransmutationData data, BlockPos pos) {
         CompoundTag entityNbt = data.entityNbt.copy();
-        if (!entityNbt.contains("id")) return;
+        if (!entityNbt.contains("id")) return null;
 
         entityNbt.remove("UUID");
 
@@ -14235,10 +16353,140 @@ public class ModMain {
             Entity resurrected = optEntity.get();
             resurrected.setPos(spawnX, spawnY, spawnZ);
             level.addFreshEntity(resurrected);
+            registerWitchBossAfterRebuild(resurrected); // 女巫Boss 还原后重新登记血条跟踪（新 UUID）
+            return resurrected instanceof net.minecraft.world.entity.LivingEntity le ? le : null;
         }
+        return null;
     }
 
     // ==================== PLAYER TRANSMUTATION HELPERS ====================
+
+    /** 玩家下线时：将"渲染替换"变身状态保存到 NBT，以便重进后恢复形态和倒计时。 */
+    private static void saveMorphStateToNbt(ServerPlayer player) {
+        UUID uid = player.getUUID();
+        if (!MORPH_REMAINING.containsKey(uid)) return;
+        PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(uid);
+        if (info == null) return;
+        CompoundTag data = player.getPersistentData();
+        data.putInt(MORPH_FORM_TAG, info.form().ordinal());
+        data.putString(MORPH_TYPE_TAG, info.itemType());
+        data.putInt(MORPH_REMAINING_TAG, MORPH_REMAINING.getOrDefault(uid, 0));
+        MorphHealthInfo healthInfo = MORPH_HEALTH_INFO.get(uid);
+        if (healthInfo != null) {
+            data.putFloat(MORPH_ORIGINAL_HEALTH_TAG, healthInfo.originalMaxHealth());
+            data.putFloat(MORPH_MOB_HEALTH_TAG, healthInfo.mobMaxHealth());
+        }
+    }
+
+    /** 玩家下线时：按比例恢复玩家原始生命值，避免存档记录生物生命值。 */
+    private static void restoreMorphHealthOnLogout(ServerPlayer player) {
+        MorphHealthInfo healthInfo = MORPH_HEALTH_INFO.get(player.getUUID());
+        if (healthInfo == null) return;
+        net.minecraft.world.entity.ai.attributes.AttributeInstance maxHpAttr =
+            player.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH);
+        if (maxHpAttr != null) {
+            float cur = player.getHealth();
+            maxHpAttr.setBaseValue(healthInfo.originalMaxHealth());
+            if (healthInfo.mobMaxHealth() > 0 && healthInfo.originalMaxHealth() > 0) {
+                float newHealth = cur / healthInfo.mobMaxHealth() * healthInfo.originalMaxHealth();
+                player.setHealth(newHealth);
+            }
+        }
+    }
+
+    /** 玩家登录时：从 NBT 恢复"渲染替换"变身状态（形态、倒计时、生命值）。 */
+    private static void restoreMorphStateFromNbt(ServerPlayer player) {
+        CompoundTag data = player.getPersistentData();
+        if (!data.contains(MORPH_FORM_TAG)) return;
+        int formOrdinal = data.getInt(MORPH_FORM_TAG);
+        if (formOrdinal < 0 || formOrdinal >= TransmutationForm.values().length) return;
+        TransmutationForm form = TransmutationForm.values()[formOrdinal];
+        String morphType = data.getString(MORPH_TYPE_TAG);
+        int remaining = data.getInt(MORPH_REMAINING_TAG);
+        if (remaining <= 0 || morphType.isBlank()) {
+            clearMorphNbt(data);
+            return;
+        }
+        UUID uid = player.getUUID();
+        TRANSMUTED_ENTITIES.add(uid);
+        PLAYER_TRANSMUTATION_INFO.put(uid, new PlayerTransmutationInfo(form, morphType));
+        MORPH_REMAINING.put(uid, remaining);
+        // 按形态设置碰撞箱尺寸
+        switch (form) {
+            case BLOCK -> MORPH_DIMENSIONS.put(uid,
+                net.minecraft.world.entity.EntityDimensions.fixed(0.98F, 0.98F));
+            case ITEM -> MORPH_DIMENSIONS.put(uid,
+                net.minecraft.world.entity.EntityDimensions.fixed(0.25F, 0.25F));
+            case MOB -> {
+                // 玩家空壳：使用玩家默认碰撞箱，不换算生命/战斗属性
+                if (morphType.startsWith("player_shell:")) {
+                    MORPH_DIMENSIONS.put(uid,
+                        net.minecraft.world.entity.EntityDimensions.fixed(0.6F, 1.8F));
+                } else {
+                    net.minecraft.resources.ResourceLocation morphRl =
+                        net.minecraft.resources.ResourceLocation.tryParse(morphType);
+                    if (morphRl != null && net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.containsKey(morphRl)) {
+                        MORPH_DIMENSIONS.put(uid,
+                            net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.get(morphRl).getDimensions());
+                        // 恢复生命值：应用生物最大生命值，并按比例换算当前生命
+                        if (data.contains(MORPH_ORIGINAL_HEALTH_TAG)) {
+                            float originalMax = data.getFloat(MORPH_ORIGINAL_HEALTH_TAG);
+                            float mobMax = data.getFloat(MORPH_MOB_HEALTH_TAG);
+                            if (mobMax > 0) {
+                                MORPH_HEALTH_INFO.put(uid, new MorphHealthInfo(originalMax, mobMax));
+                                net.minecraft.world.entity.ai.attributes.AttributeInstance maxHpAttr =
+                                    player.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH);
+                                if (maxHpAttr != null) {
+                                    maxHpAttr.setBaseValue(mobMax);
+                                }
+                                float newHealth = player.getHealth() / originalMax * mobMax;
+                                player.setHealth(newHealth);
+                            }
+                        }
+                        // 恢复战斗属性（攻击力+护甲值）：从生物类型读取并应用
+                        try {
+                            net.minecraft.world.entity.Entity mobTmp =
+                                net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.get(morphRl)
+                                    .create(player.serverLevel());
+                            if (mobTmp instanceof net.minecraft.world.entity.LivingEntity mobLe) {
+                                net.minecraft.world.entity.ai.attributes.AttributeInstance playerAtk =
+                                    player.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.ATTACK_DAMAGE);
+                                net.minecraft.world.entity.ai.attributes.AttributeInstance mobAtk =
+                                    mobLe.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.ATTACK_DAMAGE);
+                                double originalAtk = playerAtk != null ? playerAtk.getBaseValue() : 2.0;
+                                double mobAtkVal = mobAtk != null ? mobAtk.getBaseValue() : 2.0;
+                                net.minecraft.world.entity.ai.attributes.AttributeInstance playerArmor =
+                                    player.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.ARMOR);
+                                net.minecraft.world.entity.ai.attributes.AttributeInstance mobArmor =
+                                    mobLe.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.ARMOR);
+                                double originalArmor = playerArmor != null ? playerArmor.getBaseValue() : 0.0;
+                                double mobArmorVal = mobArmor != null ? mobArmor.getBaseValue() : 0.0;
+                                MORPH_COMBAT_INFO.put(uid, new MorphCombatInfo(originalAtk, originalArmor));
+                                if (playerAtk != null) playerAtk.setBaseValue(mobAtkVal);
+                                if (playerArmor != null) playerArmor.setBaseValue(mobArmorVal);
+                            }
+                        } catch (Throwable ignored) {
+                            // 临时创建生物失败时跳过战斗属性
+                        }
+                    }
+                }
+            }
+        }
+        player.refreshDimensions();
+        sendTransmutationState(player, true, 0, morphType);
+        // 恢复特殊能力（鸡/鹦鹉 → 缓降）
+        applyMorphSpecialAbilities(player, morphType);
+        // 清除 NBT 中的恢复数据，避免残留
+        clearMorphNbt(data);
+    }
+
+    private static void clearMorphNbt(CompoundTag data) {
+        data.remove(MORPH_FORM_TAG);
+        data.remove(MORPH_TYPE_TAG);
+        data.remove(MORPH_REMAINING_TAG);
+        data.remove(MORPH_ORIGINAL_HEALTH_TAG);
+        data.remove(MORPH_MOB_HEALTH_TAG);
+    }
 
     // 玩家标识清理
     private static void cleanupPlayerTransmutation(UUID playerUuid) {
@@ -14249,6 +16497,9 @@ public class ModMain {
         MORPH_REMAINING.remove(playerUuid);
         MORPH_DIMENSIONS.remove(playerUuid);
         MORPH_HEALTH_INFO.remove(playerUuid);
+        MORPH_COMBAT_INFO.remove(playerUuid);
+        MORPH_FLIGHT_ORIGINAL.remove(playerUuid);
+        MORPH_PROJECTILE_COOLDOWN.remove(playerUuid);
     }
 
     /** 玩家“渲染替换”变身：把最大生命值设为目标生物的最大生命值，并按比例换算当前生命（向上取整）。
@@ -14258,19 +16509,360 @@ public class ModMain {
             if (morphRl == null || !BuiltInRegistries.ENTITY_TYPE.containsKey(morphRl)) return;
             net.minecraft.world.entity.Entity mobTmp = BuiltInRegistries.ENTITY_TYPE.get(morphRl).create(level);
             if (!(mobTmp instanceof net.minecraft.world.entity.LivingEntity mobLe)) return;
+            // 生命值
             float originalMax = sp.getMaxHealth();
             float mobMax = mobLe.getMaxHealth();
-            if (mobMax <= 0) return;
-            MORPH_HEALTH_INFO.put(sp.getUUID(), new MorphHealthInfo(originalMax, mobMax));
-            net.minecraft.world.entity.ai.attributes.AttributeInstance maxHpAttr =
-                sp.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH);
-            if (maxHpAttr != null) {
-                maxHpAttr.setBaseValue(mobMax);
+            if (mobMax > 0) {
+                MORPH_HEALTH_INFO.put(sp.getUUID(), new MorphHealthInfo(originalMax, mobMax));
+                net.minecraft.world.entity.ai.attributes.AttributeInstance maxHpAttr =
+                    sp.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH);
+                if (maxHpAttr != null) {
+                    maxHpAttr.setBaseValue(mobMax);
+                }
+                float newHealth = sp.getHealth() / originalMax * mobMax;
+                sp.setHealth(newHealth);
             }
-            float newHealth = sp.getHealth() / originalMax * mobMax;
-            sp.setHealth(newHealth);
+            // 攻击力
+            net.minecraft.world.entity.ai.attributes.AttributeInstance playerAtk =
+                sp.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.ATTACK_DAMAGE);
+            net.minecraft.world.entity.ai.attributes.AttributeInstance mobAtk =
+                mobLe.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.ATTACK_DAMAGE);
+            double originalAtk = playerAtk != null ? playerAtk.getBaseValue() : 2.0;
+            double mobAtkVal = mobAtk != null ? mobAtk.getBaseValue() : 2.0;
+            // 护甲值
+            net.minecraft.world.entity.ai.attributes.AttributeInstance playerArmor =
+                sp.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.ARMOR);
+            net.minecraft.world.entity.ai.attributes.AttributeInstance mobArmor =
+                mobLe.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.ARMOR);
+            double originalArmor = playerArmor != null ? playerArmor.getBaseValue() : 0.0;
+            double mobArmorVal = mobArmor != null ? mobArmor.getBaseValue() : 0.0;
+            MORPH_COMBAT_INFO.put(sp.getUUID(), new MorphCombatInfo(originalAtk, originalArmor));
+            if (playerAtk != null) {
+                playerAtk.setBaseValue(mobAtkVal);
+            }
+            if (playerArmor != null) {
+                playerArmor.setBaseValue(mobArmorVal);
+            }
         } catch (Throwable ignored) {
-            // 个别生物类型临时创建失败时，跳过生命换算，不影响变形主流程
+            // 个别生物类型临时创建失败时，跳过属性换算，不影响变形主流程
+        }
+    }
+
+    /** 变形特殊能力：鸡/鹦鹉 → 缓降I（无粒子图标）；飞行生物 → 飞行能力。 */
+    private static void applyMorphSpecialAbilities(ServerPlayer sp, String entityTypeId) {
+        if (entityTypeId == null) return;
+        if ("minecraft:chicken".equals(entityTypeId) || "minecraft:parrot".equals(entityTypeId)) {
+            sp.addEffect(new net.minecraft.world.effect.MobEffectInstance(
+                net.minecraft.world.effect.MobEffects.SLOW_FALLING,
+                net.minecraft.world.effect.MobEffectInstance.INFINITE_DURATION,
+                0, // 等级I
+                false, // ambient
+                false, // visible（无粒子）
+                false  // showIcon（无图标）
+            ));
+        }
+        if (isFlyingMobType(entityTypeId, sp.serverLevel())) {
+            MORPH_FLIGHT_ORIGINAL.put(sp.getUUID(), sp.getAbilities().mayfly);
+            sp.getAbilities().mayfly = true;
+            sp.getAbilities().flying = true;
+            sp.onUpdateAbilities();
+        }
+    }
+
+    /** 判断实体类型是否为飞行生物（已知列表 + FlyingMob 子类自动检测）。 */
+    private static boolean isFlyingMobType(String entityTypeId, ServerLevel level) {
+        // 已知飞行生物：鹦鹉、凋灵、末影龙、蝙蝠、恼鬼、悦灵、蜜蜂、恶魂、烈焰人、幻翼
+        java.util.Set<String> known = java.util.Set.of(
+            "minecraft:parrot", "minecraft:wither", "minecraft:ender_dragon",
+            "minecraft:bat", "minecraft:vex", "minecraft:allay",
+            "minecraft:bee", "minecraft:ghast", "minecraft:blaze", "minecraft:phantom"
+        );
+        if (known.contains(entityTypeId)) return true;
+        // 自动检测：mod 中的飞行生物通常继承 FlyingMob
+        try {
+            net.minecraft.resources.ResourceLocation rl = net.minecraft.resources.ResourceLocation.tryParse(entityTypeId);
+            if (rl != null && net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.containsKey(rl)) {
+                net.minecraft.world.entity.Entity e =
+                    net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.get(rl).create(level);
+                if (e instanceof net.minecraft.world.entity.FlyingMob) return true;
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    // ============================================================
+    // 变形生物弹射物系统
+    // ============================================================
+
+    /** 获取变形生物的弹射物冷却时间（游戏刻）。 */
+    private static int getMorphProjectileCooldown(String entityTypeId) {
+        return switch (entityTypeId) {
+            case "minecraft:snow_golem" -> 4;
+            case "minecraft:skeleton", "minecraft:illusioner" -> 8;
+            case "minecraft:llama", "minecraft:trader_llama" -> 8;
+            case "minecraft:stray" -> 8;
+            case "minecraft:bogged" -> 8;
+            case "minecraft:blaze" -> 8;
+            case "minecraft:ghast" -> 8;
+            case "minecraft:wither" -> 8;
+            case "minecraft:ender_dragon" -> 8;
+            case "minecraft:breeze" -> 8;
+            case "minecraft:shulker" -> 20;
+            case "minecraft:enderman" -> 20;
+            case "minecraft:guardian" -> 40;
+            case "minecraft:elder_guardian" -> 40;
+            case "minecraft:warden" -> 40;
+            case "minecraft:creeper" -> 0; // 自爆即死，无冷却
+            default -> -1;
+        };
+    }
+
+    /** 变形生物空手右键发射弹射物。若冷却中或无弹射物能力则返回 false。 */
+    private static boolean handleMorphProjectile(ServerPlayer player) {
+        UUID uid = player.getUUID();
+        PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(uid);
+        if (info == null || info.form() != TransmutationForm.MOB) return false;
+        String entityTypeId = info.itemType();
+        if (entityTypeId == null) return false;
+
+        int cooldown = getMorphProjectileCooldown(entityTypeId);
+        if (cooldown < 0) return false;
+
+        long now = player.serverLevel().getGameTime();
+        Long last = MORPH_PROJECTILE_COOLDOWN.get(uid);
+        if (last != null && now - last < cooldown) return false;
+
+        MORPH_PROJECTILE_COOLDOWN.put(uid, now);
+        ServerLevel level = player.serverLevel();
+
+        switch (entityTypeId) {
+            case "minecraft:snow_golem" -> fireSnowball(level, player);
+            case "minecraft:skeleton", "minecraft:illusioner" -> fireArrow(level, player, null);
+            case "minecraft:llama", "minecraft:trader_llama" -> fireLlamaSpit(level, player);
+            case "minecraft:stray" ->
+                fireArrow(level, player, new net.minecraft.world.effect.MobEffectInstance(
+                    net.minecraft.world.effect.MobEffects.MOVEMENT_SLOWDOWN, 200, 0));
+            case "minecraft:bogged" ->
+                fireArrow(level, player, new net.minecraft.world.effect.MobEffectInstance(
+                    net.minecraft.world.effect.MobEffects.POISON, 200, 0));
+            case "minecraft:blaze" -> fireBlazeFireball(level, player);
+            case "minecraft:ghast" -> fireGhastFireball(level, player);
+            case "minecraft:wither" -> fireWitherSkull(level, player);
+            case "minecraft:ender_dragon" -> fireDragonFireball(level, player);
+            case "minecraft:breeze" -> fireWindCharge(level, player);
+            case "minecraft:shulker" -> fireShulkerBullet(level, player);
+            case "minecraft:enderman" -> fireEnderPearl(level, player);
+            case "minecraft:guardian", "minecraft:elder_guardian" -> fireGuardianLaser(level, player, entityTypeId);
+            case "minecraft:warden" -> fireWardenSonicBoom(level, player);
+            case "minecraft:creeper" -> fireCreeperExplosion(level, player);
+        }
+        return true;
+    }
+
+    private static void fireSnowball(ServerLevel level, ServerPlayer player) {
+        Snowball snowball = new Snowball(level, player);
+        snowball.shootFromRotation(player, player.getXRot(), player.getYRot(), 0, 1.5F, 1.0F);
+        level.addFreshEntity(snowball);
+        level.playSound(null, player.getX(), player.getY(), player.getZ(),
+            net.minecraft.sounds.SoundEvents.SNOW_GOLEM_SHOOT, net.minecraft.sounds.SoundSource.PLAYERS, 1.0F, 1.0F);
+    }
+
+    /** 发射箭矢（同原版弓蓄满力的速度和伤害）。若 effect 非 null，则附加药水效果。 */
+    private static void fireArrow(ServerLevel level, ServerPlayer player,
+                                  net.minecraft.world.effect.MobEffectInstance effect) {
+        Arrow arrow = new Arrow(level, player, new ItemStack(Items.ARROW), new ItemStack(Items.ARROW));
+        if (effect != null) {
+            arrow.addEffect(effect);
+        }
+        arrow.shootFromRotation(player, player.getXRot(), player.getYRot(), 0, 3.0F, 1.0F);
+        arrow.setBaseDamage(2.0);
+        arrow.pickup = AbstractArrow.Pickup.CREATIVE_ONLY;
+        level.addFreshEntity(arrow);
+        level.playSound(null, player.getX(), player.getY(), player.getZ(),
+            net.minecraft.sounds.SoundEvents.SKELETON_SHOOT, net.minecraft.sounds.SoundSource.PLAYERS, 1.0F, 1.0F);
+    }
+
+    private static void fireLlamaSpit(ServerLevel level, ServerPlayer player) {
+        LlamaSpit spit = new LlamaSpit(net.minecraft.world.entity.EntityType.LLAMA_SPIT, level);
+        spit.setPos(player.getX(), player.getEyeY() - 0.1, player.getZ());
+        net.minecraft.world.phys.Vec3 look = player.getLookAngle();
+        spit.shoot(look.x, look.y, look.z, 1.5F, 1.0F);
+        level.addFreshEntity(spit);
+        level.playSound(null, player.getX(), player.getY(), player.getZ(),
+            net.minecraft.sounds.SoundEvents.LLAMA_SPIT, net.minecraft.sounds.SoundSource.PLAYERS, 1.0F, 1.0F);
+    }
+
+    private static void fireBlazeFireball(ServerLevel level, ServerPlayer player) {
+        net.minecraft.world.phys.Vec3 look = player.getLookAngle();
+        SmallFireball fireball = new SmallFireball(level, player, new net.minecraft.world.phys.Vec3(look.x, look.y, look.z));
+        fireball.setPos(player.getX(), player.getEyeY() - 0.1, player.getZ());
+        level.addFreshEntity(fireball);
+        level.playSound(null, player.getX(), player.getY(), player.getZ(),
+            net.minecraft.sounds.SoundEvents.BLAZE_SHOOT, net.minecraft.sounds.SoundSource.PLAYERS, 1.0F, 1.0F);
+    }
+
+    private static void fireGhastFireball(ServerLevel level, ServerPlayer player) {
+        net.minecraft.world.phys.Vec3 look = player.getLookAngle();
+        LargeFireball fireball = new LargeFireball(level, player, new net.minecraft.world.phys.Vec3(look.x, look.y, look.z), 1);
+        fireball.setPos(player.getX(), player.getEyeY() - 0.1, player.getZ());
+        level.addFreshEntity(fireball);
+        level.playSound(null, player.getX(), player.getY(), player.getZ(),
+            net.minecraft.sounds.SoundEvents.GHAST_SHOOT, net.minecraft.sounds.SoundSource.PLAYERS, 1.0F, 1.0F);
+    }
+
+    private static void fireWitherSkull(ServerLevel level, ServerPlayer player) {
+        net.minecraft.world.phys.Vec3 look = player.getLookAngle();
+        WitherSkull skull = new WitherSkull(level, player, new net.minecraft.world.phys.Vec3(look.x, look.y, look.z));
+        if (level.random.nextFloat() < 0.1f) {
+            skull.setDangerous(true); // 蓝色凋灵之首
+        }
+        skull.setPos(player.getX(), player.getEyeY() - 0.1, player.getZ());
+        level.addFreshEntity(skull);
+        level.playSound(null, player.getX(), player.getY(), player.getZ(),
+            net.minecraft.sounds.SoundEvents.WITHER_SHOOT, net.minecraft.sounds.SoundSource.PLAYERS, 1.0F, 1.0F);
+    }
+
+    private static void fireDragonFireball(ServerLevel level, ServerPlayer player) {
+        net.minecraft.world.phys.Vec3 look = player.getLookAngle();
+        DragonFireball fireball = new DragonFireball(level, player, new net.minecraft.world.phys.Vec3(look.x, look.y, look.z));
+        fireball.setPos(player.getX(), player.getEyeY() - 0.1, player.getZ());
+        level.addFreshEntity(fireball);
+        level.playSound(null, player.getX(), player.getY(), player.getZ(),
+            net.minecraft.sounds.SoundEvents.ENDER_DRAGON_SHOOT, net.minecraft.sounds.SoundSource.PLAYERS, 1.0F, 1.0F);
+    }
+
+    private static void fireWindCharge(ServerLevel level, ServerPlayer player) {
+        net.minecraft.world.entity.projectile.windcharge.BreezeWindCharge charge =
+            new net.minecraft.world.entity.projectile.windcharge.BreezeWindCharge(
+                net.minecraft.world.entity.EntityType.BREEZE_WIND_CHARGE, level);
+        charge.setOwner(player);
+        charge.setPos(player.getX(), player.getEyeY() - 0.1, player.getZ());
+        net.minecraft.world.phys.Vec3 look = player.getLookAngle();
+        charge.shoot(look.x, look.y, look.z, 1.5F, 1.0F);
+        level.addFreshEntity(charge);
+        level.playSound(null, player.getX(), player.getY(), player.getZ(),
+            net.minecraft.sounds.SoundEvents.BREEZE_SHOOT, net.minecraft.sounds.SoundSource.PLAYERS, 1.0F, 1.0F);
+    }
+
+    /** 发射潜影贝子弹：追踪攻击玩家的实体；若无目标则直线飞行5秒后静止。 */
+    private static void fireShulkerBullet(ServerLevel level, ServerPlayer player) {
+        net.minecraft.world.entity.LivingEntity target = findEntityTargetingPlayer(player, 32.0);
+        net.minecraft.core.Direction.Axis axis = player.getDirection().getAxis();
+        ShulkerBullet bullet = new ShulkerBullet(level, player, target, axis);
+        net.minecraft.world.phys.Vec3 look = player.getLookAngle();
+        bullet.setPos(player.getEyePosition().add(look.scale(0.5)));
+        level.addFreshEntity(bullet);
+        if (target == null) {
+            // 无目标：直线飞行5秒(100刻)后停在原地
+            bullet.setDeltaMovement(look.scale(0.5));
+            level.getServer().tell(new net.minecraft.server.TickTask(100, () -> {
+                if (bullet.isAlive()) {
+                    bullet.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
+                }
+            }));
+        }
+        level.playSound(null, player.getX(), player.getY(), player.getZ(),
+            net.minecraft.sounds.SoundEvents.SHULKER_SHOOT, net.minecraft.sounds.SoundSource.PLAYERS, 1.0F, 1.0F);
+    }
+
+    /** 找到瞄准玩家的敌对生物。 */
+    private static net.minecraft.world.entity.LivingEntity findEntityTargetingPlayer(ServerPlayer player, double range) {
+        return (net.minecraft.world.entity.LivingEntity) player.serverLevel().getEntities(player,
+            player.getBoundingBox().inflate(range), e -> {
+            if (!(e instanceof net.minecraft.world.entity.LivingEntity le)) return false;
+            if (le instanceof net.minecraft.world.entity.Mob mob && mob.getTarget() == player) return true;
+            return false;
+        }).stream().findFirst().orElse(null);
+    }
+
+    private static void fireEnderPearl(ServerLevel level, ServerPlayer player) {
+        ThrownEnderpearl pearl = new ThrownEnderpearl(level, player);
+        pearl.shootFromRotation(player, player.getXRot(), player.getYRot(), 0, 1.5F, 1.0F);
+        level.addFreshEntity(pearl);
+        level.playSound(null, player.getX(), player.getY(), player.getZ(),
+            net.minecraft.sounds.SoundEvents.ENDERMAN_TELEPORT, net.minecraft.sounds.SoundSource.PLAYERS, 1.0F, 1.0F);
+    }
+
+    /** 守卫者/远古守卫者激光：沿视线寻找目标，造成魔法伤害。 */
+    private static void fireGuardianLaser(ServerLevel level, ServerPlayer player, String entityTypeId) {
+        net.minecraft.world.phys.Vec3 eyePos = player.getEyePosition();
+        net.minecraft.world.phys.Vec3 look = player.getLookAngle();
+        net.minecraft.world.phys.Vec3 endPos = eyePos.add(look.scale(15.0));
+        net.minecraft.world.phys.AABB area = player.getBoundingBox()
+            .expandTowards(look.scale(15.0)).inflate(1.0);
+        net.minecraft.world.phys.EntityHitResult hit = net.minecraft.world.entity.projectile.ProjectileUtil
+            .getEntityHitResult(level, player, eyePos, endPos, area,
+                e -> e instanceof LivingEntity && e != player);
+        if (hit != null && hit.getEntity() instanceof LivingEntity target) {
+            float damage = entityTypeId.contains("elder") ? 12.0F : 6.0F;
+            target.hurt(player.damageSources().indirectMagic(player, player), damage);
+        }
+        level.playSound(null, player.getX(), player.getY(), player.getZ(),
+            net.minecraft.sounds.SoundEvents.GUARDIAN_ATTACK, net.minecraft.sounds.SoundSource.PLAYERS, 1.0F, 1.0F);
+    }
+
+    /** 监守者音波攻击：沿视线寻找目标，造成音波伤害（穿透护甲）。 */
+    private static void fireWardenSonicBoom(ServerLevel level, ServerPlayer player) {
+        net.minecraft.world.phys.Vec3 eyePos = player.getEyePosition();
+        net.minecraft.world.phys.Vec3 look = player.getLookAngle();
+        net.minecraft.world.phys.Vec3 endPos = eyePos.add(look.scale(15.0));
+        net.minecraft.world.phys.AABB area = player.getBoundingBox()
+            .expandTowards(look.scale(15.0)).inflate(1.0);
+        net.minecraft.world.phys.EntityHitResult hit = net.minecraft.world.entity.projectile.ProjectileUtil
+            .getEntityHitResult(level, player, eyePos, endPos, area,
+                e -> e instanceof LivingEntity && e != player);
+        if (hit != null && hit.getEntity() instanceof LivingEntity target) {
+            target.hurt(player.damageSources().sonicBoom(player), 10.0F);
+        }
+        level.playSound(null, player.getX(), player.getY(), player.getZ(),
+            net.minecraft.sounds.SoundEvents.WARDEN_SONIC_BOOM, net.minecraft.sounds.SoundSource.PLAYERS, 1.0F, 1.0F);
+    }
+
+    /** 苦力怕自爆：在玩家位置产生爆炸，用自定义伤害类型杀死玩家。 */
+    private static void fireCreeperExplosion(ServerLevel level, ServerPlayer player) {
+        // 先播放引燃音效
+        level.playSound(null, player.getX(), player.getY(), player.getZ(),
+            net.minecraft.sounds.SoundEvents.CREEPER_PRIMED, net.minecraft.sounds.SoundSource.PLAYERS, 1.0F, 1.0F);
+        // 爆炸（威力3，同苦力怕）
+        level.explode(player, player.getX(), player.getY(), player.getZ(), 3.0F,
+            net.minecraft.world.level.Level.ExplosionInteraction.MOB);
+        // 用自定义伤害类型杀死玩家，确保死亡消息为"自爆而亡"
+        player.hurt(player.damageSources().source(
+            cn.autoforged.joes_addons_for_abmc.damage.ModDamageTypes.MORPH_CREEPER_EXPLOSION.getKey()), Float.MAX_VALUE);
+    }
+
+    /** 变形生物空手右键事件（客户端）：向服务端发送弹射物请求。 */
+    private static void onMorphProjectileRightClick(PlayerInteractEvent.RightClickEmpty event) {
+        if (!event.getLevel().isClientSide()) return;
+        if (cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.isMorphActive()) {
+            PacketDistributor.sendToServer(new cn.autoforged.joes_addons_for_abmc.network.MorphProjectilePayload());
+        }
+    }
+
+    /** 变形生物空手右键实体：若无法交互则发射弹射物。 */
+    private static void onMorphEntityInteract(PlayerInteractEvent.EntityInteract event) {
+        if (event.getLevel().isClientSide()) return;
+        if (!(event.getEntity() instanceof ServerPlayer sp)) return;
+        if (!sp.getMainHandItem().isEmpty()) return;
+        PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(sp.getUUID());
+        if (info == null || info.form() != TransmutationForm.MOB) return;
+        if (getMorphProjectileCooldown(info.itemType()) >= 0) {
+            event.setCanceled(true);
+            handleMorphProjectile(sp);
+        }
+    }
+
+    /** 变形生物空手右键实体（特定交互）：同上。 */
+    private static void onMorphEntityInteractSpecific(PlayerInteractEvent.EntityInteractSpecific event) {
+        if (event.getLevel().isClientSide()) return;
+        if (!(event.getEntity() instanceof ServerPlayer sp)) return;
+        if (!sp.getMainHandItem().isEmpty()) return;
+        PlayerTransmutationInfo info = PLAYER_TRANSMUTATION_INFO.get(sp.getUUID());
+        if (info == null || info.form() != TransmutationForm.MOB) return;
+        if (getMorphProjectileCooldown(info.itemType()) >= 0) {
+            event.setCanceled(true);
+            handleMorphProjectile(sp);
         }
     }
 
@@ -14291,12 +16883,81 @@ public class ModMain {
                     player.setHealth(newHealth);
                 }
             }
+        } else {
+            // 兜底：若变形时未记录生命信息，将最大生命恢复为默认值 20.0
+            net.minecraft.world.entity.ai.attributes.AttributeInstance maxHpAttr =
+                player.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH);
+            if (maxHpAttr != null && maxHpAttr.getBaseValue() != 20.0) {
+                float cur = player.getHealth();
+                maxHpAttr.setBaseValue(20.0);
+                player.setHealth(Math.min(cur, 20.0F));
+            }
+        }
+        // 恢复玩家原始攻击力和护甲值
+        MorphCombatInfo combatInfo = MORPH_COMBAT_INFO.remove(player.getUUID());
+        if (combatInfo != null) {
+            net.minecraft.world.entity.ai.attributes.AttributeInstance atk =
+                player.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.ATTACK_DAMAGE);
+            if (atk != null) {
+                atk.setBaseValue(combatInfo.originalAttackDamage());
+            }
+            net.minecraft.world.entity.ai.attributes.AttributeInstance armor =
+                player.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.ARMOR);
+            if (armor != null) {
+                armor.setBaseValue(combatInfo.originalArmor());
+            }
+        }
+        // 移除变形特殊能力效果（缓降等）
+        player.removeEffect(net.minecraft.world.effect.MobEffects.SLOW_FALLING);
+        // 恢复原始飞行能力
+        Boolean origMayfly = MORPH_FLIGHT_ORIGINAL.remove(player.getUUID());
+        if (origMayfly != null) {
+            player.getAbilities().mayfly = origMayfly;
+            player.getAbilities().flying = false;
+            player.onUpdateAbilities();
+        }
+        restoreTransmutationScale(player); // 先还原缩放（生物形态无缩放时为无操作），再清理记录，避免记录被先删导致无法还原
+        // 渲染替换（生物/方块/物品）整体重画玩家为对应模型，不依赖/不允许 SCALE 缩放。强制回到 1.0，
+        // 以清除早期版本对块/物品形态设过 SCALE=0.5/0.13 后残留在玩家 NBT 里的缩放（重启不还原）。
+        {
+            net.minecraft.world.entity.ai.attributes.AttributeInstance sa =
+                player.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.SCALE);
+            if (sa != null && sa.getBaseValue() != 1.0) {
+                sa.setBaseValue(1.0);
+            }
         }
         cleanupPlayerTransmutation(player.getUUID());
+        // 清除女巫Boss变形标记（解除变形时一并清理，下次女巫命中时重新写入）
+        player.getPersistentData().remove(WITCH_TRANSFORMED_FLAG);
         if (hadDims) {
             player.refreshDimensions(); // 恢复玩家默认碰撞箱
         }
         sendTransmutationState(player, false, -1, "");
+        // 复原后：解除跟着玩家的点燃 TNT，并清理属于该玩家的 TNT 变形跟踪，避免 TNT 仍爆炸导致“假死/生命被置0”。
+        defuseTransmutedTntForPlayer(player);
+        // 卒后保底：仅当玩家“确实存活却被0血卡住”(假死)时才回1，绝不复活正在死亡的玩家
+        // （否则死不掉、点不了重生、被反复鞭尸）。
+        if (player.getHealth() <= 0.0F && player.isAlive()) {
+            player.setHealth(1.0F);
+        }
+    }
+
+    /** 复原玩家时，解除其身上跟随的“点燃 TNT”：丢弃带有 {@link #WITCH_BOSS_TNT_PLAYER_TAG} 的点燃 TNT，
+     *  并清掉 {@link #TNT_TRANSMUTATIONS} 中属于该玩家的条目，防止复原后 TNT 仍爆炸伤害玩家。 */
+    private static void defuseTransmutedTntForPlayer(ServerPlayer player) {
+        if (player == null || player.level().isClientSide()) return;
+        ServerLevel level = (ServerLevel) player.level();
+        for (net.minecraft.world.entity.item.PrimedTnt t : level.getEntitiesOfClass(
+                net.minecraft.world.entity.item.PrimedTnt.class,
+                player.getBoundingBox().inflate(8.0))) {
+            String u = t.getPersistentData().getString(WITCH_BOSS_TNT_PLAYER_TAG);
+            if (!u.isEmpty() && u.equals(player.getUUID().toString())) {
+                t.getPersistentData().remove(WITCH_BOSS_TNT_PLAYER_TAG);
+                t.discard();
+            }
+        }
+        java.util.UUID pu = player.getUUID();
+        TNT_TRANSMUTATIONS.entrySet().removeIf(e -> pu.equals(e.getValue().playerUuid()));
     }
 
     /** 玩家变形为生物时，把其碰撞箱尺寸改成对应生物的尺寸（随后用 refreshDimensions 触发本事件）。 */
@@ -14316,14 +16977,13 @@ public class ModMain {
     /** 每服务端刻递减渲染替换变身的剩余时间，到 0 即复原。
      *  注意：不要用 entrySet().removeIf 里 setValue（其 entry 不可变会抛异常），须用迭代器。 */
     private static void tickMorphRemaining(net.minecraft.server.MinecraftServer server) {
-        java.util.Iterator<Map.Entry<UUID, Integer>> it = MORPH_REMAINING.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry<UUID, Integer> e = it.next();
-            ServerPlayer sp = server.getPlayerList().getPlayer(e.getKey());
-            if (sp == null) continue; // 离线：保留剩余计时，等回归后再倒计时
-            // 每 tick 强制玩家碰撞箱为生物尺寸，抵抗姿势切换/其它 refreshDimensions 用默认箱覆盖
-            net.minecraft.world.entity.EntityDimensions md = MORPH_DIMENSIONS.get(sp.getUUID());
-            if (md != null) {
+        // 通用：强制所有变形玩家（生物/方块/物品）碰撞箱 = 记录的尺寸，抵抗姿势切换/其它 refreshDimensions 用默认箱覆盖
+        if (!MORPH_DIMENSIONS.isEmpty()) {
+            for (Map.Entry<java.util.UUID, net.minecraft.world.entity.EntityDimensions> e
+                    : MORPH_DIMENSIONS.entrySet()) {
+                ServerPlayer sp = server.getPlayerList().getPlayer(e.getKey());
+                if (sp == null) continue;
+                net.minecraft.world.entity.EntityDimensions md = e.getValue();
                 sp.dimensions = md;
                 // 低矮空间：MC 会按玩家身高把其置为“游泳/爬行(crawl)”导致减速；箱已变小可直接站立钻过，
                 // 非水中却处于 SWIMMING(即爬行) 时强制回站立，以正常走路速度通过一格高空间。
@@ -14331,6 +16991,13 @@ public class ModMain {
                     sp.setPose(net.minecraft.world.entity.Pose.STANDING);
                 }
             }
+        }
+        // 生物“渲染替换”变身剩余时间递减；到 0 复原
+        java.util.Iterator<Map.Entry<UUID, Integer>> it = MORPH_REMAINING.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<UUID, Integer> e = it.next();
+            ServerPlayer sp = server.getPlayerList().getPlayer(e.getKey());
+            if (sp == null) continue; // 离线：保留剩余计时，等回归后再倒计时
             int remain = e.getValue() - 1;
             if (remain > 0) {
                 e.setValue(remain);
@@ -14375,6 +17042,10 @@ public class ModMain {
             player.fallDistance = 0.0F;
             restoreTransmutationScale(player);
             restoreTransmutationCamera(player);
+            // 方块形态曾把玩家碰撞箱改为 1×1×1，复原时恢复玩家默认碰撞箱
+            if (MORPH_DIMENSIONS.remove(player.getUUID()) != null) {
+                player.refreshDimensions();
+            }
             sendTransmutationState(player, false, -1);
         }
         // 玩家离线时也清理状态，避免地图残留
@@ -14401,10 +17072,142 @@ public class ModMain {
 
     // ==================== ANTIDOTE & RANDOM-TARGET HELPERS ====================
 
-    private static boolean isTransmutationPotion(ItemStack stack) {
+    public static boolean isTransmutationPotion(ItemStack stack) {
         if (stack.isEmpty()) return false;
         PotionContents c = stack.getOrDefault(DataComponents.POTION_CONTENTS, PotionContents.EMPTY);
         return isTransmutationPotionContents(c);
+    }
+
+    /** 根据实体类型 ID 获取其纹理的中位数颜色。正式实现：直接用 ImageIO 读取材质 PNG。 */
+    private static int getEntityTextureColor(String entityTypeId) {
+        // 缓存：避免重复读取 PNG
+        Integer cached = ENTITY_TEXTURE_COLOR_CACHE.get(entityTypeId);
+        if (cached != null) return cached;
+
+        net.minecraft.resources.ResourceLocation rl = net.minecraft.resources.ResourceLocation.tryParse(entityTypeId);
+        if (rl == null) return 0x8B6914;
+
+        // 尝试读取实体材质 PNG 并计算中位数颜色
+        int color = computeTextureMedianColor(rl);
+        if (color != 0) {
+            ENTITY_TEXTURE_COLOR_CACHE.put(entityTypeId, color);
+            return color;
+        }
+
+        // 退路：刷怪蛋颜色
+        net.minecraft.world.entity.EntityType<?> type = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.get(rl);
+        if (type != null) {
+            net.minecraft.world.item.SpawnEggItem egg = net.minecraft.world.item.SpawnEggItem.byId(type);
+            if (egg != null) {
+                color = egg.getColor(0);
+                ENTITY_TEXTURE_COLOR_CACHE.put(entityTypeId, color);
+                return color;
+            }
+        }
+        // 最后退路：名称哈希
+        color = entityTypeId.hashCode() | 0xFF000000;
+        ENTITY_TEXTURE_COLOR_CACHE.put(entityTypeId, color);
+        return color;
+    }
+
+    /**
+     * 供战利品表 SetModPotionFunction 调用的公开方法。
+     * 根据药水 ID 返回颜色：变形药水返回中性色，其余返回药水默认色。
+     */
+    public static int getEntityTextureColorForPotion(String potionId) {
+        if ("joes_addons_for_abmc:transmutation".equals(potionId)) {
+            return 0xAA55FF; // 淡紫色（变形药水中性色，因实体类型在投掷时确定）
+        }
+        return -1; // -1 表示使用药水默认色
+    }
+
+    /** 实体材质中位数颜色缓存。 */
+    private static final java.util.Map<String, Integer> ENTITY_TEXTURE_COLOR_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 从实体材质 PNG 计算中位数颜色（各通道独立排序取中位数，排除透明像素）。
+     * 返回 0 表示读取失败。
+     */
+    private static int computeTextureMedianColor(net.minecraft.resources.ResourceLocation entityTypeRl) {
+        String name = entityTypeRl.getPath();
+        String ns = entityTypeRl.getNamespace();
+        // 尝试两种路径模式（原版实体材质普遍以 name/name.png 或 name.png 存储）
+        String[] paths = {
+            "assets/" + ns + "/textures/entity/" + name + "/" + name + ".png",
+            "assets/" + ns + "/textures/entity/" + name + ".png"
+        };
+        java.awt.image.BufferedImage img = null;
+        for (String path : paths) {
+            java.io.InputStream stream = ModMain.class.getClassLoader().getResourceAsStream(path);
+            if (stream == null) continue;
+            try {
+                img = javax.imageio.ImageIO.read(stream);
+                stream.close();
+            } catch (Exception ignored) {
+                try { stream.close(); } catch (Exception ignored2) {}
+            }
+            if (img != null) break;
+        }
+        if (img == null) {
+            // ClassLoader 退路失败，尝试用客户端 ResourceManager 读取
+            img = tryLoadTextureViaResourceManager(ns, name);
+        }
+        if (img == null) return 0;
+        return computeMedianFromImage(img);
+    }
+
+    /** 通过 Minecraft ResourceManager 读取材质（客户端环境）。 */
+    private static java.awt.image.BufferedImage tryLoadTextureViaResourceManager(String ns, String name) {
+        try {
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            if (mc == null || mc.getResourceManager() == null) return null;
+            net.minecraft.resources.ResourceLocation texRl =
+                net.minecraft.resources.ResourceLocation.fromNamespaceAndPath(ns, "textures/entity/" + name + "/" + name + ".png");
+            java.io.InputStream stream = null;
+            try {
+                stream = mc.getResourceManager().getResource(texRl).orElseThrow().open();
+                return javax.imageio.ImageIO.read(stream);
+            } catch (Exception ignored) {
+                // 尝试第二种路径
+            } finally {
+                if (stream != null) try { stream.close(); } catch (Exception ignored) {}
+            }
+            texRl = net.minecraft.resources.ResourceLocation.fromNamespaceAndPath(ns, "textures/entity/" + name + ".png");
+            try {
+                stream = mc.getResourceManager().getResource(texRl).orElseThrow().open();
+                return javax.imageio.ImageIO.read(stream);
+            } catch (Exception ignored) {
+            } finally {
+                if (stream != null) try { stream.close(); } catch (Exception ignored) {}
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    /** 从 BufferedImage 计算中位数颜色。 */
+    private static int computeMedianFromImage(java.awt.image.BufferedImage img) {
+        int w = img.getWidth();
+        int h = img.getHeight();
+        int[] pixels = img.getRGB(0, 0, w, h, null, 0, w);
+        java.util.ArrayList<Integer> rList = new java.util.ArrayList<>(pixels.length);
+        java.util.ArrayList<Integer> gList = new java.util.ArrayList<>(pixels.length);
+        java.util.ArrayList<Integer> bList = new java.util.ArrayList<>(pixels.length);
+        for (int p : pixels) {
+            int a = (p >> 24) & 0xFF;
+            if (a < 128) continue;
+            rList.add((p >> 16) & 0xFF);
+            gList.add((p >> 8) & 0xFF);
+            bList.add(p & 0xFF);
+        }
+        if (rList.isEmpty()) return 0;
+        java.util.Collections.sort(rList);
+        java.util.Collections.sort(gList);
+        java.util.Collections.sort(bList);
+        int mid = rList.size() / 2;
+        int r = rList.get(mid);
+        int g = gList.get(mid);
+        int b = bList.get(mid);
+        return 0xFF000000 | (r << 16) | (g << 8) | b;
     }
 
     private static boolean isTransmutationPotionHolder(Holder<Potion> h) {
@@ -14764,12 +17567,20 @@ public class ModMain {
     //    落地放置后会被邻居更新立即弹出成掉落物或转成空气，导致落地校验失败、走“破坏结算”
     //    误杀原生物（或留下一块凭空消失的隐形追踪数据）。
     private static boolean isTransmutationBlockBlacklisted(Block block) {
-        if (block instanceof net.minecraft.world.level.block.EntityBlock) {
+        // 不再因 EntityBlock 而一律排除：箱子/木桶等虽然需要 BlockEntityRenderer 才会显示本地方块外观，
+        // 但客户端 FallingBlockRendererMixin 已为其回退到物品模型渲染（可见）。是否可用改由“能否独立存活”判定。
+        // 全虚空测试：只有“任何环境都可存活”的方块才能通过。
+        // 某些 Mod 功能方块（如 AE2 附属“闪电科技”方块）的 canSurvive 内部会访问世界的
+        // getLightEngine()，在我们这个不含光源环境的最小 LevelReader 里该项为空而抛出空指针/异常。
+        // 遇到这类没法在孤立环境一次性判断的方块，保守视为黑名单（不可作为自由下落变形目标），
+        // 避免运行时崩溃。
+        try {
+            return !block.defaultBlockState().canSurvive(TRANSMUTATION_VOID_READER, BlockPos.ZERO);
+        } catch (Throwable t) {
+            LOGGER.warn("[transmute] 方块 {} 的 canSurvive 检测异常({})，已按黑名单处理",
+                BuiltInRegistries.BLOCK.getKey(block), t.toString());
             return true;
         }
-        // 全虚空测试：只有“任何环境都可存活”的方块才能通过
-        return !block.defaultBlockState()
-            .canSurvive(TRANSMUTATION_VOID_READER, BlockPos.ZERO);
     }
 
     // 随机变形目标：从已注册方块+物品中随机选取。
@@ -14778,33 +17589,18 @@ public class ModMain {
     // 原因：这些方块变成下落方块后不可见；空气类更会在原版 FallingBlockEntity.tick 开头被
     // isAir 检查立刻 discard，触发 onEntityLeaveLevel 的“未能正常落地 → 按破坏处理结算”，
     // 导致原生物被误杀。所有物品都会保留。
+    /** 随机变形药水（无固定目标）：命中时从女巫列表中随机选取方块/生物/物品。 */
     private static String pickRandomTransmutationType() {
-        java.util.List<String> pool = new java.util.ArrayList<>();
-        java.util.Set<String> invisibleBlocks = java.util.Set.of(
-            "minecraft:barrier", "minecraft:light", "minecraft:structure_void");
-        for (Block block : BuiltInRegistries.BLOCK) {
-            BlockState defaultState = block.defaultBlockState();
-            if (defaultState.isAir()
-                || defaultState.getRenderShape() != net.minecraft.world.level.block.RenderShape.MODEL
-                || defaultState.getFluidState().isSource()
-                || isTransmutationBlockBlacklisted(block)
-                || invisibleBlocks.contains(BuiltInRegistries.BLOCK.getKey(block).toString())) {
-                continue;
-            }
-            pool.add(BuiltInRegistries.BLOCK.getKey(block).toString());
+        int category = TRANSMUTATION_RANDOM.nextInt(3); // 0=block, 1=mob, 2=item
+        switch (category) {
+            case 0:
+                return WITCH_BOSS_BLOCK_CANDIDATES[TRANSMUTATION_RANDOM.nextInt(WITCH_BOSS_BLOCK_CANDIDATES.length)];
+            case 1:
+                return "mob_shell:"
+                    + WITCH_BOSS_MOB_CANDIDATES[TRANSMUTATION_RANDOM.nextInt(WITCH_BOSS_MOB_CANDIDATES.length)];
+            default:
+                return WITCH_BOSS_ITEM_CANDIDATES[TRANSMUTATION_RANDOM.nextInt(WITCH_BOSS_ITEM_CANDIDATES.length)];
         }
-        for (Item item : BuiltInRegistries.ITEM) {
-            // 物品表里包含方块物品（如箱子、木桶等），对应黑名单方块的条目同样排除，
-            // 否则随机结果经 performTransmutation 判定为方块后会被再次重掷，形成隐患。
-            ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(item);
-            if (BuiltInRegistries.BLOCK.containsKey(itemId)
-                && isTransmutationBlockBlacklisted(BuiltInRegistries.BLOCK.get(itemId))) {
-                continue;
-            }
-            pool.add(itemId.toString());
-        }
-        if (pool.isEmpty()) return "minecraft:stone";
-        return pool.get(TRANSMUTATION_RANDOM.nextInt(pool.size()));
     }
 
     // 变形解药作用于单个实体：直接饮用解药时，立刻解除该实体自身的变形。
@@ -14813,6 +17609,24 @@ public class ModMain {
     private static void applyAntidoteToEntity(ServerLevel level, LivingEntity target) {
         UUID targetUuid = target.getUUID();
         ResourceLocation dimId = level.dimension().location();
+
+        // 0) 若该实体是“渲染替换”变形的玩家（生物/方块/物品本体），直接复原
+        //    饮用解药/被自己投的解药效果命中即为“玩家成功解除自身变形”→ 计入女巫Boss阶段1次数
+        if (target instanceof ServerPlayer sp
+            && PLAYER_TRANSMUTATION_INFO.containsKey(sp.getUUID())) {
+            LOGGER.info("[DBG] antidote: render-player unmorph sp={} form={}",
+                sp.getGameProfile().getName(),
+                PLAYER_TRANSMUTATION_INFO.get(sp.getUUID()).form);
+            boolean transmutedByWitch = wasTransmutedByWitchBoss(sp); // 必须在 revert 前读取，revert 会清除标记
+            revertMorphRenderPlayer(sp);
+            // 仅当玩家被女巫Boss变形（非自变形）后解除，才扣除女巫血条
+            if (transmutedByWitch) {
+                witchBossStage1PlayerUnmorphed(level, sp);
+                witchBossStage2PlayerUnmorphed(level, sp);
+                witchBossStage3PlayerUnmorphed(level, sp);
+            }
+            return;
+        }
 
         // 1) 变身为方块
         Map<BlockPos, java.util.List<TransmutationData>> dimMap = BLOCK_TRANSMUTATIONS.get(dimId);
@@ -14892,10 +17706,30 @@ public class ModMain {
     }
 
     // 变形解药喷洒：让范围内的变身方块/物品（由生物变来的）提前复原为生物形态。
-    private static void applyAntidoteSplash(ServerLevel level, double x, double y, double z, double radius) {
+    // fromPlayer：该解药是否由玩家掷出。若是，则在“成功解除女巫Boss自变形形态”时，
+    // 对女巫Boss本体执行阶段1的“成功解除”计数（女巫粒子 + 阶段1血条-1/6）。
+    private static void applyAntidoteSplash(ServerLevel level, double x, double y, double z, double radius,
+            boolean fromPlayer) {
         double r2 = radius * radius;
         BlockPos center = BlockPos.containing(x, y, z);
         ResourceLocation dimId = level.dimension().location();
+        // 0) 范围内处于“渲染替换”变形的玩家（生物/方块/物品本体）直接复原。
+        //    玩家被女巫变形即为该形态；解药若由玩家掷出(fromPlayer)则计入女巫Boss阶段1次数。
+        net.minecraft.world.phys.AABB box = new net.minecraft.world.phys.AABB(
+            x - radius, y - radius, z - radius, x + radius, y + radius, z + radius);
+        for (ServerPlayer sp : level.getEntitiesOfClass(ServerPlayer.class, box)) {
+            if (PLAYER_TRANSMUTATION_INFO.containsKey(sp.getUUID())) {
+                LOGGER.info("[DBG] antidote-splash step0: render-player unmorph sp={} fromPlayer={}",
+                    sp.getGameProfile().getName(), fromPlayer);
+                boolean transmutedByWitch = wasTransmutedByWitchBoss(sp); // 必须在 revert 前读取
+                revertMorphRenderPlayer(sp);
+                if (fromPlayer && transmutedByWitch) {
+                    witchBossStage1PlayerUnmorphed(level, sp);
+                    witchBossStage2PlayerUnmorphed(level, sp);
+                    witchBossStage3PlayerUnmorphed(level, sp);
+                }
+            }
+        }
         Map<BlockPos, java.util.List<TransmutationData>> dimMap = BLOCK_TRANSMUTATIONS.get(dimId);
         if (dimMap != null) {
             java.util.Iterator<Map.Entry<BlockPos, java.util.List<TransmutationData>>> it =
@@ -14908,7 +17742,12 @@ public class ModMain {
                 it.remove();
                 level.destroyBlock(pos, false);
                 for (TransmutationData data : new java.util.ArrayList<>(list)) {
-                    revertTransmutationData(level, data, pos);
+                    net.minecraft.world.entity.LivingEntity revived =
+                        revertTransmutationData(level, data, pos);
+                    if (fromPlayer && revived instanceof Witch revivedWitch
+                            && revivedWitch.getPersistentData().getBoolean(WITCH_BOSS_TAG)) {
+                        witchBossStage1AntidoteSuccess(revivedWitch);
+                    }
                 }
             }
         }
@@ -14926,7 +17765,12 @@ public class ModMain {
             itItem.remove();
             ITEM_TRANSMUTATION_POSITIONS.remove(uuid);
             if (ent != null && ent.isAlive()) ent.discard();
-            revertTransmutationData(level, e.getValue(), itemPos);
+            net.minecraft.world.entity.LivingEntity revivedItem =
+                revertTransmutationData(level, e.getValue(), itemPos);
+            if (fromPlayer && revivedItem instanceof Witch revivedWitch
+                    && revivedWitch.getPersistentData().getBoolean(WITCH_BOSS_TAG)) {
+                witchBossStage1AntidoteSuccess(revivedWitch);
+            }
         }
 
         // 3) 仍在掉落过程中、尚未落地的变身方块
@@ -14941,7 +17785,12 @@ public class ModMain {
             if (fallPos.distSqr(center) > r2) continue;
             itFall.remove();
             ent.discard();
-            revertTransmutationData(level, e.getValue(), fallPos);
+            net.minecraft.world.entity.LivingEntity revivedFall =
+                revertTransmutationData(level, e.getValue(), fallPos);
+            if (fromPlayer && revivedFall instanceof Witch revivedWitch
+                    && revivedWitch.getPersistentData().getBoolean(WITCH_BOSS_TAG)) {
+                witchBossStage1AntidoteSuccess(revivedWitch);
+            }
         }
 
         // 4) 玩家空壳 / 生物壳：提前复原为原生物
@@ -14966,16 +17815,63 @@ public class ModMain {
                 e.getKey(), shellPos, e.getValue().playerUuid());
             itShell.remove();
             ent.discard();
-            revertLivingShell(level, e.getValue(), shellPos);
+            net.minecraft.world.entity.LivingEntity revivedShell =
+                revertLivingShell(level, e.getValue(), shellPos);
+            if (fromPlayer && revivedShell instanceof Witch revivedWitch
+                    && revivedWitch.getPersistentData().getBoolean(WITCH_BOSS_TAG)) {
+                witchBossStage1AntidoteSuccess(revivedWitch);
+            }
         }
 
-        // 5) “渲染替换”变形玩家：解药溅射范围内复原其生物形态
+        // 4.5) 点燃的 TNT（生物/玩家变的）：解药喷到即复原为原生物/原玩家（并移除引爆）
+        {
+            java.util.Iterator<Map.Entry<UUID, TransmutationData>> itTnt =
+                TNT_TRANSMUTATIONS.entrySet().iterator();
+            while (itTnt.hasNext()) {
+                Map.Entry<UUID, TransmutationData> e = itTnt.next();
+                Entity tntEnt = level.getEntity(e.getKey());
+                if (tntEnt == null) continue;
+                BlockPos tntPos = tntEnt.blockPosition();
+                if (tntPos.distSqr(center) > r2) continue;
+                itTnt.remove();
+                tntEnt.discard();
+                net.minecraft.world.entity.LivingEntity revivedTnt =
+                    revertTransmutationData(level, e.getValue(), tntPos);
+                // 若原是玩家：解散药后一并还原其渲染替换形态/清理残留变形状态
+                if (e.getValue().playerUuid() != null) {
+                    ServerPlayer tsp = level.getServer().getPlayerList().getPlayer(e.getValue().playerUuid());
+                    if (tsp != null) {
+                        if (MORPH_REMAINING.containsKey(tsp.getUUID())) {
+                            revertMorphRenderPlayer(tsp);
+                        } else {
+                            cleanupPlayerTransmutation(tsp.getUUID());
+                        }
+                    }
+                }
+                if (fromPlayer && revivedTnt instanceof Witch revivedWitch
+                        && revivedWitch.getPersistentData().getBoolean(WITCH_BOSS_TAG)) {
+                    witchBossStage1AntidoteSuccess(revivedWitch);
+                }
+            }
+        }
+
+        // 5) “渲染替换”变形玩家：解药溅射范围内复原其生物形态。
+        //    若解药由玩家掷出（fromPlayer），复原成功后计入女巫Boss阶段1的“成功解除”次数。
         if (!MORPH_REMAINING.isEmpty()) {
             for (Player p : level.players()) {
                 if (MORPH_REMAINING.containsKey(p.getUUID())
                         && p.distanceToSqr(x, y, z) <= r2) {
                     if (p instanceof ServerPlayer sp) {
+                        boolean wasMorphed = PLAYER_TRANSMUTATION_INFO.containsKey(sp.getUUID());
+                        LOGGER.info("[DBG] antidote-splash step5: sp={} wasMorphed={} fromPlayer={}",
+                            sp.getGameProfile().getName(), wasMorphed, fromPlayer);
+                        boolean transmutedByWitch = wasTransmutedByWitchBoss(sp); // 必须在 revert 前读取
                         revertMorphRenderPlayer(sp);
+                        if (fromPlayer && wasMorphed && transmutedByWitch) {
+                            witchBossStage1PlayerUnmorphed(level, sp);
+                            witchBossStage2PlayerUnmorphed(level, sp);
+                            witchBossStage3PlayerUnmorphed(level, sp);
+                        }
                     }
                 }
             }
@@ -14983,12 +17879,13 @@ public class ModMain {
     }
 
     // 统一复原：玩家恢复游玩模式并传送回来，普通生物重新生成回原形态。
-    private static void revertTransmutationData(ServerLevel level, TransmutationData data, BlockPos pos) {
+    // 返回复原出的实体（若复原的是生物），供解药解除女巫Boss自变形形态时计数。
+    private static net.minecraft.world.entity.LivingEntity revertTransmutationData(ServerLevel level, TransmutationData data, BlockPos pos) {
         if (data.playerUuid() != null) {
             revertTransmutedPlayer(level, data, pos);
-        } else {
-            respawnTransmutedEntity(level, data, pos);
+            return null;
         }
+        return respawnTransmutedEntity(level, data, pos);
     }
 
     // ==================== TRANSMUTATION TICK HANDLING ====================

@@ -104,6 +104,17 @@ import java.util.Optional;
 
 @EventBusSubscriber(value = Dist.CLIENT, modid = ModMain.MODID)
 public class ClientEvents {
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(ClientEvents.class);
+
+    // ===== 变形渲染调试开关 =====
+    /** 设为 true 开启变形渲染调试日志（方块/物品形态闪变排查）。 */
+    public static boolean MORPH_RENDER_DEBUG = true;
+    private static int morphRenderDebugTick = 0;
+    private static int morphRenderDebugFrame = 0;
+    private static int morphRenderDebugLastFrame = -1;
+    private static int morphRenderDebugPerFrameCount = 0;
+    // ===========================
+
     public static final KeyMapping BLOCK_KEY = new KeyMapping(
         "key.joes_addons_for_abmc.block",
         KeyConflictContext.IN_GAME,
@@ -440,6 +451,14 @@ public class ClientEvents {
             (stack, tintIndex) -> tintIndex == 0 ? GrassColor.getDefaultColor() : -1,
             ModItems.GAME_ICON.get()
         );
+        // 女巫Boss刷怪蛋：套用原版女巫刷怪蛋的两层颜色（底色 + 斑点），避免紫黑/缺贴图。
+        // 注意：#AARRGGBB 必须带全 alpha（0xFF），否则贴图会因透明而“消失”。
+        net.minecraft.world.item.SpawnEggItem witchEgg =
+            (net.minecraft.world.item.SpawnEggItem) net.minecraft.world.item.Items.WITCH_SPAWN_EGG;
+        event.getItemColors().register(
+            (stack, tintIndex) -> 0xFF000000 | witchEgg.getColor(tintIndex),
+            ModItems.WITCH_BOSS_SPAWN_EGG.get()
+        );
     }
 
     // 从物品/方块的默认贴图中提取“中位主色”：不透明像素颜色升序排序后取中位数
@@ -657,6 +676,8 @@ public class ClientEvents {
         event.registerEntityRenderer(ModEntities.LAPIS_FALLING_BLOCK.get(), LapisFallingBlockRenderer::new);
         event.registerEntityRenderer(ModEntities.TRANSMUTATION_FALLING_BLOCK.get(),
             cn.autoforged.joes_addons_for_abmc.entity.TransmutationFallingBlockRenderer::new);
+        event.registerEntityRenderer(ModEntities.AWAKENING_FALLING_BLOCK.get(),
+            cn.autoforged.joes_addons_for_abmc.entity.AwakeningFallingBlockRenderer::new);
         event.registerEntityRenderer(ModEntities.DRIPSTONE_FALLING_BLOCK.get(), DripstoneFallingBlockRenderer::new);
         event.registerEntityRenderer(ModEntities.PORTAL.get(), PortalRenderer::new);
         event.registerEntityRenderer(ModEntities.POTION_PORTAL.get(), cn.autoforged.joes_addons_for_abmc.entity.PotionPortalRenderer::new);
@@ -709,9 +730,33 @@ public class ClientEvents {
             if (ent != mc.player || !cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.isTransmuted()) {
                 return;
             }
-            if (cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.isMorphActive()) {
+            // 追踪每帧 render 调用次数（检测是否多次渲染同一玩家导致闪变）
+            if (MORPH_RENDER_DEBUG) {
+                if (morphRenderDebugLastFrame != morphRenderDebugFrame) {
+                    morphRenderDebugLastFrame = morphRenderDebugFrame;
+                    if (morphRenderDebugPerFrameCount > 1) {
+                        LOGGER.warn("[DBG-MORPH] MULTI_RENDER frame={} count={}",
+                            morphRenderDebugFrame, morphRenderDebugPerFrameCount);
+                    }
+                    morphRenderDebugPerFrameCount = 1;
+                } else {
+                    morphRenderDebugPerFrameCount++;
+                }
+            }
+            String morphType = cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.getMorphEntityType();
+            boolean isMorph = cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.isMorphActive();
+            if (MORPH_RENDER_DEBUG && !isMorph) {
+                // 非 morph 形态（壳变形）：仅隐藏，不渲染
+                LOGGER.info("[DBG-MORPH] HIDE_ONLY frame={} type={}", morphRenderDebugFrame, morphType);
+            }
+            if (isMorph) {
                 // 渲染替换：取消玩家本体模型，改画内存代理生物
                 event.setCanceled(true);
+                if (MORPH_RENDER_DEBUG) {
+                    LOGGER.info("[DBG-MORPH] RENDER_MORPH frame={} type={} proxy={}",
+                        morphRenderDebugFrame, morphType,
+                        cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.getMorphProxy() != null);
+                }
                 renderMorphProxy(event);
             } else {
                 // 物品/方块/壳形态：完全隐藏本地玩家自身渲染
@@ -721,11 +766,15 @@ public class ClientEvents {
         }
     }
 
-    /** 在玩家位置渲染“渲染替换”的代理生物。 */
+    /** 在玩家位置渲染“渲染替换”的代理生物；方块/物品形态则绘制对应方块/物品模型。 */
     private static void renderMorphProxy(net.neoforged.neoforge.client.event.RenderLivingEvent.Pre event) {
         net.minecraft.world.entity.LivingEntity proxy =
             cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.getMorphProxy();
-        if (proxy == null) return;
+        if (proxy == null) {
+            // 方块/物品形态：没有代理生物，直接绘制对应的方块/物品模型
+            renderMorphBlockOrItem(event);
+            return;
+        }
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
         net.minecraft.client.renderer.entity.EntityRenderer<?> renderer =
             mc.getEntityRenderDispatcher().getRenderer(proxy);
@@ -737,6 +786,222 @@ public class ClientEvents {
         // 代理生物的朝向已与玩家同步，直接在此绘制即可。
         r.render(proxy, proxy.getYRot(), event.getPartialTick(), event.getPoseStack(),
             event.getMultiBufferSource(), event.getPackedLight());
+    }
+
+    /** 方块/物品形态：把本地玩家画成对应方块/物品。
+     *  方块：走方块渲染器({@code BlockRenderDispatcher#tesselateBlock})直接渲染该方块状态的原模型——
+     *  与世界里呈现完全一致。相比用物品模型渲染，能正确显示车万女仆“零食畑”这类没有/异常物品模型、
+     *  会退化成占位贴图的 Mod 方块；箱子/木桶等也正常。物品：沿用物品模型渲染。
+     *  另附“snap”：玩家 XZ 坐标(分轴独立)距所在格中心 0.5(2n+1) 不超过 0.02 时，把方块视觉吸附到
+     *  该格中心（唯一对齐边界），第三人称看过去方块严丝合缝贴在格子里。 */
+    private static void renderMorphBlockOrItem(net.neoforged.neoforge.client.event.RenderLivingEvent.Pre event) {
+        String type = null;
+        try {
+            type = cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.getMorphEntityType();
+            net.minecraft.resources.ResourceLocation rl = net.minecraft.resources.ResourceLocation.tryParse(type);
+            if (rl == null) return;
+            if (MORPH_RENDER_DEBUG) {
+                morphRenderDebugFrame++;
+                LOGGER.info("[DBG-MORPH] BLOCK_ITEM_START frame={} type={} partialTick={}",
+                    morphRenderDebugFrame, type, event.getPartialTick());
+            }
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            com.mojang.blaze3d.vertex.PoseStack pose = event.getPoseStack();
+            pose.pushPose();
+            try {
+                // pose 原点即玩家脚底中心（y=0 为地面）。
+                if (net.minecraft.core.registries.BuiltInRegistries.BLOCK.containsKey(rl)) {
+                    net.minecraft.world.level.block.Block block =
+                        net.minecraft.core.registries.BuiltInRegistries.BLOCK.get(rl);
+                    net.minecraft.world.level.block.state.BlockState bs = block.defaultBlockState();
+                    net.minecraft.core.BlockPos pos = net.minecraft.core.BlockPos.containing(
+                        event.getEntity().getX(), event.getEntity().getY(), event.getEntity().getZ());
+                    float[] snap = morphSnapOffset(mc.player);
+                    // 1) 优先用该方块的 BlockEntity 渲染器画其“世界原样”。零食柜等方块：静态方块模型常为空
+                    //    （默认 RenderShape 仍是 MODEL），真正外观由 BlockEntity 渲染器绘制；这类方块若走
+                    //    tesselate 会因空模型而画不出东西。仅当该方块确实注册了客户端 BE 渲染器才走此路。
+                    if (renderMorphBlockEntity(mc, pose, block, bs, snap, event, pos)) {
+                        if (MORPH_RENDER_DEBUG) {
+                            LOGGER.info("[DBG-MORPH] BLOCK_BE_RENDER frame={} type={}", morphRenderDebugFrame, type);
+                        }
+                        return; // finally 弹出
+                    }
+                    // 2) 普通 MODEL 方块：用方块渲染器画世界原模型
+                    if (bs.getRenderShape() == net.minecraft.world.level.block.RenderShape.MODEL) {
+                        if (MORPH_RENDER_DEBUG) {
+                            LOGGER.info("[DBG-MORPH] BLOCK_MODEL_RENDER frame={} type={}",
+                                morphRenderDebugFrame, type);
+                        }
+                        var model = mc.getBlockRenderer().getBlockModel(bs);
+                        // 一些科技 mod 的导管/管道：其模型几何会向下延伸（默认“悬空/悬垂”连接段），若把
+                        // model 的 y=0 锚到玩家脚底，伸出的下半段就会埋进地面。这里量出模型的最低顶点，
+                        // 低于格底(<0) 的部分整体上移，保证不沉入地面；完整方块(最低 y=0)不受影响。
+                        double minY = morphModelMinY(bs, model);
+                        float yLift = (float) -Math.min(0.0, minY);
+                        // 方块模型局部坐标 [0,1]：先平移到格中心，再以其为原点做 0.9995 缩放，最后回移 -0.5 抵消——
+                        // 使方块的四/顶/底各内缩 0.00025、严格居中在格心，不再出现“+0.5 向东/南/上偏移”。
+                        pose.translate(snap[0], yLift + 0.5F, snap[1]);
+                        pose.scale(0.9995F, 0.9995F, 0.9995F);
+                        pose.translate(-0.5F, -0.5F, -0.5F);
+                        // 使用标准 renderSingleBlock 而非 tesselateBlock+getMovingBlockRenderType，
+                        // 避免活塞推动方块渲染类型导致的材质闪变/透明度问题。
+                        mc.getBlockRenderer().renderSingleBlock(bs, pose,
+                            event.getMultiBufferSource(),
+                            net.minecraft.client.renderer.LevelRenderer.getLightColor(mc.level, pos),
+                            net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY);
+                        return; // finally 弹出
+                    }
+                }
+                // 物品形态 或 渲染形状非模型的方块：退化为物品模型渲染
+                if (MORPH_RENDER_DEBUG) {
+                    LOGGER.info("[DBG-MORPH] ITEM_FALLBACK frame={} type={}", morphRenderDebugFrame, type);
+                }
+                boolean isRegBlock = net.minecraft.core.registries.BuiltInRegistries.BLOCK.containsKey(rl);
+                net.minecraft.world.item.ItemStack stack = isRegBlock
+                    ? new net.minecraft.world.item.ItemStack(net.minecraft.core.registries.BuiltInRegistries.BLOCK.get(rl))
+                    : net.minecraft.core.registries.BuiltInRegistries.ITEM.containsKey(rl)
+                        ? new net.minecraft.world.item.ItemStack(net.minecraft.core.registries.BuiltInRegistries.ITEM.get(rl))
+                        : net.minecraft.world.item.ItemStack.EMPTY;
+                if (!stack.isEmpty()) {
+                    if (isRegBlock) {
+                        // 非 MODEL 形状的方块兜底：物品模型 FIXED 基准约 0.5，填满脚下整格
+                        pose.translate(0.0F, 0.5F, 0.0F);
+                        pose.scale(1.999F, 1.999F, 1.999F);
+                    } else {
+                        // 物品形态：小尺寸居中在脚下。FIXED 显示比掉落物品大近一倍，缩到 0.5
+                        // 以符合 0.25×0.25 的碰撞箱（不再看起来放大了一倍）。
+                        pose.translate(0.0F, 0.25F, 0.0F);
+                        pose.scale(0.5F, 0.5F, 0.5F);
+                    }
+                    mc.getItemRenderer().renderStatic(stack, net.minecraft.world.item.ItemDisplayContext.FIXED,
+                        event.getPackedLight(), net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY,
+                        pose, event.getMultiBufferSource(), mc.level, 0);
+                }
+            } finally {
+                // 无论成功还是抛异常都弹出，避免 pose 栈不平衡导致 LevelRenderer 报
+                // “Pose stack not empty” 崩溃（例如黑石这类方块渲染内部抛异常时）。
+                pose.popPose();
+            }
+        } catch (Exception ex) {
+            if (MORPH_RENDER_DEBUG) {
+                LOGGER.warn("[DBG-MORPH] BLOCK_ITEM_ERROR frame={} type={} err={}",
+                    morphRenderDebugFrame, type, ex.toString());
+            }
+        }
+    }
+
+    /** 计算方块形态的 snap 偏移（pose 局部空间，X/Z 分轴独立）：
+     *  绝大部分时候方块平滑跟随玩家（居中在玩家脚底，视觉由 renderMorphBlockOrItem 的
+     *  标签居中缩放确保贴格无偏移）；仅当玩家某轴分数坐标非常接近格中心(0.5，≤0.02)时才把该轴
+     *  贴合格中心对齐——即“只在很接近某个对齐位置时才 snap”，其余情况都平滑跟随玩家。 */
+    private static float[] morphSnapOffset(net.minecraft.world.entity.player.Player player) {
+        if (player == null) return new float[]{0.0F, 0.0F};
+        double px = player.getX();
+        double pz = player.getZ();
+        double cx = Math.floor(px);
+        double cz = Math.floor(pz);
+        double fx = px - cx;
+        double fz = pz - cz;
+        float ox = Math.abs(fx - 0.5) <= 0.02 ? (float) (cx + 0.5 - px) : 0.0F;
+        float oz = Math.abs(fz - 0.5) <= 0.02 ? (float) (cz + 0.5 - pz) : 0.0F;
+        return new float[]{ox, oz};
+    }
+
+    /** 方块 -> 其 BlockEntityType 的缓存，避免每帧全量遍历注册表。 */
+    private static final java.util.concurrent.ConcurrentHashMap<
+        net.minecraft.world.level.block.Block, net.minecraft.world.level.block.entity.BlockEntityType<?>>
+        MORPH_BE_TYPE_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 方块 -> 该方块是否具有客户端 BlockEntity 渲染器（无则走 tesselate/物品兜底）。 */
+    private static final java.util.concurrent.ConcurrentHashMap<
+        net.minecraft.world.level.block.Block, Boolean>
+        MORPH_BE_RENDERER_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 方块状态 -> 其烘焙模型的全局最低顶点 Y（相对该方块格底的偏移，可为负）。
+     *  用于把“向下延伸/悬垂”的几何(管道连接段等)自动上抬，避免嵌进地面。 */
+    private static final java.util.concurrent.ConcurrentHashMap<
+        net.minecraft.world.level.block.state.BlockState, Double>
+        MORPH_MODEL_MIN_Y_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 量取某方块烘焙模型面片的最低 Y 坐标（模型局部坐标，默认 0 表示不抬起）。
+     *  兜底措施：任何异常都返回 0（不抬起），绝不让它影响渲染（曾因此抛异常导致黑石等方块在
+     *  renderMorphBlockOrItem 里抛错后 pose 栈不平衡崩溃）。 */
+    private static double morphModelMinY(net.minecraft.world.level.block.state.BlockState bs,
+            net.minecraft.client.resources.model.BakedModel model) {
+        return MORPH_MODEL_MIN_Y_CACHE.computeIfAbsent(bs, s -> {
+            try {
+                double minY = Double.POSITIVE_INFINITY;
+                net.minecraft.util.RandomSource rs = net.minecraft.util.RandomSource.create(0L);
+                for (int dirI = 0; dirI <= net.minecraft.core.Direction.values().length; dirI++) {
+                    net.minecraft.core.Direction dir = dirI == net.minecraft.core.Direction.values().length
+                        ? null : net.minecraft.core.Direction.values()[dirI];
+                    for (net.minecraft.client.renderer.block.model.BakedQuad q : model.getQuads(s, dir, rs)) {
+                        int[] data = q.getVertices();
+                        // DefaultVertexFormat.BLOCK：每顶点16个float（位置占前3），索引 stride=16，Y 在 +1
+                        for (int v = 0; v < 4; v++) {
+                            float y = Float.intBitsToFloat(data[v * 16 + 1]);
+                            if (y < minY) minY = y;
+                        }
+                    }
+                }
+                return minY == Double.POSITIVE_INFINITY ? 0.0 : minY;
+            } catch (Throwable t) {
+                return 0.0;
+            }
+        });
+    }
+
+    /** 查找某方块的 BlockEntityType（无则 null）。 */
+    private static net.minecraft.world.level.block.entity.BlockEntityType<?> findMorphBlockEntityType(
+            net.minecraft.world.level.block.Block block) {
+        return MORPH_BE_TYPE_CACHE.computeIfAbsent(block, b -> {
+            for (var t : net.minecraft.core.registries.BuiltInRegistries.BLOCK_ENTITY_TYPE) {
+                if (t.getValidBlocks().contains(b)) {
+                    return t;
+                }
+            }
+            return null;
+        });
+    }
+
+    /** 用方块的 BlockEntity 渲染器画其世界原样（零食柜/箱子/告示牌等靠 BE 渲染的方块）。
+     *  仅当该方块确有客户端 BE 渲染器时成功返回 true（已把方块画进 pose 中）；否则返回 false，
+     *  由上层退回 tesselate / 物品兜底。用缓存避免为无渲染器的普通方块（发射器/熔炉等）每帧建 BE。 */
+    private static boolean renderMorphBlockEntity(
+            net.minecraft.client.Minecraft mc, com.mojang.blaze3d.vertex.PoseStack pose,
+            net.minecraft.world.level.block.Block block, net.minecraft.world.level.block.state.BlockState bs,
+            float[] snap, net.neoforged.neoforge.client.event.RenderLivingEvent.Pre event,
+            net.minecraft.core.BlockPos pos) {
+        try {
+            Boolean hasR = MORPH_BE_RENDERER_CACHE.get(block);
+            if (hasR != null && !hasR) return false;
+            net.minecraft.world.level.block.entity.BlockEntityType<?> betype = findMorphBlockEntityType(block);
+            if (betype == null) {
+                MORPH_BE_RENDERER_CACHE.put(block, false);
+                return false;
+            }
+            net.minecraft.world.level.block.entity.BlockEntity be = betype.create(pos, bs);
+            if (be == null) {
+                MORPH_BE_RENDERER_CACHE.put(block, false);
+                return false;
+            }
+            be.setLevel(mc.level);
+            var renderer = mc.getBlockEntityRenderDispatcher().getRenderer(be);
+            if (renderer == null) {
+                MORPH_BE_RENDERER_CACHE.put(block, false);
+                return false;
+            }
+            MORPH_BE_RENDERER_CACHE.put(block, true);
+            // BE 渲染器在正常人 render 时 pose 位于方块最小角（模型占 [0,1] 格）。这里把最小角
+            // 定位到玩家脚下方块：-0.5 居中 X/Z、Y=0 即脚下，叠加 snap 对齐格中心，0.9995 零公差。
+            pose.translate(snap[0] - 0.5F, 0.0F, snap[1] - 0.5F);
+            pose.scale(0.9995F, 0.9995F, 0.9995F);
+            renderer.render(be, event.getPartialTick(), pose, event.getMultiBufferSource(),
+                event.getPackedLight(), net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY);
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     /** 移植头/移植脚（Post）：还原被隐藏的原头/原腿部部件，避免影响同类型其余实体。 */
@@ -1112,6 +1377,8 @@ public class ClientEvents {
     @SubscribeEvent
     public static void onClientLogout(net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent.LoggingOut event) {
         DebugStringRenderer.reset();
+        cn.autoforged.joes_addons_for_abmc.client.GoldHitFlashRenderer.reset();
+        cn.autoforged.joes_addons_for_abmc.client.OmegaShaderRenderer.reset();
         CobwebClientState.reset();
         cn.autoforged.joes_addons_for_abmc.client.TransplantedHeadClientState.clear();
         cn.autoforged.joes_addons_for_abmc.client.TransplantedFeetClientState.clear();
@@ -1455,9 +1722,23 @@ public class ClientEvents {
         public static void onClientTickPost(ClientTickEvent.Post event) {
             Minecraft mc = Minecraft.getInstance();
             if (mc.player == null || mc.level == null) return;
+            // 变形渲染调试：每tick递增帧计数器
+            if (MORPH_RENDER_DEBUG) {
+                morphRenderDebugTick++;
+                if (cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.isTransmuted()
+                    && cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.isMorphActive()) {
+                    String type = cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.getMorphEntityType();
+                    LOGGER.info("[DBG-MORPH] TICK tick={} frame={} type={}",
+                        morphRenderDebugTick, morphRenderDebugFrame, type);
+                }
+            }
             // 变形平滑跟随必须在 Post 执行：Post 在本 tick 实体 tick 完成、服务端位置包处理之后、
             // 渲染之前触发，此时设置实体位置并保留 xo/yo/zo，渲染器才能做 xo→x 插值（/tp 同款平滑动画）。
             cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.tickFollow(mc);
+            // 金色命中闪光：推进 FlashTime 并在超时后复位（/jafa gold_hit_flash）
+            cn.autoforged.joes_addons_for_abmc.client.GoldHitFlashRenderer.tickClient();
+            // Omega 着色器测试：推进 Time/Seed uniform 并超时复位（/jafa omega_shader）
+            cn.autoforged.joes_addons_for_abmc.client.OmegaShaderRenderer.tickClient();
             // 红石块权杖：激光音效（laser_start → 循环 laser_middle → laser_end）状态机
             RedstoneLaserSounds.tick(isHoldingRedstoneStaff(), mc.options.keyUse.isDown());
             // 女仆红石块权杖：清理已消失女仆的激光循环音效

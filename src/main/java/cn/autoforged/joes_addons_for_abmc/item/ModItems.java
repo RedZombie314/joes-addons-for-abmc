@@ -64,4 +64,9 @@ public class ModItems {
         ITEMS.register("omega_game_icon",
             () -> new GameIconItem(new Item.Properties()
                 .stacksTo(1)));
+
+    public static final DeferredItem<WitchBossSpawnEggItem> WITCH_BOSS_SPAWN_EGG =
+        ITEMS.register("witch_boss_spawn_egg",
+            () -> new WitchBossSpawnEggItem(new Item.Properties()
+                .stacksTo(64)));
 }

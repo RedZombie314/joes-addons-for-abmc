@@ -1,6 +1,9 @@
 {
   "replace": false,
   "values": [
-    "joes_addons_for_abmc:herobrine_head"
+    "joes_addons_for_abmc:herobrine_head",
+    "joes_addons_for_abmc:witch_boss_tool",
+    "joes_addons_for_abmc:transmutation_item_expired",
+    "joes_addons_for_abmc:transmutation_block_expired"
   ]
 }

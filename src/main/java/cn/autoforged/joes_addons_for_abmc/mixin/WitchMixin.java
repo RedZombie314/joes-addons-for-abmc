@@ -68,7 +68,10 @@ public abstract class WitchMixin {
             // 目标玩家已被变形 → 停投（直至其被变形）
             boolean targetTransmuted = (target instanceof net.minecraft.server.level.ServerPlayer sp)
                 && ModMain.isPlayerTransmuted(sp);
-            if (!melee && !targetTransmuted && target != null) {
+            // 阶段2：目标若已是“生物形态”的玩家，仍投（把它由生物→方块，像对待正常玩家一样）
+            boolean tossToMorphedMob = (target instanceof net.minecraft.server.level.ServerPlayer sp2)
+                && ModMain.shouldTossBlockPotionAtMorphedMob(self, sp2);
+            if (!melee && target != null && (!targetTransmuted || tossToMorphedMob)) {
                 ModMain.throwWitchBossTransmutationPotion(self, target);
             }
             ci.cancel(); // 不再执行原版投掷（伤害/迅捷/治疗/隐身等均被替换）

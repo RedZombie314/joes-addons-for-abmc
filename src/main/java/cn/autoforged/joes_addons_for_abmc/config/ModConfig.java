@@ -45,6 +45,18 @@ public class ModConfig {
     /** 权杖模式文本的垂直偏移（像素，负值上移）。用于与物品描述文本错开，避免重叠。 */
     public static final ModConfigSpec.IntValue MODE_TEXT_Y_OFFSET;
 
+    /** 觉醒酿造台三瓶药水圆形排列的初始（旋转）角度（度）。0=正前朝玩家。 */
+    public static final ModConfigSpec.DoubleValue AWAKE_BREW_BOTTLES_ROTATION;
+
+    /** 觉醒酿造台药水瓶的渲染大小（倍率）。 */
+    public static final ModConfigSpec.DoubleValue AWAKE_BREW_BOTTLES_SCALE;
+
+    /** 觉醒酿造台药水瓶的渲染中心高度（块）。 */
+    public static final ModConfigSpec.DoubleValue AWAKE_BREW_BOTTLES_HEIGHT;
+
+    /** 调试模式：开启后低概率事件以高概率发生。 */
+    public static final ModConfigSpec.BooleanValue DEBUG_MODE;
+
     static {
         ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
 
@@ -226,6 +238,48 @@ public class ModConfig {
             )
             .translation("joes_addons_for_abmc.config.start.mode_text_y_offset")
             .defineInRange("mode_text_y_offset", -20, -80, 40);
+
+        AWAKE_BREW_BOTTLES_ROTATION = builder
+            .comment(
+                "Initial rotation angle (degrees) of the three-pot arrangement on the awakened brewing stand.",
+                "Top-down view of the brewing stand is treated as a circle whose circumference is split into 3,",
+                "each potion sits at the geometric center of its 1/3 sector. This angle rotates that whole",
+                "circle around the block's vertical center axis; 0 = a potion faces the player directly.",
+                "Range: -360 .. 360, default 0"
+            )
+            .translation("joes_addons_for_abmc.config.start.awake_brew_bottles_rotation")
+            .defineInRange("awake_brew_bottles_rotation", 0.0, -360.0, 360.0);
+
+        AWAKE_BREW_BOTTLES_SCALE = builder
+            .comment(
+                "Render scale multiplier of the potion bottles on the awakened brewing stand.",
+                "1.0 = full block size (roughly an item entity); smaller values shrink the bottles.",
+                "Range: 0.1 .. 3.0, default 0.6"
+            )
+            .translation("joes_addons_for_abmc.config.start.awake_brew_bottles_scale")
+            .defineInRange("awake_brew_bottles_scale", 0.6, 0.1, 3.0);
+
+        AWAKE_BREW_BOTTLES_HEIGHT = builder
+            .comment(
+                "Render center height (blocks) of the potion bottles above the brewing stand block.",
+                "Range: -1.0 .. 2.0, default 0.52"
+            )
+            .translation("joes_addons_for_abmc.config.start.awake_brew_bottles_height")
+            .defineInRange("awake_brew_bottles_height", 0.52, -1.0, 2.0);
+        builder.pop();
+
+        builder.translation("joes_addons_for_abmc.config.debug").push("debug");
+        DEBUG_MODE = builder
+            .comment(
+                "Debug mode. When enabled, low-probability events will happen with much higher probability.",
+                "(Only effective in new worlds.)",
+                "Effects:",
+                "- The first librarian encountered will always sell command blocks.",
+                "- The first swamp hut encountered will always be replaced by a witch boss hut.",
+                "Default: false"
+            )
+            .translation("joes_addons_for_abmc.config.debug.debug_mode")
+            .define("debug_mode", false);
         builder.pop();
 
         SPEC = builder.build();

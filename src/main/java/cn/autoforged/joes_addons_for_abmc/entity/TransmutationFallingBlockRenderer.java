@@ -34,8 +34,7 @@ public class TransmutationFallingBlockRenderer extends FallingBlockRenderer {
     public void render(FallingBlockEntity entity, float entityYaw, float partialTicks,
                        PoseStack poseStack, MultiBufferSource buffer, int packedLight) {
         BlockState blockstate = entity.getBlockState();
-        if (blockstate.getRenderShape() == RenderShape.MODEL
-            && blockstate.getRenderShape() != RenderShape.INVISIBLE) {
+        if (blockstate.getRenderShape() == RenderShape.MODEL) {
             Level level = entity.level();
             poseStack.pushPose();
             BlockPos blockpos = BlockPos.containing(entity.getX(), entity.getBoundingBox().maxY, entity.getZ());
@@ -61,6 +60,10 @@ public class TransmutationFallingBlockRenderer extends FallingBlockRenderer {
                         renderType);
             }
             poseStack.popPose();
+            return; // MODEL 分支已完整渲染，交由 mixin 处理非 MODEL 方块外观
+        }
+        if (!blockstate.isAir()) {
+            // 非 MODEL 方块：交给 FallingBlockRendererMixin 回退到物品模型渲染
             super.render(entity, entityYaw, partialTicks, poseStack, buffer, packedLight);
         }
     }

@@ -292,17 +292,9 @@ public class TransmutationBrewingRecipe implements IBrewingRecipe {
 
         ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(ingredient.getItem());
 
-        // 黑名单：带方块实体（可储存物品）的方块不能作为变形目标（变身后是空白方块且会死亡），
-        // 用这些方块酿造变形药水时，结果退化为随机变形药水“变形为§krandom”。
-        if (BuiltInRegistries.BLOCK.containsKey(itemId)
-            && BuiltInRegistries.BLOCK.get(itemId) instanceof net.minecraft.world.level.block.EntityBlock) {
-            ItemStack random = new ItemStack(input.getItem());
-            random.set(DataComponents.POTION_CONTENTS,
-                new PotionContents(Optional.of(ModPotions.TRANSMUTATION),
-                    Optional.of(0x9370DB), List.of()));
-            random.set(DataComponents.CUSTOM_NAME, Component.literal("变形为§krandom"));
-            return random;
-        }
+        // 注：不再因“带方块实体的方块（如箱子/木桶）”而退化为随机变形药水。
+        // 下落方块非 MODEL 的显示问题已由客户端 FallingBlockRendererMixin（物品模型回退）解决，
+        // 箱子/木桶等可直接作为正常的变形目标（变形为对应方块）。
 
         String itemTypeStr = itemId.toString();
 
@@ -368,7 +360,26 @@ public class TransmutationBrewingRecipe implements IBrewingRecipe {
             }
         }
 
-        if (colors.isEmpty()) return 0x9370DB;
+        if (colors.isEmpty()) {
+            // 取不到贴图主色：若目标是方块（如箱子/木桶这类 EntityBlock，其外观由模型/BlockEntity 绘制，
+            // 没有单片物品贴图可取色），退而改用该方块的 MaterialColor 近似主色，避免始终是默认紫。
+            ResourceLocation key = BuiltInRegistries.ITEM.getKey(item);
+            if (key != null) {
+                Block block = BuiltInRegistries.BLOCK.get(key);
+                if (block != null) {
+                    try {
+                        net.minecraft.world.level.material.MapColor mc =
+                            block.defaultBlockState().getMapColor(null, net.minecraft.core.BlockPos.ZERO);
+                        if (mc != null) {
+                            return mc.col;
+                        }
+                    } catch (Throwable ignored) {
+                        // 个别方块取色兜底失败不阻断酿造
+                    }
+                }
+            }
+            return 0x9370DB;
+        }
         colors.sort(Integer::compareTo);
         return colors.get(colors.size() / 2);
     }

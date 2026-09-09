@@ -93,12 +93,8 @@ public class LapisFallingBlockEntity extends FallingBlockEntity {
         this.yo = this.getY();
         this.zo = this.getZ();
         this.setStartPos(pos);
-        if (state.hasBlockEntity()) {
-            var be = level.getBlockEntity(pos);
-            if (be != null) {
-                this.myBlockData = be.saveWithFullMetadata(level.registryAccess());
-            }
-        }
+        // 捕获方块 BlockEntity（含箱/木桶等内容物）并先从方块上解绑，避免 removeBlock 掉落内容物
+        this.myBlockData = cn.autoforged.joes_addons_for_abmc.ModMain.captureBlockEntityData(level, pos, state);
         level.removeBlock(pos, false);
     }
 
@@ -218,20 +214,9 @@ public class LapisFallingBlockEntity extends FallingBlockEntity {
                     .getChunkSource()
                     .chunkMap
                     .broadcast(this, new ClientboundBlockUpdatePacket(blockpos, this.level().getBlockState(blockpos)));
-                if (this.myBlockData != null && this.myBlockState.hasBlockEntity()) {
-                    var be = this.level().getBlockEntity(blockpos);
-                    if (be != null) {
-                        CompoundTag tag = be.saveWithoutMetadata(this.level().registryAccess());
-                        for (String key : this.myBlockData.getAllKeys()) {
-                            tag.put(key, this.myBlockData.get(key).copy());
-                        }
-                        try {
-                            be.loadWithComponents(tag, this.level().registryAccess());
-                        } catch (Exception ignored) {
-                        }
-                        be.setChanged();
-                    }
-                }
+                // 还原捕获到的 BlockEntity（含箱/木桶内容物）；setBlock 若未同步创建 BE 则显式创建
+                cn.autoforged.joes_addons_for_abmc.ModMain.placeBlockEntityData(
+                    this.level(), blockpos, this.myBlockState, this.myBlockData);
             }
         }
         this.discard();

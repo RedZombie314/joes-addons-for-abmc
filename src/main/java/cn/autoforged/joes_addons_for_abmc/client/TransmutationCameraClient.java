@@ -84,15 +84,36 @@ public final class TransmutationCameraClient {
         return morphProxy;
     }
 
+    /** 渲染替换的目标是否为一个“活体生物”实体类型（方块/物品形态返回 false）。 */
+    private static boolean isLivingMorphType() {
+        if (morphEntityType.startsWith("player_shell:")) return true;
+        net.minecraft.resources.ResourceLocation rl =
+            net.minecraft.resources.ResourceLocation.tryParse(morphEntityType);
+        if (rl == null) return false;
+        return net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.containsKey(rl);
+    }
+
     /** 渲染替换的目标生物默认碰撞箱尺寸（供 Player#getDimensions 用）；非变形时返回 null。 */
     public static net.minecraft.world.entity.EntityDimensions morphDimensionsLocal() {
         if (!isMorphActive()) return null;
+        // 玩家空壳：使用玩家默认碰撞箱尺寸
+        if (morphEntityType.startsWith("player_shell:")) {
+            return net.minecraft.world.entity.EntityDimensions.fixed(0.6F, 1.8F);
+        }
         net.minecraft.resources.ResourceLocation rl =
             net.minecraft.resources.ResourceLocation.tryParse(morphEntityType);
-        if (rl == null || !net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.containsKey(rl)) {
-            return null;
+        if (rl == null) return null;
+        if (net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.containsKey(rl)) {
+            return net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.get(rl).getDimensions();
         }
-        return net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.get(rl).getDimensions();
+        // 方块形态：碰撞箱 0.98——既能轻松挤入 1×1 洞口，又不露缝（视觉渲染仍用 0.9995 填满整格）
+        if (net.minecraft.core.registries.BuiltInRegistries.BLOCK.containsKey(rl)) {
+            return net.minecraft.world.entity.EntityDimensions.fixed(0.98F, 0.98F);
+        }
+        if (net.minecraft.core.registries.BuiltInRegistries.ITEM.containsKey(rl)) {
+            return net.minecraft.world.entity.EntityDimensions.fixed(0.25F, 0.25F);
+        }
+        return null;
     }
 
     /** 服务端通知变形开始/结束（{@link cn.autoforged.joes_addons_for_abmc.network.TransmutationStatePayload}）。 */
@@ -210,22 +231,8 @@ public final class TransmutationCameraClient {
      *  旋转旧值/位移/四肢摆动字段同步给代理，才能正确走路且头不乱转。 */
     private static void tickMorphProxy(Minecraft mc) {
         if (mc.player == null || mc.level == null) return;
-        if (morphProxy == null) {
-            net.minecraft.resources.ResourceLocation rl =
-                net.minecraft.resources.ResourceLocation.tryParse(morphEntityType);
-            if (rl == null || !net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.containsKey(rl)) {
-                return;
-            }
-            net.minecraft.world.entity.Entity e =
-                net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.get(rl).create(mc.level);
-            if (e instanceof net.minecraft.world.entity.LivingEntity le) {
-                morphProxy = le;
-            } else {
-                return;
-            }
-        }
         Player player = mc.player;
-        // 每 tick 强制本地玩家碰撞箱为生物尺寸，抵抗姿势切换/其他 refreshDimensions 用默认箱覆盖（否则钻细缝减速）
+        // 每 tick 强制本地玩家碰撞箱为形态尺寸（生物/方块/物品），抵抗姿势切换/其它 refreshDimensions 用默认箱覆盖
         net.minecraft.world.entity.EntityDimensions md = morphDimensionsLocal();
         if (md != null) {
             player.dimensions = md;
@@ -235,6 +242,32 @@ public final class TransmutationCameraClient {
                 player.setPose(net.minecraft.world.entity.Pose.STANDING);
             }
         }
+        // 方块/物品形态：不创建代理生物（非活体），仅碰撞箱处理已足够
+        if (!isLivingMorphType()) return;
+        if (morphProxy == null) {
+            // 玩家空壳：创建 PlayerShellEntity 代理，设置皮肤
+            if (morphEntityType.startsWith("player_shell:")) {
+                String skinName = morphEntityType.substring("player_shell:".length());
+                cn.autoforged.joes_addons_for_abmc.entity.PlayerShellEntity shell =
+                    new cn.autoforged.joes_addons_for_abmc.entity.PlayerShellEntity(
+                        cn.autoforged.joes_addons_for_abmc.entity.ModEntities.PLAYER_SHELL.get(), mc.level);
+                shell.setSkinTexture(skinName);
+                morphProxy = shell;
+            } else {
+                net.minecraft.resources.ResourceLocation rl =
+                    net.minecraft.resources.ResourceLocation.tryParse(morphEntityType);
+                if (rl == null || !net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.containsKey(rl)) {
+                    return;
+                }
+                net.minecraft.world.entity.Entity e =
+                    net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.get(rl).create(mc.level);
+                if (e instanceof net.minecraft.world.entity.LivingEntity le) {
+                    morphProxy = le;
+                } else {
+                    return;
+                }
+            }
+        }
         // 1) 先同步 tick 所依赖的状态
         morphProxy.setPos(player.getX(), player.getY(), player.getZ());
         morphProxy.onGround = player.onGround;
@@ -242,9 +275,12 @@ public final class TransmutationCameraClient {
         morphProxy.setPortalCooldown(300); // 抑制传送门附近触发传送动画/粒子
         // 2) 让代理真正 tick 一次：推进其内部默认动画字段（鸡/鹦鹉的 flap/flapSpeed、末影螨摆动等）。
         //    客户端 tick 只推进动画与状态、不执行移动物理（travel 仅在服务端 aiStep 调用），故安全。
-        try {
-            morphProxy.tick();
-        } catch (Throwable ignored) {
+        //    烈焰人跳过 tick：其 aiStep 会生成烟雾粒子，第一人称下2格内会遮挡视线。
+        if (!"minecraft:blaze".equals(morphEntityType)) {
+            try {
+                morphProxy.tick();
+            } catch (Throwable ignored) {
+            }
         }
         // 防御：极端情况下代理被判定死亡/内部伤害时，重置存活与状态
         if (morphProxy.getHealth() <= 0.0F) {
@@ -253,6 +289,11 @@ public final class TransmutationCameraClient {
         // 3) 用玩家状态覆盖 tick 可能改动的旋转/位置/插值，保证渲染正确
         morphProxy.moveTo(player.getX(), player.getY(), player.getZ(),
             player.getYRot(), player.getXRot());
+        // 末影龙模型朝向与标准实体相反，需 180° 偏移
+        if ("minecraft:ender_dragon".equals(morphEntityType)) {
+            morphProxy.setYRot(player.getYRot() + 180.0F);
+            morphProxy.yRotO = player.yRotO + 180.0F;
+        }
         morphProxy.onGround = player.onGround;
         morphProxy.fallDistance = player.fallDistance;
         // 依赖实体的“渲染年龄(tickCount)”的默认动画持续播放（如末影螨左右摆动、僵尸臂摆动等）。
@@ -272,17 +313,17 @@ public final class TransmutationCameraClient {
         morphProxy.setYBodyRot(player.yBodyRot);
         morphProxy.yHeadRotO = player.yHeadRotO;
         morphProxy.setYHeadRot(player.yHeadRot);
-        // 走路动画：位移同步玩家（四肢摆动由 updateWalkAnimation 驱动）
+        // 走路动画：翅膀/腿脚由 agent tick() 内部用已同步的移动量自然驱动；
+        // 这里只需同步 walkDist/walkDistO 供渲染器插值，不再额外调用 updateWalkAnimation，
+        // 否则会和 tick() 内置驱动叠加导致腿部摆动比疾跑还快。
         morphProxy.walkDistO = player.walkDistO;
         morphProxy.walkDist = player.walkDist;
-        // 用玩家本帧 XZ 位移驱动代理四肢摆动，从而产生走/跑的腿脚动画（Morph 由玩家移动驱动生物动画）
-        try {
-            float mx = (float) (player.getX() - player.xo);
-            float mz = (float) (player.getZ() - player.zo);
-            ((cn.autoforged.joes_addons_for_abmc.mixin.LivingEntityAccessorMixin) (Object) morphProxy)
-                .jafa_updateWalkAnimation((float) Math.sqrt(mx * mx + mz * mz));
-        } catch (Throwable ignored) {
-        }
+        // 移动量同步给代理，驱动走路/跑动腿脚动画
         morphProxy.setDeltaMovement(player.getDeltaMovement());
+        // 攻击/挥臂动画同步：玩家攻击时，代理生物也播放对应动画（僵尸、铁傀儡等有攻击动画的生物会自然播放）
+        morphProxy.swinging = player.swinging;
+        morphProxy.swingTime = player.swingTime;
+        morphProxy.attackAnim = player.attackAnim;
+        morphProxy.oAttackAnim = player.oAttackAnim;
     }
 }

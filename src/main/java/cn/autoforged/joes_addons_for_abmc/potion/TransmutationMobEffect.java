@@ -5,6 +5,6 @@ import net.minecraft.world.effect.MobEffectCategory;
 
 public class TransmutationMobEffect extends MobEffect {
     public TransmutationMobEffect() {
-        super(MobEffectCategory.NEUTRAL, 0x9370DB);
+        super(MobEffectCategory.NEUTRAL, 0x8B6914);
     }
 }

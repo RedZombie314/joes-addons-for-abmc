@@ -51,6 +51,14 @@ public class ModEntities {
                 .updateInterval(20)
                 .build("transmutation_falling_block"));
 
+    public static final Supplier<EntityType<AwakeningFallingBlockEntity>> AWAKENING_FALLING_BLOCK =
+        ENTITIES.register("awakening_falling_block",
+            () -> EntityType.Builder.<AwakeningFallingBlockEntity>of(AwakeningFallingBlockEntity::new, MobCategory.MISC)
+                .sized(0.98F, 0.98F)
+                .clientTrackingRange(10)
+                .updateInterval(1)
+                .build("awakening_falling_block"));
+
     public static final Supplier<EntityType<DripstoneFallingBlockEntity>> DRIPSTONE_FALLING_BLOCK =
         ENTITIES.register("dripstone_falling_block",
             () -> EntityType.Builder.<DripstoneFallingBlockEntity>of(DripstoneFallingBlockEntity::new, MobCategory.MISC)

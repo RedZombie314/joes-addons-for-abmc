@@ -45,6 +45,13 @@ public class ModDamageTypes {
             () -> new DamageType("herobrine.head",
                 DamageScaling.NEVER, 0.0F));
 
+    // 女巫Boss第二阶段的工具攻击：真实伤害（最大生命的1/4），无视护甲、抗性提升与附魔减伤。
+    // 同样通过数据包标签（bypasses_armor / bypasses_resistance / bypasses_enchantments）实现。
+    public static final DeferredHolder<DamageType, DamageType> WITCH_BOSS_TOOL =
+        DAMAGE_TYPES.register("witch_boss_tool",
+            () -> new DamageType("witch_boss.tool",
+                DamageScaling.NEVER, 0.0F));
+
     // 红石块权杖激光击杀：播报“XX被天选之子的激光烧穿了”
     public static final DeferredHolder<DamageType, DamageType> LASER =
         DAMAGE_TYPES.register("laser",
@@ -59,9 +66,15 @@ public class ModDamageTypes {
                 DamageScaling.WHEN_CAUSED_BY_LIVING_NON_PLAYER, 0.1F));
 
     // 冰块权杖的霜冰被非融化因素破坏时，被困生物受到的伤害。
-    // 播放死亡信息：“XX随着冰的消融而碎裂”。
+    // 播放死亡信息："XX随着冰的消融而碎裂"。
     public static final DeferredHolder<DamageType, DamageType> FROST_ICE_SHATTER =
         DAMAGE_TYPES.register("frost_ice_shatter",
             () -> new DamageType("frost_ice_shatter",
+                DamageScaling.WHEN_CAUSED_BY_LIVING_NON_PLAYER, 0.1F));
+
+    // 变形苦力怕自爆伤害：播放死亡信息"XX自爆而亡"。
+    public static final DeferredHolder<DamageType, DamageType> MORPH_CREEPER_EXPLOSION =
+        DAMAGE_TYPES.register("morph_creeper_explosion",
+            () -> new DamageType("morph_creeper_explosion",
                 DamageScaling.WHEN_CAUSED_BY_LIVING_NON_PLAYER, 0.1F));
 }

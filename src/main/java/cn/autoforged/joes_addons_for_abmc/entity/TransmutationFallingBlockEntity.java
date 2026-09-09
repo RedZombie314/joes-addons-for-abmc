@@ -46,12 +46,8 @@ public class TransmutationFallingBlockEntity extends FallingBlockEntity {
         this.yo = this.getY();
         this.zo = this.getZ();
         this.setStartPos(pos);
-        if (state.hasBlockEntity()) {
-            var be = level.getBlockEntity(pos);
-            if (be != null) {
-                this.myBlockData = be.saveWithFullMetadata(level.registryAccess());
-            }
-        }
+        // 捕获方块 BlockEntity（含箱/木桶等内容物）并先从方块上解绑，避免后续移除掉内容物
+        this.myBlockData = cn.autoforged.joes_addons_for_abmc.ModMain.captureBlockEntityData(level, pos, state);
     }
 
     @Override

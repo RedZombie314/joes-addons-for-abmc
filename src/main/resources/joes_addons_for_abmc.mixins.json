@@ -16,12 +16,17 @@
     "MeleeAttackGoalMixin",
     "WitchMixin",
     "RangedAttackGoalMixin",
-    "PlayerDimensionsMixin"
+    "PlayerDimensionsMixin",
+    "ItemStackMaxSizeMixin",
+    "DispenserNetherWartMixin",
+    "SwampHutPieceMixin"
   ],
   "client": [
     "ClientLevelMixin",
     "BlockMarkerParticleMixin",
-    "LivingEntityAccessorMixin"
+    "LivingEntityAccessorMixin",
+    "FallingBlockRendererMixin",
+    "EntityRenderDispatcherMixin"
   ],
   "injectors": {
     "defaultRequire": 1

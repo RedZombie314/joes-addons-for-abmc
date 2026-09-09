@@ -121,11 +121,13 @@ public final class MaidRedstoneLaserSounds {
         while (it.hasNext()) {
             Map.Entry<Integer, MaidMiddleLoopSound> entry = it.next();
             Entity entity = mc.level.getEntity(entry.getKey());
-            // 位置跟随在循环实例的 tick() 中完成；此处仅做消失检测
-            if (entity.isAlive() && cn.autoforged.joes_addons_for_abmc.ModMain.isTouhouMaid(entity)) {
+            // 位置跟随在循环实例的 tick() 中完成；此处仅做消失检测。
+            // 女仆实体可能为 null（被变形/卸载/超出追踪范围），须先判空再取 isAlive，避免 NPE 崩溃
+            // 并让“女仆消失”走宽限期清理，从而真正停止循环音效（修复持续播放停不下来的问题）。
+            if (entity != null && entity.isAlive() && cn.autoforged.joes_addons_for_abmc.ModMain.isTouhouMaid(entity)) {
                 entry.getValue().lastSeenTick = gameTime;
             } else if (gameTime - entry.getValue().lastSeenTick > GRACE_TICKS) {
-                // 女仆实体持续消失（死亡/卸载）超过宽限期：停止循环音效
+                // 女仆实体持续消失（死亡/卸载/被变形）超过宽限期：停止循环音效
                 mc.getSoundManager().stop(entry.getValue());
                 it.remove();
             }
