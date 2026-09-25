@@ -60,6 +60,7 @@ public class ModCreativeTab {
         "minecraft_game_icon",
         "omega",
         "cauldron",
+        "brewing_stand",
         "crafting_table",
         "emerald_block",
         "ice",
@@ -75,7 +76,8 @@ public class ModCreativeTab {
         "amethyst_block",
         "cobweb",
         "spawner",
-        "tnt"
+        "tnt",
+        "lightning_rod"
     };
 
     public static final Supplier<CreativeModeTab> JOES_ADDONS_TAB = CREATIVE_MODE_TABS.register(
@@ -101,6 +103,8 @@ public class ModCreativeTab {
                 output.accept(ModItems.GLISTERING_MELON_KNIFE.get()); // 第二把用于展示在创造栏中
 
                 output.accept(ModItems.NETHERITE_CORE.get());
+                // 弹奏工具：演奏 playable 类可持有结构（贴图暂为空白）
+                output.accept(ModItems.STRUMMING_TOOL.get());
                 output.accept(ModItems.GIANT_NETHERITE_BOW.get());
                 output.accept(ModItems.GIANT_NETHERITE_ARROW.get());
                 output.accept(ModItems.PRISMARINE_BOW.get());
@@ -112,8 +116,21 @@ public class ModCreativeTab {
                 // 女巫Boss 刷怪蛋：右键直接召唤女巫Boss
                 output.accept(ModItems.WITCH_BOSS_SPAWN_EGG.get());
 
+                // ===== 附魔千纸鹤 ====
+                // 刷怪蛋：右键直接召唤一只附魔千纸鹤
+                output.accept(ModItems.ORIGAMI_SPAWN_EGG.get());
+                // 收容载体：装有千纸鹤的玻璃瓶（可由玻璃瓶右键千纸鹤获得）
+                output.accept(ModItems.ORIGAMI_BOTTLE.get());
+
+                // ===== 废弃传送门藏宝图 ====
+                output.accept(ModItems.RUINED_PORTAL_MAP.get());
+
                 // ===== 方块 =====
                 output.accept(new ItemStack(ModBlocks.HORIZONTAL_DRIPSTONE.get()));
+
+                // ===== 唤醒药水 =====
+                // 正常时长的喷溅型唤醒药水
+                output.accept(splashPotion(ModPotions.AWAKENING, 0x23A248));
 
                 // ===== 变形药水 =====
                 // 随机变形喷溅药水：未绑定固定目标，命中生物的瞬间从原版方块中随机选取一个作为变形目标
@@ -148,7 +165,7 @@ public class ModCreativeTab {
                 output.accept(dreamPotion);
 
                 // 变形解药（喷溅）：使被溅射到的变身方块/物品提前复原为生物形态
-                output.accept(splashPotion(ModPotions.TRANSMUTATION_ANTIDOTE, 0x7FBF7F));
+                output.accept(splashPotion(ModPotions.TRANSMUTATION_ANTIDOTE, 0xE1AFB0));
 
                 // 仅保留随机传送药水（定点/定向需用命名地狱疣酿制获得）
                 addTransportPotion(output, "random", 0x808080, "随机传送");

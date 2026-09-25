@@ -39,6 +39,12 @@ import java.util.function.Predicate;
  *       血量低于最大生命值 1/3 时切换远程模式（在确保头颅不波及友方的前提下发射 Him 头颅，目标过近则近战）；</li>
  *   <li>红石块权杖：由 {@link MaidRedstoneStaffAttackTask} 接管 —— 在女仆与目标之间、以及目标 1 格范围内
  *       均不存在玩家或宠物时，发射充能为 8 的红石激光（模拟玩家长按右键）。</li>
+ *   <li>传送门权杖：由 {@link MaidEndPortalStaffAttackTask} 接管 —— 每 5 秒在目标上下 2 格创建一对传送门，
+ *       5 刻后塌缩；持传送门权杖时优先索敌最大生命值低的目标（由低到高）。</li>
+ *   <li>附魔台权杖：由 {@link MaidEnchantStaffBuffTask} 接管 —— 每 10 秒为附近玩家/其他女仆/宠物
+ *       附上一个持续 30 秒的日常模式附魔状态效果（辅助增益，不参与攻击）。</li>
+ *   <li>冰块权杖：由 {@link MaidIceStaffAttackTask} 接管 —— 走近未被霜冰困住的敌对生物，
+ *       把其碰撞箱触及的方块替换为霜冰将其困住；目标已困住时改索敌下一个。</li>
  * </ul>
  * <p>
  * 实现 {@link IAttackTask} 以完全复用女仆原版“攻击”职业的目标筛选逻辑：
@@ -65,6 +71,18 @@ public class TaskStaffAttack implements IAttackTask {
 
     /** 命令方块权杖方块形态：由 MaidCommandStaffAttackTask 按主人的权杖模式执行 kill/禁AI 行为。 */
     public static final String COMMAND_STAFF_TYPE = "command_block";
+
+    /** 岩浆块权杖方块形态：由 MaidMagmaStaffAttackTask 提供远程恶魂火球 + 近战攻击。 */
+    public static final String MAGMA_STAFF_TYPE = "magma_block";
+
+    /** 传送门权杖方块形态：由 MaidEndPortalStaffAttackTask 在目标上下 2 格创建一对传送门并塌缩。 */
+    public static final String END_PORTAL_STAFF_TYPE = "end_portal_frame";
+
+    /** 附魔台权杖方块形态：由 MaidEnchantStaffBuffTask 每 10 秒为玩家/其他女仆/宠物附上日常模式附魔状态效果。 */
+    public static final String ENCHANT_STAFF_TYPE = "enchanting_table";
+
+    /** 冰块权杖方块形态：由 MaidIceStaffAttackTask 把目标碰撞箱触及的方块替换为霜冰，将其困住。 */
+    public static final String ICE_STAFF_TYPE = "ice";
 
     /** 索敌半径（格）：权杖攻击固定 64 格，不受女仆工作范围限制。 */
     public static final float SEARCH_RADIUS = 64.0F;
@@ -101,11 +119,15 @@ public class TaskStaffAttack implements IAttackTask {
     public List<Pair<Integer, BehaviorControl<? super EntityMaid>>> createBrainTasks(EntityMaid maid) {
         // 站姿（可移动）任务：含通用走位。
         List<Pair<Integer, BehaviorControl<? super EntityMaid>>> tasks = createCommonAttackTasks(maid);
-        // 通用走位（仅在“非 Him 权杖且非红石块权杖”时启用），供普通权杖走近目标近战。
+        // 通用走位（仅在“非 Him/红石/命令方块/岩浆块/传送门/附魔台/冰块权杖”时启用），供普通权杖走近目标近战。
         tasks.add(Pair.of(5, new ConditionalBehavior(
             m -> !MaidHimStaffAttackTask.isHimStaff(m.getMainHandItem())
                 && !MaidRedstoneStaffAttackTask.isRedstoneStaff(m.getMainHandItem())
-                && !MaidCommandStaffAttackTask.isCommandStaff(m.getMainHandItem()),
+                && !MaidCommandStaffAttackTask.isCommandStaff(m.getMainHandItem())
+                && !MaidMagmaStaffAttackTask.isMagmaStaff(m.getMainHandItem())
+                && !MaidEndPortalStaffAttackTask.isEndPortalStaff(m.getMainHandItem())
+                && !MaidEnchantStaffBuffTask.isEnchantStaff(m.getMainHandItem())
+                && !MaidIceStaffAttackTask.isIceStaff(m.getMainHandItem()),
             SetWalkTargetFromAttackTargetIfTargetOutOfReach.create(0.6F)
         )));
         return tasks;
@@ -159,12 +181,28 @@ public class TaskStaffAttack implements IAttackTask {
         // 启用/禁用AI模式→瞄准敌怪，若其 NoAI=0b 则设为 1b（禁AI）并渲染白线；护盾模式由常驻反弹处理；抓取/无模式无行为。
         BehaviorControl<? super EntityMaid> commandAttack = new MaidCommandStaffAttackTask();
 
+        // 岩浆块权杖专属行为：目标较远且确认不会伤害友方时发射恶魂火球，目标较近则近战（类似 Him 权杖模式）。
+        BehaviorControl<? super EntityMaid> magmaAttack = new MaidMagmaStaffAttackTask();
+
+        // 传送门权杖专属行为：每 5 秒在目标上下 2 格创建一对传送门，5 刻后塌缩（收敛传送到物理维度）。
+        BehaviorControl<? super EntityMaid> endPortalAttack = new MaidEndPortalStaffAttackTask();
+
+        // 附魔台权杖专属行为（辅助增益）：每 10 秒为附近玩家/其他女仆/宠物附上日常模式附魔状态效果。
+        BehaviorControl<? super EntityMaid> enchantBuff = new MaidEnchantStaffBuffTask();
+
+        // 冰块权杖专属行为：走近目标至冻结范围，把其碰撞箱触及的方块替换为霜冰将其困住。
+        BehaviorControl<? super EntityMaid> iceAttack = new MaidIceStaffAttackTask();
+
         // 通用近战用自研 MaidStaffMeleeAttack（不依赖传感器缓存，且无法移动时近战自卫范围更大）；
-        // 与 Him/红石专属行为条件互斥，避免同一刻双重攻击。
+        // 与 Him/红石/岩浆块/传送门/附魔台/冰块专属行为条件互斥，避免同一刻双重攻击。
         BehaviorControl<? super EntityMaid> meleeAttack = new ConditionalBehavior(
             m -> !MaidHimStaffAttackTask.isHimStaff(m.getMainHandItem())
                 && !MaidRedstoneStaffAttackTask.isRedstoneStaff(m.getMainHandItem())
-                && !MaidCommandStaffAttackTask.isCommandStaff(m.getMainHandItem()),
+                && !MaidCommandStaffAttackTask.isCommandStaff(m.getMainHandItem())
+                && !MaidMagmaStaffAttackTask.isMagmaStaff(m.getMainHandItem())
+                && !MaidEndPortalStaffAttackTask.isEndPortalStaff(m.getMainHandItem())
+                && !MaidEnchantStaffBuffTask.isEnchantStaff(m.getMainHandItem())
+                && !MaidIceStaffAttackTask.isIceStaff(m.getMainHandItem()),
             new MaidStaffMeleeAttack()
         );
         BehaviorControl<? super EntityMaid> useShield = new MaidUseShieldTask();
@@ -176,6 +214,10 @@ public class TaskStaffAttack implements IAttackTask {
             Pair.of(5, redstoneAttack),
             Pair.of(5, redstoneSound),
             Pair.of(5, commandAttack),
+            Pair.of(5, magmaAttack),
+            Pair.of(5, endPortalAttack),
+            Pair.of(5, enchantBuff),
+            Pair.of(5, iceAttack),
             Pair.of(5, meleeAttack),
             Pair.of(5, useShield)
         );
@@ -198,7 +240,11 @@ public class TaskStaffAttack implements IAttackTask {
         return PASSIVE_STAFF_TYPES.contains(blockType)
             || HIM_STAFF_TYPE.equals(blockType)
             || REDSTONE_STAFF_TYPE.equals(blockType)
-            || COMMAND_STAFF_TYPE.equals(blockType);
+            || COMMAND_STAFF_TYPE.equals(blockType)
+            || MAGMA_STAFF_TYPE.equals(blockType)
+            || END_PORTAL_STAFF_TYPE.equalsIgnoreCase(blockType)
+            || ENCHANT_STAFF_TYPE.equals(blockType)
+            || ICE_STAFF_TYPE.equals(blockType);
     }
 
     /**
@@ -226,15 +272,24 @@ public class TaskStaffAttack implements IAttackTask {
     private Optional<? extends LivingEntity> findAttackTarget(EntityMaid maid) {
         if (!(maid.level() instanceof ServerLevel level)) return Optional.empty();
         boolean himStaff = MaidHimStaffAttackTask.isHimStaff(maid.getMainHandItem());
+        boolean endPortalStaff = MaidEndPortalStaffAttackTask.isEndPortalStaff(maid.getMainHandItem());
+        boolean iceStaff = MaidIceStaffAttackTask.isIceStaff(maid.getMainHandItem());
         AABB aabb = maid.getBoundingBox().inflate(SEARCH_RADIUS, VERTICAL_SEARCH, SEARCH_RADIUS);
         List<LivingEntity> list = level.getEntitiesOfClass(LivingEntity.class, aabb, e -> {
             if (e == maid || !e.isAlive()) return false;
             if (himStaff && e.getType() == EntityType.ENDER_DRAGON) return false;
+            // 冰块权杖：已被霜冰困住的目标不再索敌，去寻找下一个未被困的敌对生物
+            if (iceStaff && cn.autoforged.joes_addons_for_abmc.ModMain.isOverlappingFrost(e)) return false;
             if (!maid.canAttack(e)) return false;
             return maid.getSensing().hasLineOfSight(e);
         });
         if (list.isEmpty()) return Optional.empty();
-        list.sort(Comparator.comparingDouble(maid::distanceToSqr));
+        if (endPortalStaff) {
+            // 传送门权杖：优先索敌最大生命值低的目标（由低到高）
+            list.sort(Comparator.comparingDouble(LivingEntity::getMaxHealth));
+        } else {
+            list.sort(Comparator.comparingDouble(maid::distanceToSqr));
+        }
         return Optional.of(list.get(0));
     }
 

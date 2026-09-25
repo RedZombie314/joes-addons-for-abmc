@@ -155,7 +155,7 @@ public class StaffItem extends Item {
 
     private static final ItemAttributeModifiers DIAMOND_ATTRIBUTES = ItemAttributeModifiers.builder()
         .add(Attributes.ATTACK_DAMAGE,
-            new AttributeModifier(Item.BASE_ATTACK_DAMAGE_ID, 0.5, AttributeModifier.Operation.ADD_VALUE),
+            new AttributeModifier(Item.BASE_ATTACK_DAMAGE_ID, 60.0, AttributeModifier.Operation.ADD_VALUE),
             EquipmentSlotGroup.MAINHAND)
         .add(Attributes.ATTACK_SPEED,
             new AttributeModifier(ATTACK_SPEED_ID, -1.5, AttributeModifier.Operation.ADD_VALUE),
@@ -313,6 +313,22 @@ public class StaffItem extends Item {
         if ("omega".equals(blockType)) {
             return UseAnim.BOW;
         }
+        // 炼药锅权杖：按住右键开启"药水护盾"，同样用拉弓动画表示"长按"
+        if ("cauldron".equals(blockType)) {
+            return UseAnim.BOW;
+        }
+        // 酿造台权杖：药瓶模式长按右键连续投掷药水，同样用拉弓动画表示"长按"
+        if ("brewing_stand".equals(blockType)) {
+            return UseAnim.BOW;
+        }
+        // 雪块权杖：长按右键持续发射雪球，同样用拉弓动画表示"长按"
+        if ("snow_block".equals(blockType)) {
+            return UseAnim.BOW;
+        }
+        // 音符盒权杖：音符模式长按右键持续发射音符，同样用拉弓动画表示"长按"
+        if ("note_block".equals(blockType)) {
+            return UseAnim.BOW;
+        }
         return UseAnim.BLOCK;
     }
 
@@ -435,6 +451,38 @@ public class StaffItem extends Item {
             }
             return InteractionResultHolder.consume(stack);
         }
+        if ("cauldron".equals(blockType)) {
+            // 炼药锅权杖：按住右键开启“药水护盾”（拉弓动画），免疫喷溅药水/状态效果云并清除附近滞留云。
+            player.startUsingItem(hand);
+            return InteractionResultHolder.consume(stack);
+        }
+        if ("brewing_stand".equals(blockType)) {
+            // 酿造台权杖：药瓶模式长按右键连续投掷药水（拉弓动画），由 onUseTick 驱动；药水云模式尚未实装。
+            player.startUsingItem(hand);
+            return InteractionResultHolder.consume(stack);
+        }
+        if ("snow_block".equals(blockType)) {
+            // 雪块权杖：长按右键持续发射雪球（拉弓动画），由 onUseTick 每刻驱动。
+            player.startUsingItem(hand);
+            return InteractionResultHolder.consume(stack);
+        }
+        if ("note_block".equals(blockType)) {
+            // 音符盒权杖：音符模式长按右键持续发射音符（拉弓动画），由 onUseTick 每 2 刻驱动；
+            // 音谱模式右键沿谱子各线各发射一个音符（单次，不进入使用状态）。
+            if (!level.isClientSide()) {
+                if (ModMain.getNoteStaffMode(player) == 1) {
+                    ModMain.executeNoteStaffSheetFire(player);
+                    return InteractionResultHolder.sidedSuccess(stack, false);
+                }
+                player.startUsingItem(hand);
+            } else {
+                if (StaffClientState.noteStaffMode == 1) {
+                    return InteractionResultHolder.sidedSuccess(stack, true);
+                }
+                player.startUsingItem(hand);
+            }
+            return InteractionResultHolder.consume(stack);
+        }
         if ("tnt".equals(blockType)) {
             // TNT 权杖：右键丢出一枚点燃的 TNT（0.1% 概率为苦力怕），命中方块随即引爆。
             if (!level.isClientSide()) {
@@ -472,6 +520,14 @@ public class StaffItem extends Item {
             }
             return InteractionResultHolder.sidedSuccess(stack, level.isClientSide());
         }
+        if ("lightning_rod".equals(blockType)) {
+            // 避雷针权杖：右键向看向的坐标/实体召唤一道闪电（无视天气/露天），消耗 1 点耐久；
+            // 命中方块及其周围半径 5 格内的所有铜质方块进行一次除锈。
+            if (!level.isClientSide()) {
+                ModMain.executeLightningRodAbility(player, stack, hand);
+            }
+            return InteractionResultHolder.sidedSuccess(stack, level.isClientSide());
+        }
         return InteractionResultHolder.pass(stack);
     }
 
@@ -504,6 +560,33 @@ public class StaffItem extends Item {
         if ("redstone_block".equals(blockType)) {
             // 红石块权杖：每刻沿玩家视线发射红石射线（伤害/强充能/破坏/粒子均由服务端执行）。
             ModMain.executeRedstoneStaffTick(player);
+            return;
+        }
+        if ("cauldron".equals(blockType)) {
+            // 炼药锅权杖：每刻清除玩家附近的滞留状态效果云（药水护盾）。
+            ModMain.executeCauldronStaffTick(player);
+            return;
+        }
+        if ("brewing_stand".equals(blockType)) {
+            // 酿造台权杖：长按右键每 4 刻发射一瓶（药瓶模式）/一颗状态效果云（药水云模式），
+            // 每次发射损失 1 点耐久；发射逻辑在 ModMain 按当前 form/category 分发。
+            int usedTicks = this.getUseDuration(stack, livingEntity) - remainingUseDuration;
+            if (usedTicks > 0 && usedTicks % 4 == 0) {
+                ModMain.executeBrewingStaffTick(player);
+            }
+            return;
+        }
+        if ("snow_block".equals(blockType)) {
+            // 雪块权杖：每游戏刻从权杖端点朝视线方向发射一颗 3 倍速雪球，每颗损失 1 点耐久。
+            ModMain.executeSnowStaffTick(player);
+            return;
+        }
+        if ("note_block".equals(blockType)) {
+            // 音符盒权杖（音符模式）：按下右键的第 0 刻立即发射第一个音符，此后每 2 游戏刻发射一个随机颜色音符。
+            int usedTicks = this.getUseDuration(stack, livingEntity) - remainingUseDuration;
+            if (usedTicks % 2 == 0) {
+                ModMain.executeNoteStaffTick(player);
+            }
             return;
         }
         if (!"herobrine_head".equals(blockType)) return;
@@ -584,6 +667,9 @@ public class StaffItem extends Item {
             if (state.is(BlockTags.NEEDS_DIAMOND_TOOL)) return true;
             return state.is(BlockTags.MINEABLE_WITH_PICKAXE);
         }
+        if ("diamond_block".equals(blockType)) {
+            return state.is(BlockTags.MINEABLE_WITH_PICKAXE);
+        }
         if ("bone_block".equals(blockType)) return false;
         if ("furnace".equals(blockType)) return false;
         if ("bedrock".equals(blockType)) return true;
@@ -615,6 +701,12 @@ public class StaffItem extends Item {
             if (state.getDestroySpeed(null, BlockPos.ZERO) < 0) return 1.0F;
             if (state.is(Blocks.NETHERITE_BLOCK)) return 1.0F;
             return 1500.0F;
+        }
+        if ("diamond_block".equals(blockType)) {
+            if (state.isAir()) return 1.0F;
+            if (state.getDestroySpeed(null, BlockPos.ZERO) < 0) return 1.0F;
+            if (isCorrectToolForDrops(stack, state)) return 1500.0F;
+            return 1.0F;
         }
         if ("bone_block".equals(blockType)) return 1.0F;
         if ("furnace".equals(blockType)) return 1.0F;

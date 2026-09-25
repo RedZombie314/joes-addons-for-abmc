@@ -28,6 +28,7 @@ import cn.autoforged.joes_addons_for_abmc.network.BellRingPayload;
 import cn.autoforged.joes_addons_for_abmc.network.CobwebDisconnectPayload;
 import cn.autoforged.joes_addons_for_abmc.client.CobwebClientState;
 import cn.autoforged.joes_addons_for_abmc.network.CommandStaffSyncPayload;
+import cn.autoforged.joes_addons_for_abmc.network.EnchantTableCounterPayload;
 import cn.autoforged.joes_addons_for_abmc.network.GameIconCraftPayload;
 import cn.autoforged.joes_addons_for_abmc.network.PortalStaffInputPayload;
 import cn.autoforged.joes_addons_for_abmc.network.TntDetonatePayload;
@@ -113,6 +114,8 @@ public class ClientEvents {
     private static int morphRenderDebugFrame = 0;
     private static int morphRenderDebugLastFrame = -1;
     private static int morphRenderDebugPerFrameCount = 0;
+    // 回放形态渲染断点调试：按时间节流打印 Player 实体的变形渲染状态
+    private static long lastReplayDebugMs = 0L;
     // ===========================
 
     public static final KeyMapping BLOCK_KEY = new KeyMapping(
@@ -270,6 +273,13 @@ public class ClientEvents {
         new net.minecraft.client.resources.model.ModelResourceLocation(STAFF_CAULDRON_MODEL_ID,
             net.minecraft.client.resources.model.ModelResourceLocation.STANDALONE_VARIANT);
 
+    private static final ResourceLocation STAFF_BREWING_STAND_MODEL_ID =
+        ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "item/staff_brewing_stand");
+
+    private static final net.minecraft.client.resources.model.ModelResourceLocation STAFF_BREWING_STAND_STANDALONE =
+        new net.minecraft.client.resources.model.ModelResourceLocation(STAFF_BREWING_STAND_MODEL_ID,
+            net.minecraft.client.resources.model.ModelResourceLocation.STANDALONE_VARIANT);
+
     private static final ResourceLocation STAFF_CRAFTING_TABLE_MODEL_ID =
         ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "item/staff_crafting_table");
 
@@ -387,6 +397,13 @@ public class ClientEvents {
 
     private static final net.minecraft.client.resources.model.ModelResourceLocation STAFF_MC_STANDALONE =
         new net.minecraft.client.resources.model.ModelResourceLocation(STAFF_MC_MODEL_ID,
+            net.minecraft.client.resources.model.ModelResourceLocation.STANDALONE_VARIANT);
+
+    private static final ResourceLocation STAFF_LIGHTNING_ROD_MODEL_ID =
+        ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "item/staff_lightning_rod");
+
+    private static final net.minecraft.client.resources.model.ModelResourceLocation STAFF_LIGHTNING_ROD_STANDALONE =
+        new net.minecraft.client.resources.model.ModelResourceLocation(STAFF_LIGHTNING_ROD_MODEL_ID,
             net.minecraft.client.resources.model.ModelResourceLocation.STANDALONE_VARIANT);
 
     /**
@@ -522,6 +539,7 @@ public class ClientEvents {
         event.register(STAFF_BARRIER_STANDALONE);
         event.register(STAFF_DRIPSTONE_STANDALONE);
         event.register(STAFF_CAULDRON_STANDALONE);
+        event.register(STAFF_BREWING_STAND_STANDALONE);
         event.register(STAFF_CRAFTING_TABLE_STANDALONE);
         event.register(STAFF_EMERALD_STANDALONE);
         event.register(STAFF_ICE_STANDALONE);
@@ -539,6 +557,7 @@ public class ClientEvents {
         event.register(STAFF_SPAWNER_STANDALONE);
         event.register(STAFF_TNT_STANDALONE);
         event.register(STAFF_MC_STANDALONE);
+        event.register(STAFF_LIGHTNING_ROD_STANDALONE);
     }
 
     public static final KeyMapping STAFF_SWAP_BLOCKTYPE = new KeyMapping(
@@ -652,6 +671,13 @@ public class ClientEvents {
                 ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "blocking"),
                 (stack, level, entity, seed) -> isClientBlocking ? 1.0F : 0.0F
             );
+            // 废弃传送门藏宝图：有 MAP_ID（已用/已定位）→ 模型切到 filled_map（藏宝图）；否则空地图
+            net.minecraft.client.renderer.item.ItemProperties.register(
+                ModItems.RUINED_PORTAL_MAP.get(),
+                ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "located"),
+                (stack, level, entity, seed) ->
+                    stack.has(net.minecraft.core.component.DataComponents.MAP_ID) ? 1.0F : 0.0F
+            );
         }
     }
 
@@ -685,6 +711,31 @@ public class ClientEvents {
         event.registerEntityRenderer(ModEntities.PLAYER_SHELL.get(), PlayerShellRenderer::new);
         event.registerEntityRenderer(ModEntities.TNT_STAFF_PRIMED_TNT.get(), TntRenderer::new);
         event.registerEntityRenderer(ModEntities.TNT_STAFF_CREEPER.get(), CreeperRenderer::new);
+        event.registerEntityRenderer(ModEntities.BREWING_STAFF_CLOUD.get(),
+            cn.autoforged.joes_addons_for_abmc.client.BrewingStaffCloudRenderer::new);
+        // 附魔千纸鹤：先用 ThrownItemRenderer 渲染为一张“纸”贴图（依赖 ItemSupplier）。以后要自定义模型可替换此渲染器。
+        event.registerEntityRenderer(ModEntities.ENCHANTED_ORIGAMI.get(), ThrownItemRenderer::new);
+        // 魔咒子弹：空渲染器（什么都不画）。之后若要贴图可在 render() 里绘制。
+        event.registerEntityRenderer(ModEntities.ENCHANTMENT_BULLET.get(), ctx ->
+            new net.minecraft.client.renderer.entity.EntityRenderer<cn.autoforged.joes_addons_for_abmc.entity.EnchantmentBullet>(ctx) {
+                @Override
+                public void render(cn.autoforged.joes_addons_for_abmc.entity.EnchantmentBullet entity,
+                        float entityYaw, float partialTick,
+                        com.mojang.blaze3d.vertex.PoseStack poseStack,
+                        net.minecraft.client.renderer.MultiBufferSource buffer, int packedLight) {
+                    // 什么都不画
+                }
+                @Override
+                public net.minecraft.resources.ResourceLocation getTextureLocation(
+                        cn.autoforged.joes_addons_for_abmc.entity.EnchantmentBullet entity) {
+                    return net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS;
+                }
+            });
+        // 掷出的奶桶：用 ThrownItemRenderer 渲染为奶桶贴图（ThrowableItemProjectile 实现了 ItemSupplier）。
+        event.registerEntityRenderer(ModEntities.THROWN_MILK_BUCKET.get(), ThrownItemRenderer::new);
+        // 可持有的结构：参照原版 BlockDisplayRenderer 的渲染体系，逐结构方块渲染（支持 xyz 三轴视觉旋转）。
+        event.registerEntityRenderer(ModEntities.HOLDABLE_STRUCTURE.get(),
+            cn.autoforged.joes_addons_for_abmc.entity.HoldableStructureRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.LUCKY_DIMENSION_BLOCK_ENTITY.get(), LuckyDimensionBlockRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.LUCKY_PORTAL_BLOCK_ENTITY.get(), LuckyPortalBlockRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.LUCKY_DIMENSION_BLOCK_ENTITY.get(), LuckyDimensionBlockRenderer::new);
@@ -727,55 +778,104 @@ public class ClientEvents {
         try {
             net.minecraft.world.entity.Entity ent = event.getEntity();
             net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
-            if (ent != mc.player || !cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.isTransmuted()) {
+            // 节流调试日志：定位回放视角下变形渲染断点（约 1 秒打一次）
+            if (ent instanceof net.minecraft.world.entity.player.Player dbg) {
+                long now = System.currentTimeMillis();
+                if (now - lastReplayDebugMs >= 1000L) {
+                    lastReplayDebugMs = now;
+                    String sync = cn.autoforged.joes_addons_for_abmc.entity.PlayerMorphSync.getMorphType(dbg);
+                    LOGGER.warn("[DBG-REPLAY] cls={} uuid={} isLocal={} isTransmuted={} camType='{}' sync='{}' isLiving={}",
+                        dbg.getClass().getSimpleName(), dbg.getUUID(),
+                        ent == mc.player,
+                        cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.isTransmuted(),
+                        cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.getMorphEntityType(),
+                        sync,
+                        cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.isLivingMorphType(sync));
+                }
+            }
+            if (ent == mc.player) {
+                // （本地玩家）实时变形状态优先：跟随实体/动画代理等完整逻辑
+                if (cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.isTransmuted()) {
+                    // 追踪每帧 render 调用次数（检测是否多次渲染同一玩家导致闪变）
+                    if (MORPH_RENDER_DEBUG) {
+                        if (morphRenderDebugLastFrame != morphRenderDebugFrame) {
+                            morphRenderDebugLastFrame = morphRenderDebugFrame;
+                            if (morphRenderDebugPerFrameCount > 1) {
+                                LOGGER.warn("[DBG-MORPH] MULTI_RENDER frame={} count={}",
+                                    morphRenderDebugFrame, morphRenderDebugPerFrameCount);
+                            }
+                            morphRenderDebugPerFrameCount = 1;
+                        } else {
+                            morphRenderDebugPerFrameCount++;
+                        }
+                    }
+                    String morphType = cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.getMorphEntityType();
+                    boolean isMorph = cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.isMorphActive();
+                    if (MORPH_RENDER_DEBUG && !isMorph) {
+                        // 非 morph 形态（壳变形）：仅隐藏，不渲染
+                        LOGGER.info("[DBG-MORPH] HIDE_ONLY frame={} type={}", morphRenderDebugFrame, morphType);
+                    }
+                    if (isMorph) {
+                        // 渲染替换：取消玩家本体模型，改画内存代理生物
+                        event.setCanceled(true);
+                        if (MORPH_RENDER_DEBUG) {
+                            LOGGER.info("[DBG-MORPH] RENDER_MORPH frame={} type={} proxy={}",
+                                morphRenderDebugFrame, morphType,
+                                cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.getMorphProxy() != null);
+                        }
+                        renderMorphProxy(event);
+                    } else {
+                        // 物品/方块/壳形态：完全隐藏本地玩家自身渲染
+                        event.setCanceled(true);
+                    }
+                    return;
+                }
+                // 回放视角：本地“相机实体”可能携带录制的 morph 类型，回退到同步数据渲染
+                String localSync = cn.autoforged.joes_addons_for_abmc.entity.PlayerMorphSync.getMorphType(mc.player);
+                if (localSync != null && !localSync.isBlank()) {
+                    event.setCanceled(true);
+                    renderMorphForEntity(event, mc.player, localSync);
+                }
                 return;
             }
-            // 追踪每帧 render 调用次数（检测是否多次渲染同一玩家导致闪变）
-            if (MORPH_RENDER_DEBUG) {
-                if (morphRenderDebugLastFrame != morphRenderDebugFrame) {
-                    morphRenderDebugLastFrame = morphRenderDebugFrame;
-                    if (morphRenderDebugPerFrameCount > 1) {
-                        LOGGER.warn("[DBG-MORPH] MULTI_RENDER frame={} count={}",
-                            morphRenderDebugFrame, morphRenderDebugPerFrameCount);
-                    }
-                    morphRenderDebugPerFrameCount = 1;
+            // （非本地玩家，例如回放视角）由同步实体数据驱动的渲染替换
+            if (!(ent instanceof net.minecraft.world.entity.player.Player p)) return;
+            String morphType = cn.autoforged.joes_addons_for_abmc.entity.PlayerMorphSync.getMorphType(p);
+            if (morphType == null || morphType.isBlank()) {
+                // 回放兼容：ReForgedPlay 不录制/回放自定义实体数据字段（MORPH_TYPE 恒空），
+                // 但会回放自定义 TransmutationStatePayload，从而正确驱动 TransmutationCameraClient 静态状态
+                // 反映“录制玩家”当时的变形形态。实体数据为空时回退到该静态状态渲染。
+                if (!cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.isTransmuted()) {
+                    return;
+                }
+                morphType = cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.getMorphEntityType();
+                LOGGER.warn("[DBG-REPLAY] FALLBACK uuid={} camType='{}'", p.getUUID(), morphType);
+                if (morphType == null || morphType.isBlank()) {
+                    // 壳跟随形态（物品/方块/壳）：录制玩家本体应完全隐藏（壳实体在回放中独立渲染）
+                    event.setCanceled(true);
                 } else {
-                    morphRenderDebugPerFrameCount++;
+                    event.setCanceled(true);
+                    renderMorphForEntity(event, p, morphType);
                 }
+                return;
             }
-            String morphType = cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.getMorphEntityType();
-            boolean isMorph = cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.isMorphActive();
-            if (MORPH_RENDER_DEBUG && !isMorph) {
-                // 非 morph 形态（壳变形）：仅隐藏，不渲染
-                LOGGER.info("[DBG-MORPH] HIDE_ONLY frame={} type={}", morphRenderDebugFrame, morphType);
-            }
-            if (isMorph) {
-                // 渲染替换：取消玩家本体模型，改画内存代理生物
-                event.setCanceled(true);
-                if (MORPH_RENDER_DEBUG) {
-                    LOGGER.info("[DBG-MORPH] RENDER_MORPH frame={} type={} proxy={}",
-                        morphRenderDebugFrame, morphType,
-                        cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.getMorphProxy() != null);
-                }
-                renderMorphProxy(event);
-            } else {
-                // 物品/方块/壳形态：完全隐藏本地玩家自身渲染
-                event.setCanceled(true);
-            }
+            event.setCanceled(true);
+            renderMorphForEntity(event, p, morphType);
         } catch (Exception ignored) {
         }
     }
 
     /** 在玩家位置渲染“渲染替换”的代理生物；方块/物品形态则绘制对应方块/物品模型。 */
     private static void renderMorphProxy(net.neoforged.neoforge.client.event.RenderLivingEvent.Pre event) {
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
         net.minecraft.world.entity.LivingEntity proxy =
             cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.getMorphProxy();
         if (proxy == null) {
             // 方块/物品形态：没有代理生物，直接绘制对应的方块/物品模型
-            renderMorphBlockOrItem(event);
+            renderMorphBlockOrItem(event, mc.player,
+                cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.getMorphEntityType());
             return;
         }
-        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
         net.minecraft.client.renderer.entity.EntityRenderer<?> renderer =
             mc.getEntityRenderDispatcher().getRenderer(proxy);
         if (renderer == null) return;
@@ -788,16 +888,39 @@ public class ClientEvents {
             event.getMultiBufferSource(), event.getPackedLight());
     }
 
+    /** 非本地玩家（回放/其他玩家）的渲染替换：方块/物品直接画对应模型，活体生物则画一次性代理。 */
+    private static void renderMorphForEntity(net.neoforged.neoforge.client.event.RenderLivingEvent.Pre event,
+            net.minecraft.world.entity.player.Player subject, String morphType) {
+        if (cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.isLivingMorphType(morphType)) {
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            net.minecraft.world.entity.LivingEntity proxy =
+                cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.getOrCreateMorphProxy(mc, subject, morphType);
+            if (proxy == null) {
+                renderMorphBlockOrItem(event, subject, morphType);
+                return;
+            }
+            net.minecraft.client.renderer.entity.EntityRenderer<?> renderer =
+                mc.getEntityRenderDispatcher().getRenderer(proxy);
+            if (renderer == null) return;
+            @SuppressWarnings("unchecked")
+            net.minecraft.client.renderer.entity.EntityRenderer<net.minecraft.world.entity.Entity> r =
+                (net.minecraft.client.renderer.entity.EntityRenderer<net.minecraft.world.entity.Entity>) renderer;
+            r.render(proxy, proxy.getYRot(), event.getPartialTick(), event.getPoseStack(),
+                event.getMultiBufferSource(), event.getPackedLight());
+        } else {
+            renderMorphBlockOrItem(event, subject, morphType);
+        }
+    }
+
     /** 方块/物品形态：把本地玩家画成对应方块/物品。
      *  方块：走方块渲染器({@code BlockRenderDispatcher#tesselateBlock})直接渲染该方块状态的原模型——
      *  与世界里呈现完全一致。相比用物品模型渲染，能正确显示车万女仆“零食畑”这类没有/异常物品模型、
      *  会退化成占位贴图的 Mod 方块；箱子/木桶等也正常。物品：沿用物品模型渲染。
      *  另附“snap”：玩家 XZ 坐标(分轴独立)距所在格中心 0.5(2n+1) 不超过 0.02 时，把方块视觉吸附到
      *  该格中心（唯一对齐边界），第三人称看过去方块严丝合缝贴在格子里。 */
-    private static void renderMorphBlockOrItem(net.neoforged.neoforge.client.event.RenderLivingEvent.Pre event) {
-        String type = null;
+    private static void renderMorphBlockOrItem(net.neoforged.neoforge.client.event.RenderLivingEvent.Pre event,
+            net.minecraft.world.entity.player.Player subject, String type) {
         try {
-            type = cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.getMorphEntityType();
             net.minecraft.resources.ResourceLocation rl = net.minecraft.resources.ResourceLocation.tryParse(type);
             if (rl == null) return;
             if (MORPH_RENDER_DEBUG) {
@@ -816,7 +939,7 @@ public class ClientEvents {
                     net.minecraft.world.level.block.state.BlockState bs = block.defaultBlockState();
                     net.minecraft.core.BlockPos pos = net.minecraft.core.BlockPos.containing(
                         event.getEntity().getX(), event.getEntity().getY(), event.getEntity().getZ());
-                    float[] snap = morphSnapOffset(mc.player);
+                    float[] snap = morphSnapOffset(subject);
                     // 1) 优先用该方块的 BlockEntity 渲染器画其“世界原样”。零食柜等方块：静态方块模型常为空
                     //    （默认 RenderShape 仍是 MODEL），真正外观由 BlockEntity 渲染器绘制；这类方块若走
                     //    tesselate 会因空模型而画不出东西。仅当该方块确实注册了客户端 BE 渲染器才走此路。
@@ -1069,6 +1192,7 @@ public class ClientEvents {
             && event.getModels().containsKey(STAFF_BARRIER_STANDALONE)
             && event.getModels().containsKey(STAFF_DRIPSTONE_STANDALONE)
             && event.getModels().containsKey(STAFF_CAULDRON_STANDALONE)
+            && event.getModels().containsKey(STAFF_BREWING_STAND_STANDALONE)
             && event.getModels().containsKey(STAFF_CRAFTING_TABLE_STANDALONE)
             && event.getModels().containsKey(STAFF_EMERALD_STANDALONE)
             && event.getModels().containsKey(STAFF_ICE_STANDALONE)
@@ -1085,7 +1209,8 @@ public class ClientEvents {
             && event.getModels().containsKey(STAFF_COBWEB_STANDALONE)
             && event.getModels().containsKey(STAFF_SPAWNER_STANDALONE)
             && event.getModels().containsKey(STAFF_TNT_STANDALONE)
-            && event.getModels().containsKey(STAFF_MC_STANDALONE)) {
+            && event.getModels().containsKey(STAFF_MC_STANDALONE)
+            && event.getModels().containsKey(STAFF_LIGHTNING_ROD_STANDALONE)) {
             net.minecraft.client.resources.model.BakedModel defaultModel = event.getModels().get(staffMRL);
             net.minecraft.client.resources.model.BakedModel goldModel = event.getModels().get(STAFF_GOLD_STANDALONE);
             net.minecraft.client.resources.model.BakedModel netheriteModel = event.getModels().get(STAFF_NETHERITE_STANDALONE);
@@ -1108,6 +1233,7 @@ public class ClientEvents {
             net.minecraft.client.resources.model.BakedModel barrierModel = event.getModels().get(STAFF_BARRIER_STANDALONE);
             net.minecraft.client.resources.model.BakedModel dripstoneModel = event.getModels().get(STAFF_DRIPSTONE_STANDALONE);
             net.minecraft.client.resources.model.BakedModel cauldronModel = event.getModels().get(STAFF_CAULDRON_STANDALONE);
+            net.minecraft.client.resources.model.BakedModel brewingStandModel = event.getModels().get(STAFF_BREWING_STAND_STANDALONE);
             net.minecraft.client.resources.model.BakedModel craftingTableModel = event.getModels().get(STAFF_CRAFTING_TABLE_STANDALONE);
             net.minecraft.client.resources.model.BakedModel emeraldModel = event.getModels().get(STAFF_EMERALD_STANDALONE);
             net.minecraft.client.resources.model.BakedModel iceModel = event.getModels().get(STAFF_ICE_STANDALONE);
@@ -1125,7 +1251,8 @@ public class ClientEvents {
             net.minecraft.client.resources.model.BakedModel spawnerModel = event.getModels().get(STAFF_SPAWNER_STANDALONE);
             net.minecraft.client.resources.model.BakedModel tntModel = event.getModels().get(STAFF_TNT_STANDALONE);
             net.minecraft.client.resources.model.BakedModel mcModel = event.getModels().get(STAFF_MC_STANDALONE);
-            event.getModels().put(staffMRL, new StaffBakedModel(defaultModel, goldModel, netheriteModel, diamondModel, bedrockModel, obsidianModel, boneModel, furnaceModel, furnaceOnModel, bellModel, anvilModel, lapisModel, magmaModel, omegaModel, commandModel, endPortalModel, enchantModel, playerHeadModel, herobrineModel, barrierModel, dripstoneModel, cauldronModel, craftingTableModel, emeraldModel, iceModel, ironModel, netherrackModel, noteblockModel, oakModel, pistonModel, redMushroomModel, redstoneModel, snowModel, beeNestModel, amethystModel, cobwebModel, spawnerModel, tntModel, mcModel));
+            net.minecraft.client.resources.model.BakedModel lightningRodModel = event.getModels().get(STAFF_LIGHTNING_ROD_STANDALONE);
+            event.getModels().put(staffMRL, new StaffBakedModel(defaultModel, goldModel, netheriteModel, diamondModel, bedrockModel, obsidianModel, boneModel, furnaceModel, furnaceOnModel, bellModel, anvilModel, lapisModel, magmaModel, omegaModel, commandModel, endPortalModel, enchantModel, playerHeadModel, herobrineModel, barrierModel, dripstoneModel, cauldronModel, brewingStandModel, craftingTableModel, emeraldModel, iceModel, ironModel, netherrackModel, noteblockModel, oakModel, pistonModel, redMushroomModel, redstoneModel, snowModel, beeNestModel, amethystModel, cobwebModel, spawnerModel, tntModel, lightningRodModel, mcModel));
         }
     }
 
@@ -1215,8 +1342,54 @@ public class ClientEvents {
                 (alpha << 24) | (color & 0xFFFFFF));
         }
 
-        // Omega 权杖：生存/冒险模式中键拆解被拒绝时，在屏幕中下方显示提示
-        if (StaffClientState.omegaDismantleForbiddenTicks > 0) {
+        // 酿造台权杖：屏幕中下方两行显示当前模式（上方 buff/debuff/变形，下方 药瓶/药水云）
+        if (isHoldingBrewingStaff()) {
+            GuiGraphics guiGraphics = event.getGuiGraphics();
+            Font font = mc.font;
+            int screenWidth = mc.getWindow().getGuiScaledWidth();
+            int screenHeight = mc.getWindow().getGuiScaledHeight();
+            int baseY = staffModeTextY(mc, screenHeight - 60);
+
+            String categoryText;
+            int categoryColor;
+            switch (StaffClientState.brewingStaffCategory) {
+                case 0 -> { categoryText = "buff"; categoryColor = 0xFF55FF55; }
+                case 1 -> { categoryText = "debuff"; categoryColor = 0xFFFF5555; }
+                case 2 -> { categoryText = "变形"; categoryColor = 0xFFAA55FF; }
+                default -> { categoryText = "未知"; categoryColor = 0xFFFFFFFF; }
+            }
+            String formText;
+            int formColor;
+            switch (StaffClientState.brewingStaffForm) {
+                case 0 -> { formText = "药瓶"; formColor = 0xFFFFFFFF; }
+                case 1 -> { formText = "药水云"; formColor = 0xFF55C8FF; }
+                default -> { formText = "未知"; formColor = 0xFFFFFFFF; }
+            }
+            int categoryWidth = font.width(categoryText);
+            int formWidth = font.width(formText);
+            guiGraphics.drawString(font, categoryText, (screenWidth - categoryWidth) / 2, baseY, categoryColor);
+            guiGraphics.drawString(font, formText, (screenWidth - formWidth) / 2, baseY + font.lineHeight + 1, formColor);
+        }
+
+        // 音符盒权杖：屏幕中下方单行显示当前模式（音符/音谱）
+        if (isHoldingNoteStaff()) {
+            GuiGraphics guiGraphics = event.getGuiGraphics();
+            Font font = mc.font;
+            String modeText;
+            int modeColor;
+            switch (StaffClientState.noteStaffMode) {
+                case 1 -> { modeText = "音谱模式"; modeColor = 0xFF55C8FF; }
+                default -> { modeText = "音符模式"; modeColor = 0xFFFFFFFF; }
+            }
+            int screenWidth = mc.getWindow().getGuiScaledWidth();
+            int screenHeight = mc.getWindow().getGuiScaledHeight();
+            int textWidth = font.width(modeText);
+            guiGraphics.drawString(font, modeText, (screenWidth - textWidth) / 2,
+                staffModeTextY(mc, screenHeight - 60), modeColor);
+        }
+
+        // Omega 权杖：生存/冒险模式中键拆解被拒绝时，在屏幕中下方显示提示（墙钟计时，回放暂停时仍会自然消失）
+        if (StaffClientState.omegaDismantleForbiddenUntil > System.currentTimeMillis()) {
             GuiGraphics guiGraphics = event.getGuiGraphics();
             Font font = mc.font;
             String text = "既然装上了，就要为此负责……";
@@ -1233,6 +1406,41 @@ public class ClientEvents {
         int follow = mc.gameMode.canHurtPlayer() ? 0 : 14;
         return baseY + follow + ModConfig.MODE_TEXT_Y_OFFSET.get();
     }
+
+    /** 客户端逐刻渲染音符盒权杖谱子（白色粒子线）：每条线每 0.5 格撒一个 END_ROD 白色粒子
+     *  （每 2 刻撒一次以减半负载），第一人称视角下玩家 2 格以内的粒子不渲染；同时推进存在倒计时。 */
+    private static void renderNoteSheets(Minecraft mc) {
+        if (mc.level == null || StaffClientState.noteSheets.isEmpty()) return;
+        boolean firstPerson = mc.options.getCameraType() == net.minecraft.client.CameraType.FIRST_PERSON;
+        boolean spawnParticles = (noteSheetParticleTick = (noteSheetParticleTick + 1) & 1) == 0;
+        Vec3 playerPos = mc.player.position();
+        java.util.Iterator<java.util.Map.Entry<java.util.UUID, StaffClientState.ClientNoteSheet>> it =
+            StaffClientState.noteSheets.entrySet().iterator();
+        while (it.hasNext()) {
+            StaffClientState.ClientNoteSheet cs = it.next().getValue();
+            if (cs.remainingTicks <= 0) {
+                it.remove();
+                continue;
+            }
+            cs.remainingTicks--;
+            if (!spawnParticles) continue;
+            float[] seg = cs.segments;
+            for (int i = 0; i < 5; i++) {
+                Vec3 s = new Vec3(seg[i * 6], seg[i * 6 + 1], seg[i * 6 + 2]);
+                Vec3 e = new Vec3(seg[i * 6 + 3], seg[i * 6 + 4], seg[i * 6 + 5]);
+                double len = s.distanceTo(e);
+                int n = (int) Math.floor(len * 2.0); // 每 0.5 格一个粒子
+                for (int k = 0; k <= n; k++) {
+                    Vec3 p = s.lerp(e, n == 0 ? 0.0 : (double) k / n);
+                    // 第一人称视角下玩家 2 格以内的粒子不渲染（避免遮挡视线）
+                    if (firstPerson && p.distanceToSqr(playerPos) < 4.0) continue;
+                    mc.level.addParticle(net.minecraft.core.particles.ParticleTypes.END_ROD,
+                        p.x, p.y, p.z, 0.0, 0.0, 0.0);
+                }
+            }
+        }
+    }
+    private static int noteSheetParticleTick = 0;
 
     /** 判断当前是否持有红石块权杖（主手或副手）。 */
     private static boolean isHoldingRedstoneStaff() {
@@ -1299,6 +1507,34 @@ public class ClientEvents {
             && "command_block".equals(mainHand.getOrDefault(ModDataComponents.BLOCKTYPE.get(), "empty"));
     }
 
+    /** 判断当前是否持有酿造台权杖（主手或副手）。 */
+    private static boolean isHoldingBrewingStaff() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) return false;
+        ItemStack mainHand = mc.player.getMainHandItem();
+        if (mainHand.getItem() instanceof StaffItem
+            && "brewing_stand".equals(mainHand.getOrDefault(ModDataComponents.BLOCKTYPE.get(), "empty"))) {
+            return true;
+        }
+        ItemStack offHand = mc.player.getOffhandItem();
+        return offHand.getItem() instanceof StaffItem
+            && "brewing_stand".equals(offHand.getOrDefault(ModDataComponents.BLOCKTYPE.get(), "empty"));
+    }
+
+    /** 判断当前是否持有音符盒权杖（主手或副手）。 */
+    private static boolean isHoldingNoteStaff() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) return false;
+        ItemStack mainHand = mc.player.getMainHandItem();
+        if (mainHand.getItem() instanceof StaffItem
+            && "note_block".equals(mainHand.getOrDefault(ModDataComponents.BLOCKTYPE.get(), "empty"))) {
+            return true;
+        }
+        ItemStack offHand = mc.player.getOffhandItem();
+        return offHand.getItem() instanceof StaffItem
+            && "note_block".equals(offHand.getOrDefault(ModDataComponents.BLOCKTYPE.get(), "empty"));
+    }
+
     /** 判断当前是否持有蜘蛛网权杖（主手或副手）。 */
     private static boolean isHoldingCobwebStaff() {
         Minecraft mc = Minecraft.getInstance();
@@ -1344,6 +1580,18 @@ public class ClientEvents {
             }
         );
         registrar.playToClient(
+            EnchantTableCounterPayload.TYPE,
+            EnchantTableCounterPayload.STREAM_CODEC,
+            (payload, context) -> {
+                net.minecraft.resources.ResourceLocation dimId =
+                    net.minecraft.resources.ResourceLocation.tryParse(payload.dimId());
+                if (dimId != null) {
+                    cn.autoforged.joes_addons_for_abmc.client.EnchantTableCounterClient.set(
+                        dimId, new net.minecraft.core.BlockPos(payload.x(), payload.y(), payload.z()), payload.count());
+                }
+            }
+        );
+        registrar.playToClient(
             EnchantStaffModePayload.TYPE,
             EnchantStaffModePayload.STREAM_CODEC,
             (payload, context) -> StaffClientState.enchantCrazyMode = payload.crazy()
@@ -1370,6 +1618,29 @@ public class ClientEvents {
                 StaffClientState.commandStaffModeFlashTicks = 60;
             }
         );
+        registrar.playToClient(
+            cn.autoforged.joes_addons_for_abmc.network.BrewingStaffModePayload.TYPE,
+            cn.autoforged.joes_addons_for_abmc.network.BrewingStaffModePayload.STREAM_CODEC,
+            (payload, context) -> {
+                StaffClientState.brewingStaffForm = payload.form();
+                StaffClientState.brewingStaffCategory = payload.category();
+            }
+        );
+        registrar.playToClient(
+            cn.autoforged.joes_addons_for_abmc.network.NoteStaffModePayload.TYPE,
+            cn.autoforged.joes_addons_for_abmc.network.NoteStaffModePayload.STREAM_CODEC,
+            (payload, context) -> {
+                StaffClientState.noteStaffMode = payload.mode();
+            }
+        );
+        registrar.playToClient(
+            cn.autoforged.joes_addons_for_abmc.network.NoteStaffSheetStatePayload.TYPE,
+            cn.autoforged.joes_addons_for_abmc.network.NoteStaffSheetStatePayload.STREAM_CODEC,
+            (payload, context) -> {
+                StaffClientState.applyNoteSheetState(payload.owner(), payload.active(),
+                    payload.segments(), payload.remainingTicks());
+            }
+        );
     }
 
     // 离开世界（回到标题画面/切换存档）时清空调试端点/线段，并把汇聚偏移重置为默认值，
@@ -1383,6 +1654,7 @@ public class ClientEvents {
         cn.autoforged.joes_addons_for_abmc.client.TransplantedHeadClientState.clear();
         cn.autoforged.joes_addons_for_abmc.client.TransplantedFeetClientState.clear();
         cn.autoforged.joes_addons_for_abmc.item.StaffClientState.clearEnchantSelf();
+        cn.autoforged.joes_addons_for_abmc.item.StaffClientState.noteSheets.clear();
         cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.reset();
         MaidRedstoneLaserSounds.reset();
         beamSmoothReady = false;
@@ -1484,6 +1756,9 @@ public class ClientEvents {
         private static boolean wasChainAttackPressed = false;
         // 命令方块权杖：攻击键（左键）按下状态，用于边沿检测触发能力动作
         private static boolean wasCommandStaffAttackPressed = false;
+        // 酿造台权杖：攻击键（左键）按下状态，用于边沿检测切换 form（药瓶/药水云）
+        private static boolean wasBrewingAttackPressed = false;
+        private static boolean wasNoteSheetAttackPressed = false;
         // 命令方块权杖：是否正手持的边沿检测（刚拿起时显示一次当前模式）
         private static boolean wasCommandStaffHeld = false;
         // 客户端本地维护的传送门预览状态（逐帧渲染幽灵，避免服务端20Hz同步造成步进式跳动）
@@ -1492,6 +1767,106 @@ public class ClientEvents {
         private static boolean portalFlipNow = false;
         // 红石块权杖：客户端本地维护的射线充能强度（1~8，默认 5），滚轮调整时同步给服务端
         private static int redstoneStaffCharge = 5;
+        // 木锄调试 holdable structure 实体：上次左键按下状态（边沿检测循环切换目标值）
+        private static boolean wasHoeDebugAttackPressed = false;
+        // 木锄调试：上次右键按下状态（边沿检测，避免在“松开时”误发 SAVE）
+        private static boolean wasHoeDebugUsePressed = false;
+        // 木锄调试：上一次是否处于调试会话中（用于会话结束时报一次 SAVE）
+        private static boolean wasHoeDebugActive = false;
+        // 木锄调试：当前被调试实体的 id（会话结束时随 SAVE 上报）
+        private static int lastHoeDebugEntityId = -1;
+
+        /** 木锄调试 holdable structure 实体：左键循环切换目标值 / 右键按住每刻增减 / 会话结束保存一次。
+         *  判定：主手持木锄，且准星（射线）瞄准一个 HoldableStructureEntity。 */
+        private static void updateWoodenHoeDebug(net.minecraft.client.Minecraft mc) {
+            if (mc.level == null || mc.player == null) return;
+            if (!(mc.player.getMainHandItem().getItem() instanceof net.minecraft.world.item.HoeItem)) {
+                // 没拿木锄：若上一刻仍在调试，则结束会话并保存一次
+                finishHoeDebugSessionIfAny();
+                return;
+            }
+            // 射线瞄准最近的一个 HoldableStructureEntity；仅锁定（吸附）中的结构可被调试
+            net.minecraft.world.entity.Entity target = pickAimedHoldable(mc);
+            if (target instanceof cn.autoforged.joes_addons_for_abmc.entity.HoldableStructureEntity hs
+                && !hs.isBodyLockedSynced()) {
+                target = null;
+            }
+            int id = target != null ? target.getId() : -1;
+            boolean active = target != null;
+
+            if (active) {
+                lastHoeDebugEntityId = id;
+                boolean shift = net.minecraft.client.gui.screens.Screen.hasShiftDown();
+                boolean attack = mc.options.keyAttack.isDown();
+                boolean use = mc.options.keyUse.isDown();
+
+                // 左键边沿：循环切换要调整的值
+                if (attack && !wasHoeDebugAttackPressed) {
+                    PacketDistributor.sendToServer(new cn.autoforged.joes_addons_for_abmc.network.WoodenHoeDebugPayload(
+                        id, cn.autoforged.joes_addons_for_abmc.network.WoodenHoeDebugPayload.ACTION_CYCLE));
+                }
+                wasHoeDebugAttackPressed = attack;
+
+                // 右键按住：每刻发送一次 增加/减少（shift 则减少），角度/偏移/布尔都由此驱动
+                if (use) {
+                    PacketDistributor.sendToServer(new cn.autoforged.joes_addons_for_abmc.network.WoodenHoeDebugPayload(
+                        id, shift
+                            ? cn.autoforged.joes_addons_for_abmc.network.WoodenHoeDebugPayload.ACTION_DECREASE
+                            : cn.autoforged.joes_addons_for_abmc.network.WoodenHoeDebugPayload.ACTION_INCREASE));
+                }
+                wasHoeDebugUsePressed = use;
+            } else {
+                wasHoeDebugAttackPressed = false;
+                wasHoeDebugUsePressed = false;
+            }
+
+            // 会话结束（从 active -> inactive）时保存一次
+            if (wasHoeDebugActive && !active) {
+                finishHoeDebugSessionIfAny();
+            }
+            wasHoeDebugActive = active;
+        }
+
+        /** 结束当前木锄调试会话：向服务端发一次 SAVE（若上一刻还是 active、且已知实体）。 */
+        private static void finishHoeDebugSessionIfAny() {
+            wasHoeDebugAttackPressed = false;
+            wasHoeDebugUsePressed = false;
+            if (wasHoeDebugActive && lastHoeDebugEntityId != -1) {
+                PacketDistributor.sendToServer(new cn.autoforged.joes_addons_for_abmc.network.WoodenHoeDebugPayload(
+                    lastHoeDebugEntityId, cn.autoforged.joes_addons_for_abmc.network.WoodenHoeDebugPayload.ACTION_SAVE));
+            }
+            wasHoeDebugActive = false;
+            lastHoeDebugEntityId = -1;
+        }
+
+        /** 沿准星射线找出最近被瞄准的 HoldableStructureEntity。 */
+        private static net.minecraft.world.entity.Entity pickAimedHoldable(net.minecraft.client.Minecraft mc) {
+            net.minecraft.world.phys.Vec3 eye = mc.player.getEyePosition(1.0F);
+            net.minecraft.world.phys.Vec3 look = mc.player.getLookAngle();
+            double range = 256.0;
+            net.minecraft.world.phys.AABB searchBox = mc.player.getBoundingBox()
+                .expandTowards(look.scale(range)).inflate(1.0);
+            net.minecraft.world.entity.Entity target = null;
+            double bestDist = range * range;
+            for (net.minecraft.world.entity.Entity e : mc.level.getEntities(mc.player, searchBox,
+                e -> e instanceof cn.autoforged.joes_addons_for_abmc.entity.HoldableStructureEntity)) {
+                net.minecraft.world.phys.AABB bb = e.getBoundingBox().inflate(0.3);
+                // 眼睛已在盒内时 AABB.clip 恒返回 empty（它只检测从外击中面的情形）；
+                // 锁定时结构贴身，玩家常与碰撞箱重叠，此时直接视为命中（距离按 0 计，最优先）
+                if (bb.contains(eye)) {
+                    return e;
+                }
+                java.util.Optional<net.minecraft.world.phys.Vec3> hit = bb.clip(eye, eye.add(look.scale(range)));
+                if (hit.isPresent()) {
+                    double d = eye.distanceToSqr(hit.get());
+                    if (d < bestDist) {
+                        bestDist = d;
+                        target = e;
+                    }
+                }
+            }
+            return target;
+        }
 
         @SubscribeEvent
         public static void onClientTick(ClientTickEvent.Pre event) {
@@ -1501,11 +1876,15 @@ public class ClientEvents {
             if (StaffClientState.furnaceOnTicks > 0) {
                 StaffClientState.furnaceOnTicks--;
             }
-            if (StaffClientState.omegaDismantleForbiddenTicks > 0) {
-                StaffClientState.omegaDismantleForbiddenTicks--;
-            }
 
             updateEnchantStaffParticles(mc);
+
+            // 弹奏工具：主手持它且持有结构时，输入冻结（字母/数字键被拦截），每帧刷新状态
+            cn.autoforged.joes_addons_for_abmc.client.StrummingInputHelper.update(mc);
+            // （音阶演奏已改为 KeyboardHandlerMixin 事件驱动，此处不再 tick 轮询）
+
+            // 木锄调试 holdable structure：仅对锁定（吸附）中的结构生效（服务端也会兜底校验）
+            updateWoodenHoeDebug(mc);
 
             boolean holdingKnifeMain = mc.player.getMainHandItem().getItem() == ModItems.GLISTERING_MELON_KNIFE.get();
             boolean holdingKnifeOff = mc.player.getOffhandItem().getItem() == ModItems.GLISTERING_MELON_KNIFE.get();
@@ -1589,6 +1968,24 @@ public class ClientEvents {
                 PacketDistributor.sendToServer(new EnchantStaffModeTogglePayload());
             }
             wasEnchantAttackPressed = enchantAttackPressed;
+
+            // 酿造台权杖：持有权杖时按攻击键（左键）切换「药瓶/药水云」form
+            boolean holdingBrewingStaff = isHoldingBrewingStaff();
+            boolean brewingAttackPressed = holdingBrewingStaff && mc.options.keyAttack.isDown();
+            if (brewingAttackPressed && !wasBrewingAttackPressed) {
+                PacketDistributor.sendToServer(new cn.autoforged.joes_addons_for_abmc.network.BrewingStaffFormTogglePayload());
+            }
+            wasBrewingAttackPressed = brewingAttackPressed;
+
+            // 音符盒权杖：音谱模式下按攻击键（左键）放置/重放谱子（音符模式左键保持普通攻击）
+            boolean holdingNoteStaff = isHoldingNoteStaff();
+            boolean noteSheetAttackPressed = holdingNoteStaff && mc.options.keyAttack.isDown();
+            if (noteSheetAttackPressed && !wasNoteSheetAttackPressed
+                    && StaffClientState.noteStaffMode == 1) {
+                PacketDistributor.sendToServer(
+                    new cn.autoforged.joes_addons_for_abmc.network.NoteStaffSheetPlacePayload());
+            }
+            wasNoteSheetAttackPressed = noteSheetAttackPressed;
 
             // TNT 权杖：持有权杖时按下攻击键（左键），立即引爆该权杖丢出的 TNT/苦力怕
             boolean holdingTntStaff = isHoldingTntStaff();
@@ -1735,6 +2132,8 @@ public class ClientEvents {
             // 变形平滑跟随必须在 Post 执行：Post 在本 tick 实体 tick 完成、服务端位置包处理之后、
             // 渲染之前触发，此时设置实体位置并保留 xo/yo/zo，渲染器才能做 xo→x 插值（/tp 同款平滑动画）。
             cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.tickFollow(mc);
+            // 远程/回放玩家（非本地）的 morph 代理逐刻推进：让变形成生物/玩家空壳的玩家移动时四肢跟随摆动
+            cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.tickRemoteMorphProxies(mc);
             // 金色命中闪光：推进 FlashTime 并在超时后复位（/jafa gold_hit_flash）
             cn.autoforged.joes_addons_for_abmc.client.GoldHitFlashRenderer.tickClient();
             // Omega 着色器测试：推进 Time/Seed uniform 并超时复位（/jafa omega_shader）
@@ -1749,12 +2148,27 @@ public class ClientEvents {
                 for (net.minecraft.world.entity.Entity e : mc.level.getEntities(mc.player, frostBox,
                         ent -> ent instanceof net.minecraft.world.entity.LivingEntity)) {
                     net.minecraft.world.entity.LivingEntity living = (net.minecraft.world.entity.LivingEntity) e;
-                    if (cn.autoforged.joes_addons_for_abmc.ModMain.isOverlappingFrost(living)) {
+                    boolean inFrost = cn.autoforged.joes_addons_for_abmc.ModMain.isOverlappingFrost(living);
+                    boolean inSheet = false;
+                    for (StaffClientState.ClientNoteSheet cs : StaffClientState.noteSheets.values()) {
+                        if (cn.autoforged.joes_addons_for_abmc.ModMain
+                                .isOverlappingSheetClient(living, cs.segments)) {
+                            inSheet = true;
+                            break;
+                        }
+                    }
+                    if (inFrost || inSheet) {
                         cn.autoforged.joes_addons_for_abmc.ModMain.freezeClientBodyRotation(living);
+                        if (inSheet) {
+                            cn.autoforged.joes_addons_for_abmc.ModMain.freezeSheetClientBodyRotation(living);
+                        }
                     } else {
                         cn.autoforged.joes_addons_for_abmc.ModMain.clearClientFrostRotation(living.getId());
+                        cn.autoforged.joes_addons_for_abmc.ModMain.clearSheetClientRotation(living.getId());
                     }
                 }
+            // 音符盒权杖谱子：逐刻渲染白色粒子线（第一人称 2 格内不渲染），并推进谱子存在倒计时
+            renderNoteSheets(mc);
             // 蜘蛛网权杖：持有者在蜘蛛网中不会被减速。客户端本地模拟同样清除 stuck 倍率，
             // 否则客户端仍按减速模拟、服务端按正常速度移动，会造成来回拉扯。
             if (isHoldingCobwebStaff()) {
@@ -1795,6 +2209,30 @@ public class ClientEvents {
                 if (modeDir != 0) {
                     PacketDistributor.sendToServer(
                         new cn.autoforged.joes_addons_for_abmc.network.CommandStaffModeTogglePayload(modeDir));
+                    event.setCanceled(true);
+                }
+                return;
+            }
+
+            // 酿造台权杖：按住左Alt 滚动滚轮循环「buff / debuff / 变形」category。
+            if (isHoldingBrewingStaff() && PORTAL_CANCEL_KEY.isDown()) {
+                double scrollDelta = event.getScrollDeltaY();
+                int modeDir = scrollDelta > 0 ? -1 : (scrollDelta < 0 ? 1 : 0);
+                if (modeDir != 0) {
+                    PacketDistributor.sendToServer(
+                        new cn.autoforged.joes_addons_for_abmc.network.BrewingStaffCategoryTogglePayload(modeDir));
+                    event.setCanceled(true);
+                }
+                return;
+            }
+
+            // 音符盒权杖：按住左Alt 滚动滚轮循环「音符 / 音谱」模式。
+            if (isHoldingNoteStaff() && PORTAL_CANCEL_KEY.isDown()) {
+                double scrollDelta = event.getScrollDeltaY();
+                int modeDir = scrollDelta > 0 ? -1 : (scrollDelta < 0 ? 1 : 0);
+                if (modeDir != 0) {
+                    PacketDistributor.sendToServer(
+                        new cn.autoforged.joes_addons_for_abmc.network.NoteStaffModeTogglePayload(modeDir));
                     event.setCanceled(true);
                 }
                 return;

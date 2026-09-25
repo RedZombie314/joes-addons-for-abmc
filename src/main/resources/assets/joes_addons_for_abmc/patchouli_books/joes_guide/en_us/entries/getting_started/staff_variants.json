@@ -1,0 +1,16 @@
+{
+  "name": "patchouli.joes_addons_for_abmc.entry.staff_variants",
+  "icon": "joes_addons_for_abmc:staff",
+  "category": "joes_addons_for_abmc:getting_started",
+  "sortnum": 2,
+  "pages": [
+    {
+      "type": "patchouli:text",
+      "text": "patchouli.joes_addons_for_abmc.entry.staff_variants.p1"
+    },
+    {
+      "type": "patchouli:text",
+      "text": "patchouli.joes_addons_for_abmc.entry.staff_variants.p2"
+    }
+  ]
+}

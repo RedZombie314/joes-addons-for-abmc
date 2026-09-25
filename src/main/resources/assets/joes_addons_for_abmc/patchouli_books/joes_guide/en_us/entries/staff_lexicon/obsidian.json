@@ -1,0 +1,18 @@
+{
+  "name": "patchouli.joes_addons_for_abmc.entry.obsidian",
+  "icon": "minecraft:obsidian",
+  "category": "joes_addons_for_abmc:staff_lexicon",
+  "advancement": "joes_addons_for_abmc:staff_obtained",
+  "sortnum": 5,
+  "pages": [
+    {
+      "type": "patchouli:spotlight",
+      "item": "minecraft:obsidian",
+      "text": "patchouli.joes_addons_for_abmc.entry.obsidian.p1"
+    },
+    {
+      "type": "patchouli:text",
+      "text": "patchouli.joes_addons_for_abmc.entry.obsidian.p2"
+    }
+  ]
+}

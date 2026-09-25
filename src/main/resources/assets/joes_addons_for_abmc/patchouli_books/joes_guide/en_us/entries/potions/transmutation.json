@@ -1,0 +1,21 @@
+{
+  "name": "patchouli.joes_addons_for_abmc.entry.transmutation",
+  "icon": "minecraft:splash_potion[minecraft:potion_contents={potion:\"joes_addons_for_abmc:transmutation\",custom_color:9663963}]",
+  "category": "joes_addons_for_abmc:potions",
+  "sortnum": 0,
+  "pages": [
+    {
+      "type": "patchouli:spotlight",
+      "item": "minecraft:splash_potion[minecraft:potion_contents={potion:\"joes_addons_for_abmc:transmutation\",custom_color:9663963}]",
+      "text": "patchouli.joes_addons_for_abmc.entry.transmutation.p1"
+    },
+    {
+      "type": "patchouli:text",
+      "text": "patchouli.joes_addons_for_abmc.entry.transmutation.p2"
+    },
+    {
+      "type": "patchouli:text",
+      "text": "patchouli.joes_addons_for_abmc.entry.transmutation.p3"
+    }
+  ]
+}

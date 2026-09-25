@@ -1,0 +1,6 @@
+{
+  "name": "patchouli.joes_addons_for_abmc.cat.potions",
+  "description": "patchouli.joes_addons_for_abmc.cat.potions.desc",
+  "icon": "minecraft:splash_potion[minecraft:potion_contents={potion:\"joes_addons_for_abmc:awakening\",custom_color:2310730}]",
+  "sortnum": 2
+}

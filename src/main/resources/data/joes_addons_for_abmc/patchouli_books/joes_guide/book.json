@@ -1,0 +1,11 @@
+{
+  "name": "patchouli.joes_addons_for_abmc.guide.name",
+  "landing_text": "patchouli.joes_addons_for_abmc.guide.landing",
+  "subtitle": "patchouli.joes_addons_for_abmc.guide.subtitle",
+  "model": "patchouli:book_brown",
+  "creative_tab": "joes_addons_for_abmc:joes_addons_tab",
+  "i18n": true,
+  "use_resource_pack": true,
+  "show_progress": true,
+  "text_overflow_mode": "truncate"
+}

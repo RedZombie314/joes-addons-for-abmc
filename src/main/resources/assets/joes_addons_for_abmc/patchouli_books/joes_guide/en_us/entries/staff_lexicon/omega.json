@@ -1,0 +1,18 @@
+{
+  "name": "patchouli.joes_addons_for_abmc.entry.omega",
+  "icon": "joes_addons_for_abmc:omega_game_icon",
+  "category": "joes_addons_for_abmc:staff_lexicon",
+  "advancement": "joes_addons_for_abmc:staff_obtained",
+  "sortnum": 4,
+  "pages": [
+    {
+      "type": "patchouli:spotlight",
+      "item": "joes_addons_for_abmc:omega_game_icon",
+      "text": "patchouli.joes_addons_for_abmc.entry.omega.p1"
+    },
+    {
+      "type": "patchouli:text",
+      "text": "patchouli.joes_addons_for_abmc.entry.omega.p2"
+    }
+  ]
+}

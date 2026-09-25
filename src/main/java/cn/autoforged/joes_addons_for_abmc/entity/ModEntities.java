@@ -114,4 +114,45 @@ public class ModEntities {
                 .clientTrackingRange(8)
                 .updateInterval(2)
                 .build("tnt_staff_creeper"));
+
+    public static final Supplier<EntityType<BrewingStaffCloudEntity>> BREWING_STAFF_CLOUD =
+        ENTITIES.register("brewing_staff_cloud",
+            () -> EntityType.Builder.<BrewingStaffCloudEntity>of(BrewingStaffCloudEntity::new, MobCategory.MISC)
+                .sized(6.0F, 0.5F)
+                .clientTrackingRange(10)
+                .updateInterval(1)
+                .build("brewing_staff_cloud"));
+
+    public static final Supplier<EntityType<EnchantedOrigamiEntity>> ENCHANTED_ORIGAMI =
+        ENTITIES.register("enchanted_origami",
+            () -> EntityType.Builder.<EnchantedOrigamiEntity>of(EnchantedOrigamiEntity::new, MobCategory.MISC)
+                .sized(0.25F, 0.25F)
+                .clientTrackingRange(8)
+                .updateInterval(1)
+                .build("enchanted_origami"));
+
+    public static final Supplier<EntityType<EnchantmentBullet>> ENCHANTMENT_BULLET =
+        ENTITIES.register("enchantment_bullet",
+            () -> EntityType.Builder.<EnchantmentBullet>of(EnchantmentBullet::new, MobCategory.MISC)
+                .sized(0.25F, 0.25F)
+                .clientTrackingRange(4)
+                .updateInterval(1)
+                .build("enchantment_bullet"));
+
+    public static final Supplier<EntityType<ThrownMilkBucket>> THROWN_MILK_BUCKET =
+        ENTITIES.register("thrown_milk_bucket",
+            () -> EntityType.Builder.<ThrownMilkBucket>of(ThrownMilkBucket::new, MobCategory.MISC)
+                .sized(0.25F, 0.25F)
+                .clientTrackingRange(4)
+                .updateInterval(10)
+                .build("thrown_milk_bucket"));
+
+    /** 可持有的结构：将一整个结构渲染为实体形态，支持 xyz 三轴视觉旋转。目前仅注册，召唤方式暂未实装。 */
+    public static final Supplier<EntityType<HoldableStructureEntity>> HOLDABLE_STRUCTURE =
+        ENTITIES.register("holdable_structure",
+            () -> EntityType.Builder.<HoldableStructureEntity>of(HoldableStructureEntity::new, MobCategory.MISC)
+                .sized(1.0F, 1.0F)
+                .clientTrackingRange(16)
+                .updateInterval(1)
+                .build("holdable_structure"));
 }

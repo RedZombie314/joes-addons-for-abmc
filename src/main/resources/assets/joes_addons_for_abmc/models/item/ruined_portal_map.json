@@ -1,0 +1,14 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "minecraft:item/map"
+  },
+  "overrides": [
+    {
+      "predicate": {
+        "joes_addons_for_abmc:located": 1.0
+      },
+      "model": "joes_addons_for_abmc:item/ruined_portal_map_filled"
+    }
+  ]
+}

@@ -33,6 +33,7 @@ public class StaffBakedModel extends BakedModelWrapper<BakedModel> {
     private final BakedModel barrierModel;
     private final BakedModel dripstoneModel;
     private final BakedModel cauldronModel;
+    private final BakedModel brewingStandModel;
     private final BakedModel craftingTableModel;
     private final BakedModel emeraldModel;
     private final BakedModel iceModel;
@@ -49,13 +50,87 @@ public class StaffBakedModel extends BakedModelWrapper<BakedModel> {
     private final BakedModel cobwebModel;
     private final BakedModel spawnerModel;
     private final BakedModel tntModel;
+    private final BakedModel lightningRodModel;
     private final BakedModel mcModel;
     // 被“无效化”的权杖：渲染空权杖 + 蛛网覆盖层（自定义渲染器）
     private final BakedModel cobwebNullifiedModel;
 
-    // 记录最近一次被 resolve 的持有实体 id（无持有者则为 -1），供自定义渲染器判断是否“无效化”。
+    // 记录最近一次被 resolve 的持有实体 id（无持有者为 -1），供自定义渲染器判断是否“无效化”。
     // 注意：renderByItem 内部会用 mc.player 再次解析模型覆盖该值，因此渲染器须在最前面读取。
     private static final ThreadLocal<Integer> CURRENT_HOLDER = new ThreadLocal<>();
+
+    /** 最近一次 resolve 的权杖 blocktype（无则为 null），供 getTransforms() 返回各自模型 json 的 display。 */
+    private static final ThreadLocal<String> CURRENT_BLOCKTYPE = new ThreadLocal<>();
+
+    /** 各 blocktype 使用各自模型 json 的 display 变换（否则所有权杖共用默认模型的握持角度）。
+     *  物品栏图标（GUI）统一缩放为 0.81 倍（0.9×0.9），全局生效，适用于当前及未来新增的任何权杖。 */
+    @Override
+    public net.minecraft.client.renderer.block.model.ItemTransforms getTransforms() {
+        String bt = CURRENT_BLOCKTYPE.get();
+        net.minecraft.client.renderer.block.model.ItemTransforms base;
+        if (bt == null || bt.isEmpty() || bt.equals("empty")) {
+            base = super.getTransforms();
+        } else {
+            BakedModel m = modelForBlockType(bt);
+            base = m != null ? m.getTransforms() : super.getTransforms();
+        }
+        net.minecraft.client.renderer.block.model.ItemTransform gui =
+            base.getTransform(net.minecraft.world.item.ItemDisplayContext.GUI);
+        org.joml.Vector3f gs = new org.joml.Vector3f(
+            gui.scale.x() * 0.81F, gui.scale.y() * 0.81F, gui.scale.z() * 0.81F);
+        net.minecraft.client.renderer.block.model.ItemTransform newGui =
+            new net.minecraft.client.renderer.block.model.ItemTransform(
+                new org.joml.Vector3f(gui.rotation), new org.joml.Vector3f(gui.translation), gs,
+                new org.joml.Vector3f(gui.rightRotation));
+        return new net.minecraft.client.renderer.block.model.ItemTransforms(
+            base.thirdPersonLeftHand, base.thirdPersonRightHand,
+            base.firstPersonLeftHand, base.firstPersonRightHand,
+            base.head, newGui, base.ground, base.fixed,
+            base.moddedTransforms);
+    }
+
+    private BakedModel modelForBlockType(String blockType) {
+        if ("gold_block".equals(blockType)) return goldModel;
+        if ("netherite_block".equals(blockType)) return netheriteModel;
+        if ("diamond_block".equals(blockType)) return diamondModel;
+        if ("bedrock".equals(blockType)) return bedrockModel;
+        if ("obsidian".equals(blockType)) return obsidianModel;
+        if ("bone_block".equals(blockType)) return boneModel;
+        if ("furnace".equals(blockType)) return furnaceModel;
+        if ("bell".equals(blockType)) return bellModel;
+        if ("anvil".equals(blockType)) return anvilModel;
+        if ("lapis_block".equals(blockType)) return lapisModel;
+        if ("magma_block".equals(blockType)) return magmaModel;
+        if ("omega".equals(blockType)) return omegaModel;
+        if ("command_block".equals(blockType)) return commandModel;
+        if ("end_portal_frame".equals(blockType)) return endPortalModel;
+        if ("enchanting_table".equals(blockType)) return enchantModel;
+        if ("player_head".equals(blockType)) return playerHeadModel;
+        if ("herobrine_head".equals(blockType)) return herobrineModel;
+        if ("barrier".equals(blockType)) return barrierModel;
+        if ("dripstone_block".equals(blockType)) return dripstoneModel;
+        if ("cauldron".equals(blockType)) return cauldronModel;
+        if ("brewing_stand".equals(blockType)) return brewingStandModel;
+        if ("crafting_table".equals(blockType)) return craftingTableModel;
+        if ("emerald_block".equals(blockType)) return emeraldModel;
+        if ("ice".equals(blockType)) return iceModel;
+        if ("iron_block".equals(blockType)) return ironModel;
+        if ("netherrack".equals(blockType)) return netherrackModel;
+        if ("note_block".equals(blockType)) return noteblockModel;
+        if ("oak_log".equals(blockType)) return oakModel;
+        if ("piston".equals(blockType)) return pistonModel;
+        if ("red_mushroom_block".equals(blockType)) return redMushroomModel;
+        if ("redstone_block".equals(blockType)) return redstoneModel;
+        if ("snow_block".equals(blockType)) return snowModel;
+        if ("bee_nest".equals(blockType)) return beeNestModel;
+        if ("amethyst_block".equals(blockType)) return amethystModel;
+        if ("cobweb".equals(blockType)) return cobwebModel;
+        if ("spawner".equals(blockType)) return spawnerModel;
+        if ("tnt".equals(blockType)) return tntModel;
+        if ("lightning_rod".equals(blockType)) return lightningRodModel;
+        if ("minecraft_game_icon".equals(blockType)) return mcModel;
+        return null;
+    }
 
     /** 读取最近一次 ItemOverrides.resolve 传入的持有实体 id（无持有者为 -1）。 */
     public static int getCurrentHolderId() {
@@ -70,12 +145,13 @@ public class StaffBakedModel extends BakedModelWrapper<BakedModel> {
                            BakedModel magmaModel, BakedModel omegaModel, BakedModel commandModel,
                            BakedModel endPortalModel, BakedModel enchantModel, BakedModel playerHeadModel,
                            BakedModel herobrineModel, BakedModel barrierModel, BakedModel dripstoneModel,
-                           BakedModel cauldronModel, BakedModel craftingTableModel, BakedModel emeraldModel,
+                           BakedModel cauldronModel, BakedModel brewingStandModel, BakedModel craftingTableModel, BakedModel emeraldModel,
                            BakedModel iceModel, BakedModel ironModel, BakedModel netherrackModel,
                            BakedModel noteblockModel, BakedModel oakModel, BakedModel pistonModel,
                            BakedModel redMushroomModel, BakedModel redstoneModel, BakedModel snowModel,
                            BakedModel beeNestModel, BakedModel amethystModel, BakedModel cobwebModel,
-                           BakedModel spawnerModel, BakedModel tntModel, BakedModel mcModel) {
+                           BakedModel spawnerModel, BakedModel tntModel, BakedModel lightningRodModel,
+                           BakedModel mcModel) {
         super(new RotationDelegate(defaultModel));
         this.goldModel = new RotationDelegate(goldModel);
         this.netheriteModel = new RotationDelegate(netheriteModel);
@@ -99,6 +175,7 @@ public class StaffBakedModel extends BakedModelWrapper<BakedModel> {
         this.barrierModel = new BarrierDelegate(barrierModel);
         this.dripstoneModel = new RotationDelegate(dripstoneModel);
         this.cauldronModel = new RotationDelegate(cauldronModel);
+        this.brewingStandModel = new RotationDelegate(brewingStandModel);
         this.craftingTableModel = new RotationDelegate(craftingTableModel);
         this.emeraldModel = new RotationDelegate(emeraldModel);
         this.iceModel = new RotationDelegate(iceModel);
@@ -115,6 +192,7 @@ public class StaffBakedModel extends BakedModelWrapper<BakedModel> {
         this.cobwebModel = new RotationDelegate(cobwebModel);
         this.spawnerModel = new RotationDelegate(spawnerModel);
         this.tntModel = new RotationDelegate(tntModel);
+        this.lightningRodModel = new RotationDelegate(lightningRodModel);
         this.mcModel = new RotationDelegate(mcModel);
         // 无效化权杖 = 空权杖模型 + 蛛网覆盖层（BEWLR 渲染，空权杖模型作为基础）
         this.cobwebNullifiedModel = new CobwebNullifiedDelegate(defaultModel);
@@ -198,6 +276,9 @@ public class StaffBakedModel extends BakedModelWrapper<BakedModel> {
         if ("cauldron".equals(blockType)) {
             return cauldronModel;
         }
+        if ("brewing_stand".equals(blockType)) {
+            return brewingStandModel;
+        }
         if ("crafting_table".equals(blockType)) {
             return craftingTableModel;
         }
@@ -246,6 +327,9 @@ public class StaffBakedModel extends BakedModelWrapper<BakedModel> {
         if ("tnt".equals(blockType)) {
             return tntModel;
         }
+        if ("lightning_rod".equals(blockType)) {
+            return lightningRodModel;
+        }
         if ("minecraft_game_icon".equals(blockType)) {
             return mcModel;
         }
@@ -276,6 +360,8 @@ public class StaffBakedModel extends BakedModelWrapper<BakedModel> {
         public BakedModel resolve(BakedModel original, ItemStack stack, @Nullable net.minecraft.client.multiplayer.ClientLevel level, @Nullable LivingEntity entity, int seed) {
             // 记录持有实体 id（无持有者写 -1，避免 ThreadLocal 残留），自定义渲染器据此判断“无效化”。
             CURRENT_HOLDER.set(entity == null ? -1 : entity.getId());
+            // 记录 blocktype，供 getTransforms() 为各权杖返回各自模型 json 的 display（握持角度等）。
+            CURRENT_BLOCKTYPE.set(stack.getOrDefault(ModDataComponents.BLOCKTYPE.get(), "empty"));
             if (original instanceof StaffBakedModel staffModel) {
                 return staffModel.resolveModel(stack, entity);
             }

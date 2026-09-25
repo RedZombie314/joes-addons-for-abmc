@@ -1,0 +1,18 @@
+{
+  "name": "patchouli.joes_addons_for_abmc.entry.redstone_block",
+  "icon": "minecraft:redstone_block",
+  "category": "joes_addons_for_abmc:staff_lexicon",
+  "advancement": "joes_addons_for_abmc:staff_obtained",
+  "sortnum": 1,
+  "pages": [
+    {
+      "type": "patchouli:spotlight",
+      "item": "minecraft:redstone_block",
+      "text": "patchouli.joes_addons_for_abmc.entry.redstone_block.p1"
+    },
+    {
+      "type": "patchouli:text",
+      "text": "patchouli.joes_addons_for_abmc.entry.redstone_block.p2"
+    }
+  ]
+}

@@ -27,6 +27,14 @@ public class ModMobEffects {
     public static final DeferredHolder<MobEffect, MobEffect> KNOCKBACK = MOB_EFFECTS.register("knockback",
         () -> new KnockbackMobEffect());
 
+    /** Techno之力：酿造台权杖 buff 池新增效果，暂时无实际效果（占位）。 */
+    public static final DeferredHolder<MobEffect, MobEffect> TECHNO_FORCE = MOB_EFFECTS.register("techno_force",
+        () -> new TechnoForceMobEffect());
+
+    /** 超声速（Gotta Go Fast）：酿造台权杖 buff 池新增效果，暂时无实际效果（占位）。 */
+    public static final DeferredHolder<MobEffect, MobEffect> GOTTA_GO_FAST = MOB_EFFECTS.register("gotta_go_fast",
+        () -> new GottaGoFastMobEffect());
+
     // ============ 原版附魔名批量注册为占位状态效果 ============
     // 仅注册为新的状态效果（无实际效果、无贴图），对应附魔魔咒名称。
     // 若同名状态效果已在注册表中存在则跳过，避免重复注册。
@@ -89,9 +97,23 @@ public class ModMobEffects {
         }
     }
 
+    /** Techno之力（占位）：有益类、无实际效果（不覆写 applyEffectTick）。 */
+    public static class TechnoForceMobEffect extends MobEffect {
+        public TechnoForceMobEffect() {
+            super(MobEffectCategory.BENEFICIAL, 0xFF55FF);
+        }
+    }
+
+    /** 超声速 Gotta Go Fast（占位）：有益类、无实际效果（不覆写 applyEffectTick）。 */
+    public static class GottaGoFastMobEffect extends MobEffect {
+        public GottaGoFastMobEffect() {
+            super(MobEffectCategory.BENEFICIAL, 0x00E5FF);
+        }
+    }
+
     public static class TransmutationAntidoteMobEffect extends MobEffect {
         public TransmutationAntidoteMobEffect() {
-            super(MobEffectCategory.BENEFICIAL, 0x7FBF7F);
+            super(MobEffectCategory.BENEFICIAL, 0xE1AFB0);
         }
 
         @Override

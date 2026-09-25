@@ -1,0 +1,18 @@
+{
+  "name": "patchouli.joes_addons_for_abmc.entry.ice",
+  "icon": "minecraft:ice",
+  "category": "joes_addons_for_abmc:staff_lexicon",
+  "advancement": "joes_addons_for_abmc:staff_obtained",
+  "sortnum": 6,
+  "pages": [
+    {
+      "type": "patchouli:spotlight",
+      "item": "minecraft:ice",
+      "text": "patchouli.joes_addons_for_abmc.entry.ice.p1"
+    },
+    {
+      "type": "patchouli:text",
+      "text": "patchouli.joes_addons_for_abmc.entry.ice.p2"
+    }
+  ]
+}

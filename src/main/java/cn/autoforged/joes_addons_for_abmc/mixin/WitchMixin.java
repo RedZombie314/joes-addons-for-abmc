@@ -6,6 +6,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.monster.Witch;
 import net.minecraft.world.item.alchemy.Potion;
 import net.minecraft.world.item.alchemy.Potions;
+import net.minecraft.world.level.pathfinder.PathType;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -26,6 +27,25 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  */
 @Mixin(Witch.class)
 public abstract class WitchMixin {
+
+    /** 女巫Boss寻路避水：原版女巫的 MobType 为 UNDEFINED（可浮水），因此其
+     *  GroundPathNavigation 寻路时会把水面当作可通行节点（WATER/WATER_BORDER 默认
+     *  malus=8.0），导致 Boss 经常直接下水游过去。这里在服务端一次性把水路的寻路代价
+     *  大幅调高，使其在存在陆地绕行路线时优先走陆地，尽量避免踏入水方块。
+     *  采用较大但有限的代价而非 MAX，保证当四周确实无水陆绕行路线时仍可涉水通过，避免卡死。 */
+    @Inject(method = "aiStep", at = @At("HEAD"))
+    private void jafa_witchBossAvoidWater(CallbackInfo ci) {
+        Witch self = (Witch) (Object) this;
+        var data = self.getPersistentData();
+        if (data.getBoolean("jafa_is_witch_boss")
+                && !data.getBoolean("jafa_witch_boss_water_avoid_done")
+                && !self.level().isClientSide()) {
+            data.putBoolean("jafa_witch_boss_water_avoid_done", true);
+            float waterAvoidMalus = 100.0F;
+            self.setPathfindingMalus(PathType.WATER, waterAvoidMalus);
+            self.setPathfindingMalus(PathType.WATER_BORDER, waterAvoidMalus);
+        }
+    }
 
     @Redirect(
         method = "aiStep",
@@ -54,6 +74,23 @@ public abstract class WitchMixin {
             }
         }
         return Potions.SWIFTNESS;
+    }
+
+    /** 女巫Boss：原版 aiStep 喝治疗药水时用的是 Potions.HEALING（瞬间治疗 I），
+     *  本 redirect 让 Boss 全阶段都改为 Potions.STRONG_HEALING（瞬间治疗 II）。
+     *  覆盖原版自动喝药和我们 handleWitchBossStage2Heal 手动喝药两条路径——
+     *  后者虽然已经用 STRONG_HEALING，但原版 aiStep 可能先抢先设置主手药水，
+     *  等我们的 Post tick 回调运行时 isDrinkingPotion() 已为 true，导致被跳过。 */
+    @Redirect(
+        method = "aiStep",
+        at = @At(value = "FIELD", target = "Lnet/minecraft/world/item/alchemy/Potions;HEALING:Lnet/minecraft/core/Holder;")
+    )
+    private Holder<Potion> jafa_bossDrinkStrongHealing() {
+        Witch self = (Witch) (Object) this;
+        if (self.getPersistentData().getBoolean("jafa_is_witch_boss")) {
+            return Potions.STRONG_HEALING;
+        }
+        return Potions.HEALING;
     }
 
     /** 女巫Boss：投掷替换为“按阶段确定的变形药水”，永不投掷伤害/中毒等原版攻击药水。

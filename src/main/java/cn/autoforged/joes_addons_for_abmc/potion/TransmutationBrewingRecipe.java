@@ -192,7 +192,15 @@ public class TransmutationBrewingRecipe implements IBrewingRecipe {
                     if (ent != null) {
                         tp.set(ModDataComponents.TARGET_ENTITY_UUID.get(), uuid);
                         Component dn = ent.getCustomName();
-                        if (dn == null) dn = ent.getType().getDescription();
+                        if (dn == null) {
+                            // 车万女仆适配：模型名（皮肤名）优先，如“博丽灵梦”，取不到再退回“小女仆”
+                            Component maidModelName = cn.autoforged.joes_addons_for_abmc.ModMain.getTouhouMaidModelName(ent);
+                            if (maidModelName != null) {
+                                dn = maidModelName;
+                            } else {
+                                dn = ent.getType().getDescription();
+                            }
+                        }
                         tp.set(DataComponents.CUSTOM_NAME, Component.literal("传送至").append(dn));
                     } else {
                         // 该实体当前不在服务器/未加载：存全零 UUID 哨兵，命名“传送至§kMissingno”，命中不创建传送门

@@ -1,4 +1,5 @@
 {
+  "gui_light": "front",
   "textures": {
     "0": "joes_addons_for_abmc:item/staff_end_portal",
     "particle": "joes_addons_for_abmc:item/staff_end_portal"

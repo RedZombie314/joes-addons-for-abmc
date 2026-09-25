@@ -1,0 +1,18 @@
+{
+  "name": "patchouli.joes_addons_for_abmc.entry.anvil",
+  "icon": "minecraft:anvil",
+  "category": "joes_addons_for_abmc:staff_lexicon",
+  "advancement": "joes_addons_for_abmc:staff_obtained",
+  "sortnum": 11,
+  "pages": [
+    {
+      "type": "patchouli:spotlight",
+      "item": "minecraft:anvil",
+      "text": "patchouli.joes_addons_for_abmc.entry.anvil.p1"
+    },
+    {
+      "type": "patchouli:text",
+      "text": "patchouli.joes_addons_for_abmc.entry.anvil.p2"
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 {
+  "gui_light": "front",
   "textures": {
     "0": "joes_addons_for_abmc:item/staff_obsidian",
     "particle": "joes_addons_for_abmc:item/staff_obsidian"

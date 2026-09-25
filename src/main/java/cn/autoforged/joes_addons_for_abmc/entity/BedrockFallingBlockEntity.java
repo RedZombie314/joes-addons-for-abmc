@@ -33,6 +33,11 @@ public class BedrockFallingBlockEntity extends FallingBlockEntity {
 
     public Vec3 moveDirection = Vec3.ZERO;
     public double speed = 1.5;
+    /** 平飞固化时长（游戏刻）：>0 时无重力平飞满该时长后转为重力并落地固化；<=0 沿用原 1200 刻超时逻辑。
+     *  注意：当 {@link #solidifyOnImpact} 为 true 时本字段不参与判定，平飞改为“碰撞即固化”。 */
+    public int flightDurationTicks = -1;
+    /** “推出即固化”：true 时平飞期间一旦与固体方块发生碰撞判定即立即原地固化，不再转重力落地（供黑曜石权杖使用）。 */
+    public boolean solidifyOnImpact = false;
     public boolean gravitized = false;
     public int gravityStartTick = 0;
     public int aboveHitTick = 0;
@@ -97,8 +102,49 @@ public class BedrockFallingBlockEntity extends FallingBlockEntity {
         this.handlePortal();
     }
 
+    /** 黑曜石权杖“推出即固化”的起飞缓冲刻数：生成后无碰撞平飞该时长（3 刻 × 0.75 ≈ 飞出 2.25 格），再启用碰撞进入碰撞即固化。 */
+    private static final int SOLIDIFY_ARM_TICKS = 3;
+
     private void handleForwardMovement() {
         long gameTime = ((ServerLevel) this.level()).getGameTime();
+
+        // 黑曜石权杖“推出即固化”：平飞期间一旦与固体方块发生碰撞判定，立即原地固化，
+        // 不再先转重力落到地面再固化；仅长时间未碰撞时按原超时逻辑转重力兜底。
+        if (this.solidifyOnImpact) {
+            if (this.creationGameTime > 0 && gameTime - this.creationGameTime > 1200) {
+                this.gravitized = true;
+                this.setNoGravity(false);
+                this.noPhysics = false;
+                this.gravityStartTick = this.internalTick;
+                return;
+            }
+            // 起飞缓冲：保持无碰撞平飞一段距离（飞出被拔起选区的范围），
+            // 避免刚生成就与相邻/选区外方块碰撞导致“右键即原地固化、推不动”。
+            if (this.noPhysics) {
+                if (this.creationGameTime > 0 && gameTime - this.creationGameTime < SOLIDIFY_ARM_TICKS) {
+                    this.setDeltaMovement(this.moveDirection.scale(this.speed));
+                    this.move(MoverType.SELF, this.getDeltaMovement());
+                    return;
+                }
+                this.noPhysics = false;
+            }
+            this.setDeltaMovement(this.moveDirection.scale(this.speed));
+            this.move(MoverType.SELF, this.getDeltaMovement());
+            if (this.horizontalCollision || this.verticalCollision) {
+                this.tryPlaceBlock();
+            }
+            return;
+        }
+
+        // 短平飞固化：平飞满 flightDurationTicks 刻后立即转重力并落地固化
+        if (this.flightDurationTicks > 0 && this.creationGameTime > 0
+                && gameTime - this.creationGameTime >= this.flightDurationTicks) {
+            this.gravitized = true;
+            this.setNoGravity(false);
+            this.noPhysics = false;
+            this.gravityStartTick = this.internalTick;
+            return;
+        }
 
         if (this.creationGameTime > 0 && gameTime - this.creationGameTime > 1200) {
             this.gravitized = true;
@@ -337,6 +383,12 @@ public class BedrockFallingBlockEntity extends FallingBlockEntity {
             return;
         }
 
+        // 【已暂缓】非原地固化：原地被其他方块占据时，不再替换它，改为在四周寻找最近的空白格固化。
+        // 由用户要求临时关闭（后续可能再启用）。启用时把下方 tryPlaceBlock 改为调用：
+        //   BlockPos placePos = cn.autoforged.joes_addons_for_abmc.ModMain.findNearestSolidifySpot(
+        //       (net.minecraft.server.level.ServerLevel) this.level(), blockpos, this.myBlockState, -4, 8, 8);
+        //   if (placePos == null) { this.discard(); return; }
+        //   if (this.level().setBlock(placePos, this.myBlockState, 3)) { ...broadcast(placePos)... }
         BlockState existing = this.level().getBlockState(blockpos);
         if (existing.isAir() || existing.canBeReplaced()) {
             if (this.level().setBlock(blockpos, this.myBlockState, 3)) {
@@ -366,6 +418,8 @@ public class BedrockFallingBlockEntity extends FallingBlockEntity {
         compound.putDouble("DY", this.moveDirection.y);
         compound.putDouble("DZ", this.moveDirection.z);
         compound.putDouble("Speed", this.speed);
+        compound.putInt("FlightDurationTicks", this.flightDurationTicks);
+        compound.putBoolean("SolidifyOnImpact", this.solidifyOnImpact);
         compound.putBoolean("Gravitized", this.gravitized);
         compound.putInt("GravityStartTick", this.gravityStartTick);
         compound.putInt("AboveHitTick", this.aboveHitTick);
@@ -382,6 +436,8 @@ public class BedrockFallingBlockEntity extends FallingBlockEntity {
         this.creationGameTime = compound.getLong("CreationGameTime");
         this.moveDirection = new Vec3(compound.getDouble("DX"), compound.getDouble("DY"), compound.getDouble("DZ"));
         this.speed = compound.getDouble("Speed");
+        this.flightDurationTicks = compound.getInt("FlightDurationTicks");
+        this.solidifyOnImpact = compound.getBoolean("SolidifyOnImpact");
         this.gravitized = compound.getBoolean("Gravitized");
         this.gravityStartTick = compound.getInt("GravityStartTick");
         this.aboveHitTick = compound.getInt("AboveHitTick");
@@ -391,6 +447,10 @@ public class BedrockFallingBlockEntity extends FallingBlockEntity {
         }
         if (this.myBlockState.isAir()) {
             this.myBlockState = Blocks.STONE.defaultBlockState();
+        }
+        // 恢复物理标志：推出即固化模式下需在服务端进行碰撞检测，故 noPhysics 应为 false
+        if (this.solidifyOnImpact) {
+            this.noPhysics = false;
         }
     }
 

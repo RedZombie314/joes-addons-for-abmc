@@ -19,6 +19,11 @@ public class ModItems {
         ITEMS.register("netherite_core",
             () -> new Item(new Item.Properties().stacksTo(64)));
 
+    /** 弹奏工具：用于演奏 playable 类可持有结构。贴图暂为空白（16×16 全透明）。 */
+    public static final DeferredItem<Item> STRUMMING_TOOL =
+        ITEMS.register("strumming_tool",
+            () -> new Item(new Item.Properties().stacksTo(1)));
+
     public static final DeferredItem<Item> GIANT_NETHERITE_BOW =
         ITEMS.register("giant_netherite_bow",
             () -> new Item(new Item.Properties().stacksTo(1)));
@@ -69,4 +74,19 @@ public class ModItems {
         ITEMS.register("witch_boss_spawn_egg",
             () -> new WitchBossSpawnEggItem(new Item.Properties()
                 .stacksTo(64)));
+
+    public static final DeferredItem<OrigamiSpawnEggItem> ORIGAMI_SPAWN_EGG =
+        ITEMS.register("origami_spawn_egg",
+            () -> new OrigamiSpawnEggItem(new Item.Properties()
+                .stacksTo(64)));
+
+    public static final DeferredItem<OrigamiBottleItem> ORIGAMI_BOTTLE =
+        ITEMS.register("origami_bottle",
+            () -> new OrigamiBottleItem(new Item.Properties()
+                .stacksTo(64)));
+
+    public static final DeferredItem<RuinedPortalMapItem> RUINED_PORTAL_MAP =
+        ITEMS.register("ruined_portal_map",
+            () -> new RuinedPortalMapItem(new Item.Properties()
+                .stacksTo(1)));
 }

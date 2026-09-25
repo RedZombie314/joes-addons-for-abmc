@@ -59,6 +59,12 @@ public class PortalEntity extends Entity {
         double x = this.position().x;
         double y = this.position().y;
         double z = this.position().z;
+        // 竖直朝向（|pitch| ≥ 45°，即传送门横过来平放，面朝上下）时碰撞箱改为水平扁平盘面：
+        // 2×2 的盘面以实体位置为中心，厚度 0.5
+        if (Math.abs(this.getPortalPitch()) >= 45.0F) {
+            return new AABB(x - 1.0, y - 0.25, z - 1.0, x + 1.0, y + 0.25, z + 1.0);
+        }
+        // 默认竖直站立：2 宽 × 2 高 × 0.5 厚
         return new AABB(x - 1.0, y, z - 0.25, x + 1.0, y + 2.0, z + 0.25);
     }
 
@@ -85,6 +91,8 @@ public class PortalEntity extends Entity {
 
     public void setPortalPitch(float pitch) {
         entityData.set(DATA_PITCH, pitch);
+        // pitch 决定盘面朝向（竖直/水平），碰撞箱随之更新（setPos 早于 setPortalPitch 时不会自动重算）
+        this.setBoundingBox(this.makeBoundingBox());
     }
 
     public int getLinkedPortalId() {

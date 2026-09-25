@@ -5,6 +5,46 @@ plugins {
     id 'idea'
 }
 
+// Trae/某些编辑器会在写回 .java 时自动加 UTF-8 BOM (EF BB BF)，Java 编译器把它当非法字符。
+// 这里在 compileJava 之前批量 strip 掉 src/main/java 下所有 .java 的前导 BOM 字节（循环去，处理双重 BOM）。
+// 一次彻底解决"Trae Edit → BOM → 构建失败 → 手动去 BOM → 构建"这条反复链路。
+// 注意：用 configCacheCompatible 的写法，避免 fileTree 在 doLast 闭包里被 Gradle 禁止。
+tasks.register('stripBom') {
+    group = 'build'
+    description = 'Strip leading UTF-8 BOM bytes from all .java source files.'
+    // 用 files 收集时需在配置阶段完成，避免 config cache 闭包引用问题
+    def javaFiles = files(fileTree(dir: 'src/main/java', include: '**/*.java'))
+    inputs.files javaFiles
+    outputs.upToDateWhen { false } // 每次构建都跑，保险起见
+    doLast {
+        def bom = [0xEF, 0xBB, 0xBF] as byte[]
+        def count = 0
+        javaFiles.each { File f ->
+            def bytes = f.bytes
+            int start = 0
+            while (start + 2 < bytes.length
+                   && bytes[start] == bom[0]
+                   && bytes[start + 1] == bom[1]
+                   && bytes[start + 2] == bom[2]) {
+                start += 3
+            }
+            if (start > 0) {
+                f.bytes = bytes[start..<bytes.length]
+                count++
+                println "  [stripBOM] ${f.absolutePath} ($start bytes)"
+            }
+        }
+        if (count > 0) {
+            println "[stripBOM] stripped BOM from $count file(s)"
+        } else {
+            println "[stripBOM] no BOM found — clean"
+        }
+    }
+}
+tasks.named('compileJava').configure {
+    dependsOn 'stripBom'
+}
+
 tasks.named('wrapper', Wrapper).configure {
     // Define wrapper values here so as to not have to always do so when updating gradlew.properties.
     // Switching this to Wrapper.DistributionType.ALL will download the full gradle sources that comes with
@@ -126,6 +166,8 @@ configurations {
 dependencies {
     // 车万女仆 (Touhou Little Maid) 联动：仅编译期依赖其 API，不打包进本 mod，运行时由游戏提供
     compileOnly files("libs/touhoulittlemaid-1.5.3-neoforge+mc1.21.1.jar")
+    // Jade 联动（女巫Boss阶段提示）：仅编译期依赖，不打包；Jade 未安装时相关类不会被加载
+    compileOnly files("libs/Jade-1.21.1-NeoForge-15.10.6.jar")
 }
 
 // This block of code expands all declared replace properties in the specified resource targets.

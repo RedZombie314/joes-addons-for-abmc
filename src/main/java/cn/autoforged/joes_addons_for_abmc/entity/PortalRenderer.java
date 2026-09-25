@@ -31,7 +31,9 @@ public class PortalRenderer extends EntityRenderer<PortalEntity> {
                        MultiBufferSource bufferSource, int packedLight) {
         poseStack.pushPose();
 
-        poseStack.translate(0.0, entity.getBbHeight() / 2.0 - 0.25, 0.0);
+        // 水平平放（竖直朝向，面朝上下）时盘面中心即实体位置；竖直站立时沿用原有居中偏移
+        boolean horizontal = Math.abs(entity.getPortalPitch()) >= 45.0F;
+        poseStack.translate(0.0, horizontal ? 0.0 : entity.getBbHeight() / 2.0 - 0.25, 0.0);
 
         float yaw = entity.getPortalYaw();
         float pitch = entity.getPortalPitch();

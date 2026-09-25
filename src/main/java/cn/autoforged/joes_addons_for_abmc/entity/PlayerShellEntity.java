@@ -42,10 +42,21 @@ public class PlayerShellEntity extends PathfinderMob {
         this.noCulling = true;
     }
 
-    /** 允许右键互动穿透变形空壳（不阻挡玩家点击/交互）。 */
+    /** 玩家空壳默认可被正常拾取/攻击：近战、弹射物均可命中，左键可命中本体（不再穿透到身后方块）。
+     *  仅"玩家变形跟随壳"（服务端 jafa_transmutation_follow 标记）或客户端本地玩家自己的跟随壳保持穿透，
+     *  避免阻挡变形中的玩家互动。 */
     @Override
     public boolean isPickable() {
-        return false;
+        // 服务端：玩家变形产生的跟随壳保持右键穿透（该标记不同步到客户端）
+        if (this.getPersistentData().getBoolean("jafa_transmutation_follow")) {
+            return false;
+        }
+        // 客户端：本地玩家自己的跟随壳同样穿透（标记不同步到客户端，改用跟随实体 ID 判断）
+        if (this.level() != null && this.level().isClientSide()
+                && cn.autoforged.joes_addons_for_abmc.client.TransmutationCameraClient.getFollowEntityId() == this.getId()) {
+            return false;
+        }
+        return true;
     }
 
     @Override

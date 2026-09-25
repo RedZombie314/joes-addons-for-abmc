@@ -1,0 +1,19 @@
+{
+  "criteria": {
+    "obtain_staff": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [
+          {
+            "items": "joes_addons_for_abmc:staff"
+          }
+        ]
+      }
+    }
+  },
+  "requirements": [
+    [
+      "obtain_staff"
+    ]
+  ]
+}

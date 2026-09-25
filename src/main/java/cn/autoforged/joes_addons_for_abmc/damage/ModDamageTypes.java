@@ -35,7 +35,7 @@ public class ModDamageTypes {
     // 刷怪蛋变形出的生物壳被杀死时，原生物（玩家/宠物）被此伤害击杀，播报“XX的生物体验卡过期了”
     public static final DeferredHolder<DamageType, DamageType> TRANSMUTATION_BIOM_EXPIRED =
         DAMAGE_TYPES.register("transmutation_biom_expired",
-            () -> new DamageType("transmutation.biom",
+            () -> new DamageType("transmutation.mob",
                 DamageScaling.WHEN_CAUSED_BY_LIVING_NON_PLAYER, 0.1F));
 
     // Herobrine 头颅的真实伤害：无视护甲、抗性提升与附魔减伤，直接扣血。
@@ -77,4 +77,10 @@ public class ModDamageTypes {
         DAMAGE_TYPES.register("morph_creeper_explosion",
             () -> new DamageType("morph_creeper_explosion",
                 DamageScaling.WHEN_CAUSED_BY_LIVING_NON_PLAYER, 0.1F));
+
+    // 音符盒权杖音符伤害：通过数据包标签 bypasses_invulnerability 无视无敌帧（4 点单体伤害）。
+    public static final DeferredHolder<DamageType, DamageType> NOTE_STAFF =
+        DAMAGE_TYPES.register("note_staff",
+            () -> new DamageType("note_staff",
+                DamageScaling.NEVER, 0.0F));
 }

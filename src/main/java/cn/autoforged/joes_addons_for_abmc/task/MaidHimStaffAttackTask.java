@@ -97,14 +97,14 @@ public class MaidHimStaffAttackTask extends Behavior<EntityMaid> {
             } else if (maid.canBrainMoving()) {
                 // 仅可移动时逼近目标；坐下/骑乘/睡觉/被拴绳等无法移动时原地站桩，
                 // 绝不移动或瞬移，等待冷却结束或安全条件满足（目标进入近战范围则走近战自卫）。
-                maid.getNavigation().moveTo(target, 1.0);
+                maid.getNavigation().moveTo(target, 0.6);
             }
         } else {
             // 近战模式：传送至目标身边；无可用位置则走过去。
             if (teleportNear(maid, target, level)) {
                 maid.getNavigation().stop();
             } else {
-                maid.getNavigation().moveTo(target, 1.0);
+                maid.getNavigation().moveTo(target, 0.6);
             }
         }
     }

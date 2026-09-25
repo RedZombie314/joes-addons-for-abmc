@@ -36,6 +36,12 @@ public final class TransmutationCameraClient {
     /** 内存中的代理生物实体（不进世界），仅用于把玩家渲染成对应生物。 */
     private static net.minecraft.world.entity.LivingEntity morphProxy;
 
+    /** 远程/回放玩家（非本地）的 morph 代理缓存：按玩家 UUID 缓存，逐刻推进四肢摆动等动画。 */
+    private static final java.util.Map<java.util.UUID, net.minecraft.world.entity.LivingEntity> REMOTE_MORPH_PROXIES =
+        new java.util.HashMap<>();
+    private static final java.util.Map<java.util.UUID, String> REMOTE_MORPH_TYPES =
+        new java.util.HashMap<>();
+
     /** 上一 tick 我们为实体设置的位置（用作渲染插值起点 xo/yo/zo），保证平滑过渡。 */
     private static double lastFollowX, lastFollowY, lastFollowZ;
     private static boolean hasLastFollow = false;
@@ -84,13 +90,86 @@ public final class TransmutationCameraClient {
         return morphProxy;
     }
 
-    /** 渲染替换的目标是否为一个“活体生物”实体类型（方块/物品形态返回 false）。 */
-    private static boolean isLivingMorphType() {
-        if (morphEntityType.startsWith("player_shell:")) return true;
+    /** 获取（必要时创建并缓存）某个玩家的 morph 代理生物实体，供渲染成对应生物。
+     *  远程/回放玩家按 UUID 缓存，避免每帧重建导致四肢摆动等动画无法累积推进。方块/物品形态返回 null。 */
+    public static net.minecraft.world.entity.LivingEntity getOrCreateMorphProxy(Minecraft mc, Player subject, String morphType) {
+        if (!isLivingMorphType(morphType)) return null;
+        net.minecraft.client.multiplayer.ClientLevel level = mc.level;
+        if (level == null) return null;
+        java.util.UUID id = subject.getUUID();
+        net.minecraft.world.entity.LivingEntity proxy = REMOTE_MORPH_PROXIES.get(id);
+        String cachedType = REMOTE_MORPH_TYPES.get(id);
+        if (proxy == null || cachedType == null || !cachedType.equals(morphType)) {
+            proxy = createMorphProxy(level, morphType);
+            if (proxy == null) return null;
+            REMOTE_MORPH_PROXIES.put(id, proxy);
+            REMOTE_MORPH_TYPES.put(id, morphType);
+        }
+        syncMorphProxyPose(proxy, subject, morphType);
+        return proxy;
+    }
+
+    /** 按 morph 类型创建一个内存代理生物实体（不进世界）；方块/物品形态或未知类型返回 null。 */
+    private static net.minecraft.world.entity.LivingEntity createMorphProxy(
+            net.minecraft.client.multiplayer.ClientLevel level, String morphType) {
+        if (morphType.startsWith("player_shell:")) {
+            String skinName = morphType.substring("player_shell:".length());
+            cn.autoforged.joes_addons_for_abmc.entity.PlayerShellEntity shell =
+                new cn.autoforged.joes_addons_for_abmc.entity.PlayerShellEntity(
+                    cn.autoforged.joes_addons_for_abmc.entity.ModEntities.PLAYER_SHELL.get(), level);
+            shell.setSkinTexture(skinName);
+            return shell;
+        }
         net.minecraft.resources.ResourceLocation rl =
-            net.minecraft.resources.ResourceLocation.tryParse(morphEntityType);
+            net.minecraft.resources.ResourceLocation.tryParse(morphType);
+        if (rl == null || !net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.containsKey(rl)) {
+            return null;
+        }
+        net.minecraft.world.entity.Entity e =
+            net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.get(rl).create(level);
+        if (!(e instanceof net.minecraft.world.entity.LivingEntity le)) return null;
+        return le;
+    }
+
+    /** 把 subject 的当前姿态（位置/朝向/走路动画/插值旧值）一次性同步到代理，供渲染前定位。 */
+    private static void syncMorphProxyPose(net.minecraft.world.entity.LivingEntity proxy,
+            Player subject, String morphType) {
+        proxy.moveTo(subject.getX(), subject.getY(), subject.getZ(), subject.getYRot(), subject.getXRot());
+        proxy.yRotO = subject.yRotO;
+        proxy.xRotO = subject.xRotO;
+        proxy.yBodyRotO = subject.yBodyRotO;
+        proxy.setYBodyRot(subject.yBodyRot);
+        proxy.yHeadRotO = subject.yHeadRotO;
+        proxy.setYHeadRot(subject.yHeadRot);
+        proxy.walkDistO = subject.walkDistO;
+        proxy.walkDist = subject.walkDist;
+        proxy.tickCount = subject.tickCount;
+        proxy.xo = subject.xo;
+        proxy.yo = subject.yo;
+        proxy.zo = subject.zo;
+        proxy.xOld = subject.xOld;
+        proxy.yOld = subject.yOld;
+        proxy.zOld = subject.zOld;
+        proxy.onGround = subject.onGround;
+        if ("minecraft:ender_dragon".equals(morphType)) {
+            proxy.setYRot(subject.getYRot() + 180.0F);
+            proxy.yRotO = subject.yRotO + 180.0F;
+        }
+    }
+
+    /** 渲染替换的目标类型是否为一个“活体生物”实体类型（方块/物品形态返回 false）。 */
+    public static boolean isLivingMorphType(String type) {
+        if (type == null) return false;
+        if (type.startsWith("player_shell:")) return true;
+        net.minecraft.resources.ResourceLocation rl =
+            net.minecraft.resources.ResourceLocation.tryParse(type);
         if (rl == null) return false;
         return net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.containsKey(rl);
+    }
+
+    /** 渲染替换的目标（当前变形）是否为一个“活体生物”实体类型。 */
+    private static boolean isLivingMorphType() {
+        return isLivingMorphType(morphEntityType);
     }
 
     /** 渲染替换的目标生物默认碰撞箱尺寸（供 Player#getDimensions 用）；非变形时返回 null。 */
@@ -142,6 +221,8 @@ public final class TransmutationCameraClient {
         morphProxy = null;
         hasLastFollow = false;
         hasPrevPlayer = false;
+        REMOTE_MORPH_PROXIES.clear();
+        REMOTE_MORPH_TYPES.clear();
     }
 
     /**
@@ -245,85 +326,105 @@ public final class TransmutationCameraClient {
         // 方块/物品形态：不创建代理生物（非活体），仅碰撞箱处理已足够
         if (!isLivingMorphType()) return;
         if (morphProxy == null) {
-            // 玩家空壳：创建 PlayerShellEntity 代理，设置皮肤
-            if (morphEntityType.startsWith("player_shell:")) {
-                String skinName = morphEntityType.substring("player_shell:".length());
-                cn.autoforged.joes_addons_for_abmc.entity.PlayerShellEntity shell =
-                    new cn.autoforged.joes_addons_for_abmc.entity.PlayerShellEntity(
-                        cn.autoforged.joes_addons_for_abmc.entity.ModEntities.PLAYER_SHELL.get(), mc.level);
-                shell.setSkinTexture(skinName);
-                morphProxy = shell;
-            } else {
-                net.minecraft.resources.ResourceLocation rl =
-                    net.minecraft.resources.ResourceLocation.tryParse(morphEntityType);
-                if (rl == null || !net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.containsKey(rl)) {
-                    return;
-                }
-                net.minecraft.world.entity.Entity e =
-                    net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.get(rl).create(mc.level);
-                if (e instanceof net.minecraft.world.entity.LivingEntity le) {
-                    morphProxy = le;
-                } else {
-                    return;
-                }
-            }
+            morphProxy = createMorphProxy(mc.level, morphEntityType);
+            if (morphProxy == null) return;
         }
+        // 逐刻推进代理默认动画（四肢摆动、翅膀扇动等）并与玩家姿态对齐
+        applyMorphProxyTick(morphProxy, player, morphEntityType);
+    }
+
+    /** 把 proxy 当作 subject 的替身逐刻推进一次：先同步 tick 依赖状态 → tick 推进默认动画 →
+     *  再用 subject 状态覆盖旋转/位置/插值，使四肢摆动、翅膀扇动等动画与 subject 一致。 */
+    private static void applyMorphProxyTick(net.minecraft.world.entity.LivingEntity proxy,
+            Player subject, String morphType) {
         // 1) 先同步 tick 所依赖的状态
-        morphProxy.setPos(player.getX(), player.getY(), player.getZ());
-        morphProxy.onGround = player.onGround;
-        morphProxy.setDeltaMovement(player.getDeltaMovement());
-        morphProxy.setPortalCooldown(300); // 抑制传送门附近触发传送动画/粒子
+        proxy.setPos(subject.getX(), subject.getY(), subject.getZ());
+        proxy.onGround = subject.onGround;
+        proxy.setDeltaMovement(subject.getDeltaMovement());
+        proxy.setPortalCooldown(300); // 抑制传送门附近触发传送动画/粒子
         // 2) 让代理真正 tick 一次：推进其内部默认动画字段（鸡/鹦鹉的 flap/flapSpeed、末影螨摆动等）。
         //    客户端 tick 只推进动画与状态、不执行移动物理（travel 仅在服务端 aiStep 调用），故安全。
         //    烈焰人跳过 tick：其 aiStep 会生成烟雾粒子，第一人称下2格内会遮挡视线。
-        if (!"minecraft:blaze".equals(morphEntityType)) {
+        if (!"minecraft:blaze".equals(morphType)) {
             try {
-                morphProxy.tick();
+                proxy.tick();
             } catch (Throwable ignored) {
             }
         }
         // 防御：极端情况下代理被判定死亡/内部伤害时，重置存活与状态
-        if (morphProxy.getHealth() <= 0.0F) {
-            morphProxy.setHealth(morphProxy.getMaxHealth());
+        if (proxy.getHealth() <= 0.0F) {
+            proxy.setHealth(proxy.getMaxHealth());
         }
-        // 3) 用玩家状态覆盖 tick 可能改动的旋转/位置/插值，保证渲染正确
-        morphProxy.moveTo(player.getX(), player.getY(), player.getZ(),
-            player.getYRot(), player.getXRot());
+        // 3) 用 subject 状态覆盖 tick 可能改动的旋转/位置/插值，保证渲染正确
+        proxy.moveTo(subject.getX(), subject.getY(), subject.getZ(),
+            subject.getYRot(), subject.getXRot());
         // 末影龙模型朝向与标准实体相反，需 180° 偏移
-        if ("minecraft:ender_dragon".equals(morphEntityType)) {
-            morphProxy.setYRot(player.getYRot() + 180.0F);
-            morphProxy.yRotO = player.yRotO + 180.0F;
+        if ("minecraft:ender_dragon".equals(morphType)) {
+            proxy.setYRot(subject.getYRot() + 180.0F);
+            proxy.yRotO = subject.yRotO + 180.0F;
         }
-        morphProxy.onGround = player.onGround;
-        morphProxy.fallDistance = player.fallDistance;
+        proxy.onGround = subject.onGround;
+        proxy.fallDistance = subject.fallDistance;
         // 依赖实体的“渲染年龄(tickCount)”的默认动画持续播放（如末影螨左右摆动、僵尸臂摆动等）。
-        // 以玩家的 tickCount 作为其动画时间轴，随游戏时间推进。
-        morphProxy.tickCount = player.tickCount;
+        // 以 subject 的 tickCount 作为其动画时间轴，随游戏时间推进。
+        proxy.tickCount = subject.tickCount;
         // 位置插值旧值
-        morphProxy.xo = player.xo;
-        morphProxy.yo = player.yo;
-        morphProxy.zo = player.zo;
-        morphProxy.xOld = player.xOld;
-        morphProxy.yOld = player.yOld;
-        morphProxy.zOld = player.zOld;
+        proxy.xo = subject.xo;
+        proxy.yo = subject.yo;
+        proxy.zo = subject.zo;
+        proxy.xOld = subject.xOld;
+        proxy.yOld = subject.yOld;
+        proxy.zOld = subject.zOld;
         // 旋转平滑：同步新旧值，避免头部鬼畜
-        morphProxy.yRotO = player.yRotO;
-        morphProxy.xRotO = player.xRotO;
-        morphProxy.yBodyRotO = player.yBodyRotO;
-        morphProxy.setYBodyRot(player.yBodyRot);
-        morphProxy.yHeadRotO = player.yHeadRotO;
-        morphProxy.setYHeadRot(player.yHeadRot);
-        // 走路动画：翅膀/腿脚由 agent tick() 内部用已同步的移动量自然驱动；
+        proxy.yRotO = subject.yRotO;
+        proxy.xRotO = subject.xRotO;
+        proxy.yBodyRotO = subject.yBodyRotO;
+        proxy.setYBodyRot(subject.yBodyRot);
+        proxy.yHeadRotO = subject.yHeadRotO;
+        proxy.setYHeadRot(subject.yHeadRot);
+        // 走路动画：翅膀/腿脚由 proxy tick() 内部用已同步的移动量自然驱动；
         // 这里只需同步 walkDist/walkDistO 供渲染器插值，不再额外调用 updateWalkAnimation，
         // 否则会和 tick() 内置驱动叠加导致腿部摆动比疾跑还快。
-        morphProxy.walkDistO = player.walkDistO;
-        morphProxy.walkDist = player.walkDist;
+        proxy.walkDistO = subject.walkDistO;
+        proxy.walkDist = subject.walkDist;
         // 移动量同步给代理，驱动走路/跑动腿脚动画
-        morphProxy.setDeltaMovement(player.getDeltaMovement());
-        // 攻击/挥臂动画同步：玩家攻击时，代理生物也播放对应动画（僵尸、铁傀儡等有攻击动画的生物会自然播放）
-        morphProxy.swinging = player.swinging;
-        morphProxy.swingTime = player.swingTime;
-        morphProxy.attackAnim = player.attackAnim;
-        morphProxy.oAttackAnim = player.oAttackAnim;
+        proxy.setDeltaMovement(subject.getDeltaMovement());
+        // 攻击/挥臂动画同步：subject 攻击时，代理生物也播放对应动画（僵尸、铁傀儡等有攻击动画的生物会自然播放）
+        proxy.swinging = subject.swinging;
+        proxy.swingTime = subject.swingTime;
+        proxy.attackAnim = subject.attackAnim;
+        proxy.oAttackAnim = subject.oAttackAnim;
+    }
+
+    /** 解析非本地玩家的 morph 形态类型：优先实体数据；回放时实体数据未恢复，回退到静态状态。 */
+    private static String resolveRemoteMorphType(Player p) {
+        String t = cn.autoforged.joes_addons_for_abmc.entity.PlayerMorphSync.getMorphType(p);
+        if (t != null && !t.isBlank()) return t;
+        if (transmuted) {
+            String cam = morphEntityType;
+            if (cam != null && !cam.isBlank()) return cam;
+        }
+        return "";
+    }
+
+    /** 远程/回放玩家（非本地）的 morph 代理逐刻推进：让四肢摆动、翅膀扇动等动画跟随其移动。
+     *  在 {@code ClientTickEvent.Post} 中调用，与本地 tickMorphProxy 保持同步节奏。 */
+    public static void tickRemoteMorphProxies(Minecraft mc) {
+        if (mc.player == null || mc.level == null) return;
+        try {
+            for (Player p : mc.level.players()) {
+                if (p == mc.player) continue;
+                String morphType = resolveRemoteMorphType(p);
+                if (!isLivingMorphType(morphType)) {
+                    REMOTE_MORPH_PROXIES.remove(p.getUUID());
+                    REMOTE_MORPH_TYPES.remove(p.getUUID());
+                    continue;
+                }
+                net.minecraft.world.entity.LivingEntity proxy = getOrCreateMorphProxy(mc, p, morphType);
+                if (proxy == null) continue;
+                applyMorphProxyTick(proxy, p, morphType);
+            }
+        } catch (Throwable ignored) {
+        }
     }
 }

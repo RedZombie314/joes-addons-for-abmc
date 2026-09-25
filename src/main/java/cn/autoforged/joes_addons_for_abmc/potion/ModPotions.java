@@ -30,11 +30,12 @@ public class ModPotions {
     public static final DeferredHolder<Potion, Potion> PRE_TRANSMUTATION = POTIONS.register("pre_transmutation",
         () -> new Potion());
 
+    // 变形药水：showIcon=false —— 变形状态不在玩家 HUD 上渲染效果图标
     public static final DeferredHolder<Potion, Potion> TRANSMUTATION = POTIONS.register("transmutation",
-        () -> new Potion(new MobEffectInstance(ModMobEffects.TRANSMUTATION, 2000)));
+        () -> new Potion(new MobEffectInstance(ModMobEffects.TRANSMUTATION, 2000, 0, false, false, false)));
 
     public static final DeferredHolder<Potion, Potion> LONG_TRANSMUTATION = POTIONS.register("long_transmutation",
-        () -> new Potion("transmutation", new MobEffectInstance(ModMobEffects.TRANSMUTATION, 4000)));
+        () -> new Potion("transmutation", new MobEffectInstance(ModMobEffects.TRANSMUTATION, 4000, 0, false, false, false)));
 
     public static final DeferredHolder<Potion, Potion> TRANSMUTATION_ANTIDOTE =
         POTIONS.register("transmutation_antidote",

@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtUtils;
+import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
@@ -79,6 +80,10 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
     /** 觉醒倒计时（刻）：3分钟=3600，延长版8分钟=9600；到期后固化回方块。 */
     private int solidifyTicks = 3600;
     private boolean solidified = false;
+    /** 斧子击败机制：累计有效攻击次数。 */
+    private int axeAttackCount = 0;
+    /** 上次斧子攻击的游戏刻时间（-1 表示尚未被攻击过）。 */
+    private long lastAxeAttackTime = -1L;
     /** 寻路结果：从当前格到目标附近的可站立路径点（仅服务器用）。 */
     private final List<BlockPos> hopPath = new ArrayList<>();
     private int hopPathIndex = 0;
@@ -199,6 +204,14 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
         return this.myBlockState;
     }
 
+    // Jade/WAILA 等查看实体时显示“唤醒的XX”而非父类 FallingBlockEntity 的“下落的XX”
+    @Override
+    protected Component getTypeName() {
+        return Component.translatable(
+            "entity.joes_addons_for_abmc.awakening_falling_block_type",
+            this.getBlockState().getBlock().getName());
+    }
+
     // 1×1×1 的碰撞箱（贴合一个方块），使其与真实方块/其他实体碰撞形态一致
     @Override
     public EntityDimensions getDimensions(Pose pose) {
@@ -208,6 +221,62 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
     // 可被推送，从而参与实体间碰撞检测（避免相互重叠）
     @Override
     public boolean isPushable() {
+        return true;
+    }
+
+    // 不阻挡任何弹射物（箭/药水/火球等直接穿过）
+    @Override
+    public boolean canBeHitByProjectile() {
+        return false;
+    }
+
+    // 必须可被选取/攻击，否则玩家近战（斧子）无法命中断言 hurt() 逻辑
+    @Override
+    public boolean isPickable() {
+        return true;
+    }
+
+    @Override
+    public boolean isAttackable() {
+        return true;
+    }
+
+    /**
+     * 斧子击败机制：玩家手持任意斧子近战攻击本组合体，累计 7 次且每次间隔在 1s~10s 之间，
+     * 即可使其提前固化（击败）。每次有效攻击播放“箱子：上锁”音效，无效（间隔过短/过长）则
+     * 播放“箱子：关闭”音效并重置攻击计数。已固化的组合体不再响应斧子攻击。
+     */
+    @Override
+    public boolean hurt(net.minecraft.world.damagesource.DamageSource source, float amount) {
+        if (this.solidified || this.level().isClientSide) return false;
+        if (!(source.getDirectEntity() instanceof Player player)) return false;
+
+        net.minecraft.world.item.ItemStack weapon = player.getMainHandItem();
+        if (!(weapon.getItem() instanceof net.minecraft.world.item.AxeItem)) return false;
+
+        long currentTime = this.level().getGameTime();
+        // 首次攻击直接有效；此后间隔必须 >=1s(20刻) 且 <10s(200刻)
+        boolean valid = this.lastAxeAttackTime < 0;
+        if (!valid) {
+            long interval = currentTime - this.lastAxeAttackTime;
+            valid = interval >= 20 && interval < 200;
+        }
+        this.lastAxeAttackTime = currentTime;
+
+        if (valid) {
+            this.axeAttackCount++;
+            this.level().playSound(null, this.getX(), this.getY(), this.getZ(),
+                net.minecraft.sounds.SoundEvents.CHEST_LOCKED,
+                net.minecraft.sounds.SoundSource.BLOCKS, 1.0F, 1.0F);
+            if (this.axeAttackCount >= 7) {
+                this.solidify();
+            }
+        } else {
+            this.axeAttackCount = 0;
+            this.level().playSound(null, this.getX(), this.getY(), this.getZ(),
+                net.minecraft.sounds.SoundEvents.CHEST_CLOSE,
+                net.minecraft.sounds.SoundSource.BLOCKS, 1.0F, 1.0F);
+        }
         return true;
     }
 
@@ -338,6 +407,8 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
     private int assistMode = 0;
     /** 敌对模式下上次锁定的敌人 UUID（持久记忆，避免 100tick 超时丢目标）。 */
     private java.util.UUID lastEnemyUuid = null;
+    /** 敌对模式下因超距（>30格）传送回来而放弃的旧敌人 UUID，等待主人出现新目标后解除。 */
+    private java.util.UUID lostEnemyUuid = null;
     /** 敌人被变形为方块/物品时记录其原始 UUID，待恢复后继续索敌。 */
     private java.util.UUID waitingEnemyUuid = null;
     /** 敌人被变形为方块/物品时的位置（UUID 可能变化，用位置兜底扫描）。 */
@@ -417,7 +488,9 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
                 this.getX(), this.getY() + 1.0, this.getZ(),
                 1, 0.2, 0.2, 0.2, 0.0);
         }
-        // 跟随目标：优先命名纸坐标，其次主人，再其次最近玩家
+        // 敌对模式：距主人超过 30 格则传送回主人身边并失去索敌
+        maybeTeleportBackToOwnerHostile();
+        // 跟随目标：敌对模式跟随索敌目标，无/友好模式优先命名纸坐标，其次主人，再其次最近玩家
         net.minecraft.world.phys.Vec3 follow = followPos();
         // 面向跟随目标（即使（酿造台）已骑乘也保持面向它）
         if (follow != null) {
@@ -428,13 +501,6 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
         if (this.isPassenger()) {
             return;
         }
-        // 装好药水且已初次抵达跟随目标：停车，不再寻路
-        if (shouldStopPathing()) {
-            this.clearHop();
-            this.hopCooldown = 0;
-            return;
-        }
-
         this.applyGravity();
         this.move(MoverType.SELF, this.getDeltaMovement());
         // 服务端主动把重叠的同类觉醒方块硬性分开，保证相互不叠（潜影贝式硬碰撞）
@@ -922,6 +988,8 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
         }
         net.minecraft.world.entity.LivingEntity owner = getOwner();
         if (owner == null || owner.isRemoved()) {
+            // 主人本体可能已被变形并 discard（只剩方块/物品壳）：向壳位置丢变形解药
+            tryThrowAntidoteToOwnerShell(brewing);
             return;
         }
 
@@ -1012,8 +1080,25 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
         net.minecraft.world.item.ItemStack potion = takeTransmutationPotion(brewing);
         if (potion.isEmpty()) potion = takeHarmfulPotion(brewing);
         if (!potion.isEmpty()) {
+            assignWitchBossPoolToTransmutation(potion);
             throwRealSplash(enemy, potion);
             brewing.syncBrewBottles();
+        }
+    }
+
+    /** 变形药水：目标类型改为从女巫Boss的“变形池”按阶段抽取（不是完全随机）。
+     *  仅当主人是女巫Boss时生效；否则保持药水原有目标类型。 */
+    private void assignWitchBossPoolToTransmutation(net.minecraft.world.item.ItemStack potion) {
+        if (!isTransmutationPotion(potion)) return;
+        if (!(this.level() instanceof net.minecraft.server.level.ServerLevel)) return;
+        net.minecraft.world.entity.LivingEntity owner = getOwner();
+        if (!(owner instanceof net.minecraft.world.entity.monster.Witch witch)) return;
+        if (!witch.getPersistentData().getBoolean(cn.autoforged.joes_addons_for_abmc.ModMain.WITCH_BOSS_TAG)) return;
+        int stage = cn.autoforged.joes_addons_for_abmc.ModMain.getWitchBossStage(witch);
+        String type = cn.autoforged.joes_addons_for_abmc.ModMain.stageTransmutationItemType(
+            stage, net.minecraft.util.RandomSource.create(witch.getRandom().nextLong()));
+        if (type != null) {
+            potion.set(cn.autoforged.joes_addons_for_abmc.item.ModDataComponents.ITEM_TYPE.get(), type);
         }
     }
 
@@ -1039,27 +1124,35 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
     /** 远距：像女巫丢药水那样抛出一个真实溅射药水实体(ThrownPotion)，砸中主人/地面时碎裂并给予效果。
      *  初速/仰角随主人距离调整，确保药水能飞到主人头部附近（溅射半径可兜底）。 */
     private void throwRealSplash(net.minecraft.world.entity.LivingEntity owner, net.minecraft.world.item.ItemStack potion) {
+        throwRealSplashToward(owner.getX(), owner.getY() + 1.0, owner.getZ(), potion);
+    }
+
+    /** 向任意目标点抛出真实溅射药水（供解药丢向变形壳实体等非 LivingEntity 目标使用）。 */
+    private void throwRealSplashToward(double targetX, double targetY, double targetZ,
+            net.minecraft.world.item.ItemStack potion) {
         if (!(this.level() instanceof net.minecraft.server.level.ServerLevel sl)) return;
         // 把普通/滞留药水转成喷溅药水（保留 potion_contents），作为真实 ThrownPotion 抛出
         net.minecraft.world.item.ItemStack splash = potion.transmuteCopy(net.minecraft.world.item.Items.SPLASH_POTION, 1);
         net.minecraft.world.entity.projectile.ThrownPotion tp =
             new net.minecraft.world.entity.projectile.ThrownPotion(sl, this.getX(), this.getY() + 1.0, this.getZ());
         tp.setItem(splash);
-        // 水平方向 + 水平距离
-        double dx = owner.getX() - this.getX();
-        double dz = owner.getZ() - this.getZ();
+        // 水平方向 + 水平距离 + 目标身体中心相对发射点的垂直落差
+        double dx = targetX - this.getX();
+        double dz = targetZ - this.getZ();
         double h = Math.hypot(dx, dz);
-        // 弹道公式：垂直速度 up，飞行时间 t = 2*up/g，水平速度 = h/t * 阻力补偿系数
-        // ThrownPotion 重力 0.05/刻，空气阻力 0.99/刻使实际射程偏短，乘以 1.25 补偿
-        double up = Mth.clamp(0.15 + h * 0.022, 0.25, 0.85);
-        double tFlight = 2.0 * up / 0.05;
-        double power = Math.min(h / tFlight * 1.25, 1.5);
+        double dy = targetY - (this.getY() + 1.0); // 目标在下方时 dy<0，需压低弹道
         if (h < 1.0E-4) { dx = 0.0; dz = 0.0; }
-        // 直接用 setDeltaMovement 而非 shoot()，因为 shoot() 会归一化方向向量导致速度恒为 1.0，
-        // 远距离（20-30格）无法到达。直接设置速度分量让 power/up 真正控制实际飞行速度。
-        double vx = dx / (h + 1.0E-4) * power;
-        double vy = up;
-        double vz = dz / (h + 1.0E-4) * power;
+        // 带空气阻力的弹道精确解：ThrownPotion 重力 0.05/刻、空气阻力 0.99/刻。
+        // 以估算飞行刻数 t 为参量：水平位移 = vx*100*(1-0.99^t)，竖直位移 = 100*(1-0.99^t)*(vy+5) - 5*t。
+        // 反解 vx、vy 即可在任意高低差（目标在上/在下）下精确命中，避免从低处目标头顶飞过。
+        double t = Mth.clamp(6.0 + h * 0.6, 8.0, 50.0);
+        double dragFactor = 100.0 * (1.0 - Math.pow(0.99, t));
+        if (dragFactor < 1.0E-3) dragFactor = 1.0E-3;
+        // 直接用 setDeltaMovement 而非 shoot()，因为 shoot() 会归一化方向向量导致速度恒为 1.0，远距离无法到达。
+        double speedH = Mth.clamp(h / dragFactor, 0.0, 2.5);
+        double vy = Mth.clamp((dy + 5.0 * t) / dragFactor - 5.0, -1.5, 1.5);
+        double vx = dx / (h + 1.0E-4) * speedH;
+        double vz = dz / (h + 1.0E-4) * speedH;
         tp.setDeltaMovement(vx, vy, vz);
         // 设置朝向与速度方向一致（shoot 中也会做这一步）
         double horizDist = Math.hypot(vx, vz);
@@ -1912,6 +2005,7 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
         double bestSqr = (double) HOP_TARGET_RANGE * HOP_TARGET_RANGE;
         for (Player p : this.level().getEntitiesOfClass(Player.class,
             this.getBoundingBox().inflate(HOP_TARGET_RANGE))) {
+            if (p.isCreative() || p.isSpectator()) continue; // 无视创造/旁观者玩家
             double d = this.distanceToSqr(p);
             if (d < bestSqr && Math.abs(p.getY() - this.getY()) <= HOP_TARGET_MAX_DY) {
                 bestSqr = d;
@@ -2100,8 +2194,14 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
         }
     }
 
-    /** 跟随目标位置：优先命名纸坐标，其次主人，再其次最近玩家。 */
+    /** 跟随目标位置：敌对模式跟随主人的索敌目标；无/友好模式优先命名纸坐标，
+     *  其次主人，再其次最近玩家。 */
     private net.minecraft.world.phys.Vec3 followPos() {
+        // 敌对模式：跟随主人的索敌目标（攻击目标/被攻击对象），无目标时回退到主人
+        if (this.assistMode == 1) {
+            net.minecraft.world.entity.LivingEntity enemy = findEnemy();
+            if (enemy != null) return enemy.position();
+        }
         if (this.homePos != null) {
             return net.minecraft.world.phys.Vec3.atCenterOf(this.homePos);
         }
@@ -2150,6 +2250,42 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
         }
         // 解药始终用溅射药水，确保砸到玩家（被变形的方块/物品）上生效
         throwRealSplash(owner, antidote);
+        brewing.syncBrewBottles();
+        return true;
+    }
+
+    /** 主人本体已被变形并 discard（只剩方块/物品壳）时，向其壳位置丢变形解药。 */
+    private boolean tryThrowAntidoteToOwnerShell(AwakeningFallingBlockEntity brewing) {
+        if (brewing.myBlockData == null) return false;
+        if (!(this.level() instanceof net.minecraft.server.level.ServerLevel sl)) return false;
+        String s = getOwnerUuid();
+        if (s == null || s.isEmpty()) return false;
+        java.util.UUID uid;
+        try {
+            uid = java.util.UUID.fromString(s);
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+        // 先按壳实体（下落方块/物品实体）找，找不到再按已落地静态方块/物品的位置找
+        net.minecraft.world.entity.Entity shell = cn.autoforged.joes_addons_for_abmc.ModMain.findTransmutedShell(sl, uid);
+        net.minecraft.core.BlockPos targetPos = shell != null
+            ? shell.blockPosition()
+            : cn.autoforged.joes_addons_for_abmc.ModMain.findTransmutedBlockPos(sl, uid);
+        if (targetPos == null) return false;
+        // 取变形解药：优先酿造台，其次箱子（换入酿造台后取用）
+        net.minecraft.world.item.ItemStack antidote = takeAntidotePotion(brewing);
+        if (antidote.isEmpty()) {
+            antidote = pullAntidoteFromChest(brewing);
+            if (antidote.isEmpty()) {
+                return false;
+            }
+            antidote = takeAntidotePotion(brewing);
+            if (antidote.isEmpty()) {
+                return false;
+            }
+            brewing.syncBrewBottles();
+        }
+        throwRealSplashToward(targetPos.getX() + 0.5, targetPos.getY() + 0.5, targetPos.getZ() + 0.5, antidote);
         brewing.syncBrewBottles();
         return true;
     }
@@ -2275,33 +2411,29 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
         net.minecraft.world.entity.LivingEntity owner = getOwner();
         if (owner == null) return null;
         java.util.UUID ownerUuid = owner.getUUID();
-        // 1. 若主人是 Mob（如 witchboss），优先取其当前攻击目标（排除主人自身）
-        if (owner instanceof net.minecraft.world.entity.Mob mob
-            && mob.getTarget() != null && mob.getTarget().isAlive()
-            && !mob.getTarget().getUUID().equals(ownerUuid)) {
-            this.lastEnemyUuid = mob.getTarget().getUUID();
-            return mob.getTarget();
+        // 1. 若主人是 Mob（如 witchboss），优先取其当前攻击目标
+        if (owner instanceof net.minecraft.world.entity.Mob mob && mob.getTarget() != null) {
+            net.minecraft.world.entity.LivingEntity r = acquireEnemy(mob.getTarget(), ownerUuid);
+            if (r != null) return r;
         }
         // 2. 主人正在攻击的生物（玩家右击/左键的生物）
         net.minecraft.world.entity.LivingEntity ownerTarget = owner.getLastHurtMob();
-        if (ownerTarget != null && ownerTarget.isAlive()
-            && !ownerTarget.getUUID().equals(ownerUuid)) {
-            this.lastEnemyUuid = ownerTarget.getUUID();
-            return ownerTarget;
+        if (ownerTarget != null) {
+            net.minecraft.world.entity.LivingEntity r = acquireEnemy(ownerTarget, ownerUuid);
+            if (r != null) return r;
         }
         // 3. 最近伤害过主人的生物
         net.minecraft.world.entity.LivingEntity attacker = owner.getLastHurtByMob();
-        if (attacker != null && attacker.isAlive()
-            && !attacker.getUUID().equals(ownerUuid)) {
-            this.lastEnemyUuid = attacker.getUUID();
-            return attacker;
+        if (attacker != null) {
+            net.minecraft.world.entity.LivingEntity r = acquireEnemy(attacker, ownerUuid);
+            if (r != null) return r;
         }
         // 4. 持久记忆：以上都过期时，回退到上次锁定的敌人
         if (this.lastEnemyUuid != null && this.level() instanceof net.minecraft.server.level.ServerLevel sl) {
             net.minecraft.world.entity.Entity e = sl.getEntity(this.lastEnemyUuid);
-            if (e instanceof net.minecraft.world.entity.LivingEntity le
-                && le.isAlive() && !le.getUUID().equals(ownerUuid)) {
-                return le;
+            if (e instanceof net.minecraft.world.entity.LivingEntity le) {
+                net.minecraft.world.entity.LivingEntity r = acquireEnemy(le, ownerUuid);
+                if (r != null) return r;
             }
         }
         // 5. 等待恢复的敌人（UUID 可能因变形而变化，用位置扫描兜底）
@@ -2309,14 +2441,15 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
             // 先尝试 UUID 查找
             if (this.waitingEnemyUuid != null) {
                 net.minecraft.world.entity.Entity e = sl.getEntity(this.waitingEnemyUuid);
-                if (e instanceof net.minecraft.world.entity.LivingEntity le
-                    && le.isAlive() && !le.getUUID().equals(ownerUuid)) {
+                if (e instanceof net.minecraft.world.entity.LivingEntity le) {
                     // 检查是否已恢复（不再被变形）
                     if (!le.hasEffect(cn.autoforged.joes_addons_for_abmc.potion.ModMobEffects.TRANSMUTATION)) {
-                        this.lastEnemyUuid = le.getUUID();
-                        this.waitingEnemyUuid = null;
-                        this.waitingEnemyPos = null;
-                        return le;
+                        net.minecraft.world.entity.LivingEntity r = acquireEnemy(le, ownerUuid);
+                        if (r != null) {
+                            this.waitingEnemyUuid = null;
+                            this.waitingEnemyPos = null;
+                            return r;
+                        }
                     }
                 }
             }
@@ -2335,13 +2468,32 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
                 }
             }
             if (closest != null) {
-                this.lastEnemyUuid = closest.getUUID();
-                this.waitingEnemyUuid = null;
-                this.waitingEnemyPos = null;
-                return closest;
+                net.minecraft.world.entity.LivingEntity r = acquireEnemy(closest, ownerUuid);
+                if (r != null) {
+                    this.waitingEnemyUuid = null;
+                    this.waitingEnemyPos = null;
+                    return r;
+                }
             }
         }
         return null;
+    }
+
+    /** 尝试锁定一个候选敌人：排除主人自身、已死亡/移除、创造/观察者玩家，
+     *  以及刚因超距传送而被放弃的旧目标（等待主人出现新目标后解除忽略）。
+     *  成功锁定时会把 UUID 写入 lastEnemyUuid。 */
+    private net.minecraft.world.entity.LivingEntity acquireEnemy(
+            net.minecraft.world.entity.LivingEntity candidate, java.util.UUID ownerUuid) {
+        if (candidate == null || !candidate.isAlive()) return null;
+        if (candidate.getUUID().equals(ownerUuid)) return null;
+        if (candidate instanceof net.minecraft.world.entity.player.Player p
+            && (p.isCreative() || p.isSpectator())) return null;
+        if (this.lostEnemyUuid != null && this.lostEnemyUuid.equals(candidate.getUUID())) {
+            return null; // 仍是刚放弃的旧目标，继续等待新目标
+        }
+        this.lostEnemyUuid = null; // 出现新目标，解除对旧目标的忽略
+        this.lastEnemyUuid = candidate.getUUID();
+        return candidate;
     }
 
     /** 配对的酿造台搭档（仅当本实体是箱子且已配对时返回）。 */
@@ -2357,33 +2509,6 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
             || item == net.minecraft.world.item.Items.LINGERING_POTION;
     }
 
-    /** 是否停车不寻路：箱子/酿造台内部只要还有药水就停（不移动也不传送），
-     *  内容物消耗完（箱子和酿造台都不含药水）才恢复跟随玩家。 */
-    private boolean shouldStopPathing() {
-        if (!this.isChest() || !this.isPaired()) {
-            return false;
-        }
-        // 无模式：始终跟随，不因持有药水而停车
-        if (this.assistMode == 2) return false;
-        AwakeningFallingBlockEntity brewing = partnerBrewing();
-        if (brewing == null) {
-            return false;
-        }
-        boolean inside = containsPotion(this.myBlockData) || containsPotion(brewing.myBlockData);
-        return inside;
-    }
-
-    /** 容器 NBT 中是否含药水（任意槽位）。 */
-    private boolean containsPotion(CompoundTag data) {
-        if (data == null) return false;
-        net.minecraft.nbt.ListTag items = getOrCreateItems(data);
-        for (int i = 0; i < items.size(); i++) {
-            var opt = net.minecraft.world.item.ItemStack.parse(this.level().registryAccess(), items.getCompound(i));
-            if (opt.isPresent() && isPotionItem(opt.get().getItem())) return true;
-        }
-        return false;
-    }
-
     /** 用命名纸给箱子设置目标坐标「X Y Z」。 */
     @Override
     public net.minecraft.world.InteractionResult interact(net.minecraft.world.entity.player.Player player,
@@ -2396,6 +2521,7 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
         if (held.isEmpty()) {
             this.assistMode = (this.assistMode + 1) % 3;
             this.lastEnemyUuid = null; // 切换模式时清除敌人记忆
+            this.lostEnemyUuid = null; // 清除被放弃的旧目标记忆
             this.waitingEnemyUuid = null; // 清除等待敌人记忆
             this.waitingEnemyPos = null;
             String msg;
@@ -2522,10 +2648,13 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
      * 静默传送到玩家身边的一个可站立位置（不播放传送音效）。
      */
     private void maybeTeleportToPlayer() {
+        // 敌对模式由 30 格主人牵引逻辑（maybeTeleportBackToOwnerHostile）负责，不再按最近玩家牵引
+        if (this.assistMode == 1) return;
         // 全范围找最近的玩家（等同宠物主人）
         Player nearest = null;
         double bestSqr = Double.MAX_VALUE;
         for (Player p : this.level().getEntitiesOfClass(Player.class, this.getBoundingBox().inflate(128.0))) {
+            if (p.isCreative() || p.isSpectator()) continue; // 无视创造/旁观者玩家
             double d = this.distanceToSqr(p);
             if (d < bestSqr) {
                 bestSqr = d;
@@ -2535,10 +2664,31 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
         if (nearest == null) return;
         if (!nearest.onGround()) return;                                   // 玩家须站在地面
         if (bestSqr <= PET_TELEPORT_DIST * PET_TELEPORT_DIST) return;     // 距离还不够远
+        teleportNear(nearest, 4);
+    }
 
-        // 就近找一个玩家附近、可站立的空位传送过去（不发传送音效）
-        BlockPos center = nearest.blockPosition();
-        for (int r = 1; r <= 4; r++) {
+    /**
+     * 敌对模式：若箱子距主人超过 30 格，则传送回主人身边并放弃当前索敌目标（失去索敌），
+     * 直到主人出现新的索敌目标才会重新锁定。
+     */
+    private void maybeTeleportBackToOwnerHostile() {
+        if (this.assistMode != 1) return;
+        net.minecraft.world.entity.LivingEntity owner = getOwner();
+        if (owner == null || owner.isRemoved()) return;
+        final double leash = 30.0;
+        if (this.distanceToSqr(owner.getX(), owner.getY(), owner.getZ()) <= leash * leash) return;
+        if (teleportNear(owner, 4)) {
+            this.lostEnemyUuid = this.lastEnemyUuid; // 放弃刚追的旧目标
+            this.lastEnemyUuid = null;
+            this.waitingEnemyUuid = null;
+            this.waitingEnemyPos = null;
+        }
+    }
+
+    /** 在目标附近的水平环（最多半径 radius 格）里找一个可站立空位传送过去；成功返回 true。 */
+    private boolean teleportNear(net.minecraft.world.entity.Entity target, int radius) {
+        BlockPos center = target.blockPosition();
+        for (int r = 1; r <= radius; r++) {
             for (int dx = -r; dx <= r; dx++) {
                 for (int dz = -r; dz <= r; dz++) {
                     if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
@@ -2550,11 +2700,12 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
                         this.hopCooldown = 0;
                         this.hopPath.clear();
                         this.hopPathIndex = 0;
-                        return;
+                        return true;
                     }
                 }
             }
         }
+        return false;
     }
 
     /** 设定觉醒倒计时（刻），供普通/延长版觉醒药水区分。 */
@@ -2644,11 +2795,16 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
         compound.putBoolean("AwakeningLanded", this.awakeningLanded);
         compound.putInt("WobbleRemaining", this.wobbleRemaining);
         compound.putInt("SolidifyTicks", this.solidifyTicks);
+        compound.putInt("AxeAttackCount", this.axeAttackCount);
+        compound.putLong("LastAxeAttackTime", this.lastAxeAttackTime);
         compound.putBoolean("FirstArrivalDone", this.firstArrivalDone);
         compound.putInt("AssistMode", this.assistMode);
         compound.putInt("BrewSchedule", this.brewSchedule);
         if (this.lastEnemyUuid != null) {
             compound.putUUID("LastEnemyUuid", this.lastEnemyUuid);
+        }
+        if (this.lostEnemyUuid != null) {
+            compound.putUUID("LostEnemyUuid", this.lostEnemyUuid);
         }
         if (this.waitingEnemyUuid != null) {
             compound.putUUID("WaitingEnemyUuid", this.waitingEnemyUuid);
@@ -2674,11 +2830,16 @@ public class AwakeningFallingBlockEntity extends FallingBlockEntity {
         this.wobbleRemaining = compound.getInt("WobbleRemaining");
         this.solidifyTicks = compound.getInt("SolidifyTicks");
         if (this.solidifyTicks <= 0) this.solidifyTicks = 3600;
+        this.axeAttackCount = compound.getInt("AxeAttackCount");
+        this.lastAxeAttackTime = compound.getLong("LastAxeAttackTime");
         this.firstArrivalDone = compound.getBoolean("FirstArrivalDone");
         this.assistMode = compound.getInt("AssistMode");
         this.brewSchedule = compound.getInt("BrewSchedule");
         if (compound.contains("LastEnemyUuid")) {
             this.lastEnemyUuid = compound.getUUID("LastEnemyUuid");
+        }
+        if (compound.contains("LostEnemyUuid")) {
+            this.lostEnemyUuid = compound.getUUID("LostEnemyUuid");
         }
         if (compound.contains("WaitingEnemyUuid")) {
             this.waitingEnemyUuid = compound.getUUID("WaitingEnemyUuid");

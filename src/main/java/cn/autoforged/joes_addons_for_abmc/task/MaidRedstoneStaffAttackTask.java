@@ -113,7 +113,7 @@ public class MaidRedstoneStaffAttackTask extends Behavior<EntityMaid> {
             // 火线被方块遮挡（无法直接看到目标）：可移动时向目标靠近以重新获得火线。
             // 仅当“看不到目标”才靠近 —— 若是因为玩家/宠物挡路而无法开火（仍能看到目标），
             // 则原地等待，绝不向玩家/宠物聚集处移动。
-            maid.getNavigation().moveTo(target, 1.0);
+            maid.getNavigation().moveTo(target, 0.6);
         }
     }
 

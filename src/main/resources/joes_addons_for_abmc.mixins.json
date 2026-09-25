@@ -19,14 +19,25 @@
     "PlayerDimensionsMixin",
     "ItemStackMaxSizeMixin",
     "DispenserNetherWartMixin",
-    "SwampHutPieceMixin"
+    "SwampHutPieceMixin",
+    "LivingEntityTransmutationMixin",
+    "BrewingStandBlockEntityMixin",
+    "PlayerMorphDataMixin",
+    "ItemNetherWartMixin",
+    "LivingEntityLightningImmunityMixin",
+    "EntityThunderHitImmunityMixin",
+    "ExperienceOrbAccessor"
   ],
   "client": [
     "ClientLevelMixin",
     "BlockMarkerParticleMixin",
     "LivingEntityAccessorMixin",
     "FallingBlockRendererMixin",
-    "EntityRenderDispatcherMixin"
+    "EnchantingTableRendererMixin",
+    "EntityRenderDispatcherMixin",
+    "GuiEffectIconFilterMixin",
+    "EffectPanelIconFilterMixin",
+    "KeyboardHandlerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

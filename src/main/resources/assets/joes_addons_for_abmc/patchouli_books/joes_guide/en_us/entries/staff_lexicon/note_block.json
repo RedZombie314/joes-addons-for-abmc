@@ -1,0 +1,22 @@
+{
+  "name": "patchouli.joes_addons_for_abmc.entry.note_block",
+  "icon": "minecraft:note_block",
+  "category": "joes_addons_for_abmc:staff_lexicon",
+  "advancement": "joes_addons_for_abmc:staff_obtained",
+  "sortnum": 0,
+  "pages": [
+    {
+      "type": "patchouli:spotlight",
+      "item": "minecraft:note_block",
+      "text": "patchouli.joes_addons_for_abmc.entry.note_block.p1"
+    },
+    {
+      "type": "patchouli:text",
+      "text": "patchouli.joes_addons_for_abmc.entry.note_block.p2"
+    },
+    {
+      "type": "patchouli:text",
+      "text": "patchouli.joes_addons_for_abmc.entry.note_block.p3"
+    }
+  ]
+}

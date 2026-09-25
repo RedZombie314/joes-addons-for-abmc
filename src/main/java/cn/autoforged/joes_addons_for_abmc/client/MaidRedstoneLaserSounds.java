@@ -128,7 +128,9 @@ public final class MaidRedstoneLaserSounds {
                 entry.getValue().lastSeenTick = gameTime;
             } else if (gameTime - entry.getValue().lastSeenTick > GRACE_TICKS) {
                 // 女仆实体持续消失（死亡/卸载/被变形）超过宽限期：停止循环音效
-                mc.getSoundManager().stop(entry.getValue());
+                MaidMiddleLoopSound loop = entry.getValue();
+                loop.markStopped();
+                mc.getSoundManager().stop(loop);
                 it.remove();
             }
         }
@@ -138,6 +140,7 @@ public final class MaidRedstoneLaserSounds {
     public static void reset() {
         Minecraft mc = Minecraft.getInstance();
         for (MaidMiddleLoopSound loop : ACTIVE_LOOPS.values()) {
+            loop.markStopped();
             mc.getSoundManager().stop(loop);
         }
         ACTIVE_LOOPS.clear();
@@ -146,6 +149,9 @@ public final class MaidRedstoneLaserSounds {
     private static void stopLoop(int maidId) {
         MaidMiddleLoopSound loop = ACTIVE_LOOPS.remove(maidId);
         if (loop != null) {
+            // 必须先标记 stopped 再 stop：SoundManager 检测到 channel 停止而实例未标记停止时会自动重播，
+            // 导致循环音效在 END 后仍然持续播放。
+            loop.markStopped();
             Minecraft.getInstance().getSoundManager().stop(loop);
         }
     }
@@ -214,6 +220,10 @@ public final class MaidRedstoneLaserSounds {
         /** 最近一次在客户端世界中看到该女仆实体的刻，用于消失宽限期判断。 */
         private long lastSeenTick;
 
+        /** 是否已被标记停止。SoundManager 停止 channel 后若本实例 isStopped() 仍为 false，
+         *  会在下一 tick 自动重播该循环音效（激光持续音效停不下来的根因）。 */
+        private boolean stopped = false;
+
         MaidMiddleLoopSound(int maidId, double x, double y, double z,
                             double endX, double endY, double endZ) {
             super(ModSounds.LASER_MIDDLE.get(), SoundSource.PLAYERS, SoundInstance.createUnseededRandom());
@@ -231,6 +241,11 @@ public final class MaidRedstoneLaserSounds {
             this.lastSeenTick = Minecraft.getInstance().level != null
                 ? Minecraft.getInstance().level.getGameTime() : 0L;
             this.volume = currentVolume();
+        }
+
+        /** 标记已停止：必须在 {@code SoundManager.stop(this)} 前调用，否则循环音效会被 SoundManager 重播。 */
+        void markStopped() {
+            this.stopped = true;
         }
 
         /** 更新光束末端点（服务端发送 ACTION_UPDATE 时）。 */
@@ -283,7 +298,7 @@ public final class MaidRedstoneLaserSounds {
 
         @Override
         public boolean isStopped() {
-            return false;
+            return this.stopped;
         }
 
         @Override
