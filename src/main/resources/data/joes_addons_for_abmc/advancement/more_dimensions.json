@@ -1,0 +1,58 @@
+{
+  "parent": "joes_addons_for_abmc:avm_dimensions",
+  "display": {
+    "icon": {
+      "id": "minecraft:ender_eye"
+    },
+    "title": {
+      "translate": "advancements.joes_addons_for_abmc.more_dimensions.title"
+    },
+    "description": {
+      "translate": "advancements.joes_addons_for_abmc.more_dimensions.description"
+    },
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": true,
+    "hidden": false
+  },
+  "criteria": {
+    "note_block_universe": {
+      "trigger": "minecraft:changed_dimension",
+      "conditions": {
+        "to": "joes_addons_for_abmc:note_block_universe"
+      }
+    },
+    "creeper_clan": {
+      "trigger": "minecraft:changed_dimension",
+      "conditions": {
+        "to": "joes_addons_for_abmc:creeper_clan"
+      }
+    },
+    "lucky_dimension": {
+      "trigger": "minecraft:changed_dimension",
+      "conditions": {
+        "to": "joes_addons_for_abmc:lucky_dimension"
+      }
+    },
+    "physics_dimension": {
+      "trigger": "minecraft:changed_dimension",
+      "conditions": {
+        "to": "joes_addons_for_abmc:physics_dimension"
+      }
+    }
+  },
+  "requirements": [
+    [
+      "note_block_universe"
+    ],
+    [
+      "creeper_clan"
+    ],
+    [
+      "lucky_dimension"
+    ],
+    [
+      "physics_dimension"
+    ]
+  ]
+}

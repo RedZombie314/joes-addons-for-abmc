@@ -1,0 +1,31 @@
+{
+  "parent": "joes_addons_for_abmc:staff",
+  "display": {
+    "icon": {
+      "id": "joes_addons_for_abmc:staff",
+      "components": {
+        "joes_addons_for_abmc:blocktype": "cobweb"
+      }
+    },
+    "title": {
+      "translate": "advancements.joes_addons_for_abmc.spiderman.title"
+    },
+    "description": {
+      "translate": "advancements.joes_addons_for_abmc.spiderman.description"
+    },
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": true,
+    "hidden": false
+  },
+  "criteria": {
+    "fire_web": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "requirements": [
+    [
+      "fire_web"
+    ]
+  ]
+}

@@ -168,6 +168,10 @@ dependencies {
     compileOnly files("libs/touhoulittlemaid-1.5.3-neoforge+mc1.21.1.jar")
     // Jade 联动（女巫Boss阶段提示）：仅编译期依赖，不打包；Jade 未安装时相关类不会被加载
     compileOnly files("libs/Jade-1.21.1-NeoForge-15.10.6.jar")
+    // 暮色森林 (Twilight Forest) 联动：仅编译期依赖，不打包；未安装时 TwilightForestCompat 不会被加载
+    compileOnly files("libs/twilightforest-1.21.1-4.8.3345-universal.jar")
+    // 天境 (Aether) 联动：仅编译期依赖，不打包；未安装时 AetherCompat 不会被加载
+    compileOnly files("libs/aether-1.21.1-1.5.10-neoforge.jar")
 }
 
 // This block of code expands all declared replace properties in the specified resource targets.

@@ -16,6 +16,9 @@ public class StaffClientState {
     public static int brewingStaffCategory = 0;
     // 音符盒权杖：当前模式（0=音符模式，1=音谱模式），由 Alt+滚轮切换，用于 HUD 与左键行为
     public static int noteStaffMode = 0;
+    // 蜂巢权杖：切换到手后短暂显示蜂巢内蜜蜂数量的提示剩余时长（刻）与要显示的数量
+    public static int beeStaffCountFlashTicks = 0;
+    public static int beeStaffCountToShow = 0;
 
     /** 客户端已知的音谱（谱子）数据：ownerUUID → 谱子（5 线端点 + 剩余存在刻数），由服务端广播驱动。 */
     public static final java.util.Map<java.util.UUID, ClientNoteSheet> noteSheets =

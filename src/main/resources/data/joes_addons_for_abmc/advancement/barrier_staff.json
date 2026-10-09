@@ -1,0 +1,41 @@
+{
+  "parent": "joes_addons_for_abmc:staff",
+  "display": {
+    "icon": {
+      "id": "joes_addons_for_abmc:staff",
+      "components": {
+        "joes_addons_for_abmc:blocktype": "barrier"
+      }
+    },
+    "title": {
+      "translate": "advancements.joes_addons_for_abmc.barrier_staff.title"
+    },
+    "description": {
+      "translate": "advancements.joes_addons_for_abmc.barrier_staff.description"
+    },
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": true,
+    "hidden": false
+  },
+  "criteria": {
+    "obtain_barrier_staff": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [
+          {
+            "items": "joes_addons_for_abmc:staff",
+            "components": {
+              "joes_addons_for_abmc:blocktype": "barrier"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "requirements": [
+    [
+      "obtain_barrier_staff"
+    ]
+  ]
+}

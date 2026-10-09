@@ -151,7 +151,11 @@ public class PotionPortalEntity extends Entity {
         }
 
         for (Entity traveller : sl.getEntities(this, this.getPortalFaceBox(),
-            e -> !(e instanceof PotionPortalEntity) && e.isAlive())) {
+            e -> !(e instanceof PotionPortalEntity) && e.isAlive()
+                // <b>正被命令方块权杖"抓取模式"拉拽的实体不搬</b>（用户指定：抓取的传送压过传送门）：
+                // 抓取每刻都会把它 tp 到玩家前方，门再搬一次就是两边来回打架
+                // （表现：目标在玩家和出口门之间疯狂闪烁，女巫 Boss 那种大目标最明显）。
+                && !cn.autoforged.joes_addons_for_abmc.ModMain.isCommandStaffGrabbed(e))) {
             // 传送滞环：刚被搬出来的实体若尚未离开，不再立即搬运（单向，仅防同一实体抖回）
             if (traveller instanceof Projectile) {
                 // 弹射物也允许被单向搬运一次

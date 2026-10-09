@@ -1,6 +1,8 @@
 package cn.autoforged.joes_addons_for_abmc.entity;
 
+import cn.autoforged.joes_addons_for_abmc.ModMain;
 import cn.autoforged.joes_addons_for_abmc.config.ModConfig;
+import cn.autoforged.joes_addons_for_abmc.item.ModItems;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.server.level.ServerLevel;
@@ -29,7 +31,8 @@ import java.util.UUID;
  * - 远程模式：向目标发射魔咒子弹；近战模式：贴近目标每 30 刻造成 1 点伤害。
  * - 无视重力、自研飞行（水平逼近 + 竖直收敛到目标高度）。
  * - 拥有收容标签（containerUuid），被收容它的实体视为"朋友"，永不索敌该实体。
- * - 客户端渲染使用简单空渲染器（或可替换为画一张纸片的 model）。
+ * - 客户端渲染由 {@code EnchantedOrigamiRenderer} 按物品模型绘制（贴图取自 {@link ModItems#ORIGAMI}），
+ *   姿态用本实体自己的 {@code yRot}/{@code xRot}，不跟随摄像机。
  */
 public class EnchantedOrigamiEntity extends Mob implements ItemSupplier {
 
@@ -165,14 +168,20 @@ public class EnchantedOrigamiEntity extends Mob implements ItemSupplier {
         return true;
     }
 
-    /** 供 ThrownItemRenderer 使用：渲染为一张“纸”贴图（以后可替换自定义模型）。 */
+    /**
+     * 供 ThrownItemRenderer 使用：返回一个「只为提供模型」的物品，渲染成千纸鹤贴图。
+     * <p>
+     * {@code ThrownItemRenderer} 只会照 {@code ItemSupplier#getItem()} 返回的物品去查 {@code models/item/*.json}，
+     * 所以换贴图的唯一办法就是换一个指向 {@code joes_addons_for_abmc:item/origami} 的物品。
+     * 注意：死亡掉落仍然是原版纸（见 {@link #dropAllDeathLoot}），不受这里影响。
+     */
     @Override
     public ItemStack getItem() {
-        return new ItemStack(Items.PAPER);
+        return new ItemStack(ModItems.ORIGAMI.get());
     }
 
     // ===== 伤害免疫 =====
-    /** 免疫任何来自同类（任意附魔千纸鹤）的伤害（含其魔咒子弹、爆炸），也免疫火焰伤害。 */
+    /** 免疫任何来自同类（任意附魔千纸鹤）的伤害（含其魔咒子弹、爆炸），也免疫火焰与摔落伤害。 */
     @Override
     public boolean hurt(net.minecraft.world.damagesource.DamageSource source, float amount) {
         // 免疫来自任何同类（包括自己）的伤害
@@ -183,12 +192,29 @@ public class EnchantedOrigamiEntity extends Mob implements ItemSupplier {
         if (source.is(net.minecraft.tags.DamageTypeTags.IS_FIRE)) {
             return false;
         }
+        // 免疫摔落伤害：正常路径已被 causeFallDamage 拦下，这里兜底“别的代码直接拿 fall 类型调 hurt”的情况
+        if (source.is(net.minecraft.tags.DamageTypeTags.IS_FALL)) {
+            return false;
+        }
         return super.hurt(source, amount);
     }
 
     @Override
     public boolean fireImmune() {
         return true;
+    }
+
+    /**
+     * 免疫摔落伤害。
+     * <p>
+     * 直接返回 false 而不是只在 {@link #hurt} 里拦：原版 {@code LivingEntity#causeFallDamage} 一旦算出伤害
+     * （{@code calculateFallDamage(...) > 0}）就必然会 {@code playSound(摔落音效)} + {@code playBlockFallSound()}
+     * 再调 {@code hurt}，只有从这里返回 false 才能连音效和落地粒子一起免掉。
+     */
+    @Override
+    public boolean causeFallDamage(float fallDistance, float multiplier,
+            net.minecraft.world.damagesource.DamageSource source) {
+        return false;
     }
 
     private UUID uuidFromContainer() {
@@ -289,11 +315,26 @@ public class EnchantedOrigamiEntity extends Mob implements ItemSupplier {
             this.attackCooldown = 30;
             if (this.target.distanceToSqr(this) < MELEE_RANGE * MELEE_RANGE) {
                 this.target.hurt(this.level().damageSources().mobAttack(this), 1.0F);
+                grantAttackedAdvancement(this.target);
             }
         } else {
             // 远程：冷却 30~40 刻
             this.attackCooldown = 30 + this.random.nextInt(11);
             this.fireBullet();
+            grantAttackedAdvancement(this.target);
+        }
+    }
+
+    /**
+     * 成就「愤怒的小鸟」：被附魔千纸鹤攻击的玩家点亮。
+     * <p>
+     * 在这里（攻击发起处）判定而不是监听伤害事件：远程模式的魔咒子弹命中后只会“点燃目标”或“制造爆炸”，
+     * 后续火焰伤害的来源实体并不是千纸鹤（{@code EnchantmentBullet} 自身也不会造成直接伤害），
+     * 靠伤害来源无法覆盖这一半情况。近战分支已在命中后再授予。
+     */
+    private void grantAttackedAdvancement(LivingEntity victim) {
+        if (victim instanceof net.minecraft.server.level.ServerPlayer sp) {
+            ModMain.awardAdvancement(sp, ModMain.ANGRY_BIRDS_ADV);
         }
     }
 

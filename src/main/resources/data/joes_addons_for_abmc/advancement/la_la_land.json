@@ -1,0 +1,31 @@
+{
+  "parent": "joes_addons_for_abmc:more_dimensions",
+  "display": {
+    "icon": {
+      "id": "minecraft:note_block"
+    },
+    "title": {
+      "translate": "advancements.joes_addons_for_abmc.la_la_land.title"
+    },
+    "description": {
+      "translate": "advancements.joes_addons_for_abmc.la_la_land.description"
+    },
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": true,
+    "hidden": false
+  },
+  "criteria": {
+    "enter_note_block_universe": {
+      "trigger": "minecraft:changed_dimension",
+      "conditions": {
+        "to": "joes_addons_for_abmc:note_block_universe"
+      }
+    }
+  },
+  "requirements": [
+    [
+      "enter_note_block_universe"
+    ]
+  ]
+}

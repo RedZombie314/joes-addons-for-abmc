@@ -1,0 +1,34 @@
+{
+  "parent": "joes_addons_for_abmc:get_rid_of_greed",
+  "display": {
+    "icon": {
+      "id": "minecraft:nether_star"
+    },
+    "title": {
+      "translate": "advancements.joes_addons_for_abmc.witness_the_impossible.title"
+    },
+    "description": {
+      "translate": "advancements.joes_addons_for_abmc.witness_the_impossible.description"
+    },
+    "frame": "challenge",
+    "show_toast": true,
+    "announce_to_chat": true,
+    "hidden": true
+  },
+  "criteria": {
+    "witness_dragon_kill": {
+      "trigger": "minecraft:impossible"
+    },
+    "witness_wither_kill": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "requirements": [
+    [
+      "witness_dragon_kill"
+    ],
+    [
+      "witness_wither_kill"
+    ]
+  ]
+}

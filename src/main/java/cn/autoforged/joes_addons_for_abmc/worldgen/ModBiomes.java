@@ -31,9 +31,9 @@ public class ModBiomes {
             .grassColorModifier(BiomeSpecialEffects.GrassColorModifier.NONE)
             .build();
 
+        // 物理虚空维度用的刷怪设置（该维度需要正常刷怪，保持原样）
         MobSpawnSettings mobSpawnSettings = new MobSpawnSettings.Builder()
             .creatureGenerationProbability(0.1F)
-            // 被动生物：家畜与村民自然生成，让维度显得生机勃勃
             .addSpawn(MobCategory.CREATURE, new MobSpawnSettings.SpawnerData(EntityType.PIG, 10, 4, 4))
             .addSpawn(MobCategory.CREATURE, new MobSpawnSettings.SpawnerData(EntityType.COW, 10, 4, 4))
             .addSpawn(MobCategory.CREATURE, new MobSpawnSettings.SpawnerData(EntityType.SHEEP, 10, 4, 4))
@@ -47,12 +47,18 @@ public class ModBiomes {
             .addSpawn(MobCategory.MONSTER, new MobSpawnSettings.SpawnerData(EntityType.SPIDER, 10, 4, 4))
             .build();
 
+        // 幸运维度：**不生成任何生物**（需求）。所以这里用一张空的刷怪表，
+        // 配合 NoiseGeneratorSettings 的 disableMobGeneration = true（见 ModNoiseSettings）。
+        // 注意：早期注释里写的"怪物会被中立化 / 铁傀儡不主动攻击"其实只对音符盒维度生效，
+        // 本维度没有任何对应实现 —— 这里直接不刷怪。
+        MobSpawnSettings noSpawns = new MobSpawnSettings.Builder().build();
+
         context.register(LUCKY_PLAINS, new Biome.BiomeBuilder()
             .hasPrecipitation(true)
             .temperature(0.8F)
             .downfall(0.4F)
             .specialEffects(specialEffects)
-            .mobSpawnSettings(mobSpawnSettings)
+            .mobSpawnSettings(noSpawns)
             .generationSettings(generationBuilder.build())
             .build());
 

@@ -1,0 +1,28 @@
+{
+  "parent": "joes_addons_for_abmc:angry_birds",
+  "display": {
+    "icon": {
+      "id": "minecraft:glass_bottle"
+    },
+    "title": {
+      "translate": "advancements.joes_addons_for_abmc.origami_sealed.title"
+    },
+    "description": {
+      "translate": "advancements.joes_addons_for_abmc.origami_sealed.description"
+    },
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": true,
+    "hidden": false
+  },
+  "criteria": {
+    "bottle_the_origami": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "requirements": [
+    [
+      "bottle_the_origami"
+    ]
+  ]
+}

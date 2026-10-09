@@ -12,6 +12,48 @@ import net.neoforged.neoforge.registries.DeferredRegister;
 public class ModBlocks {
     public static final DeferredRegister.Blocks BLOCKS = DeferredRegister.createBlocks(ModMain.MODID);
 
+    /**
+     * 幸运方块：完整方块，硬度/挖掘速度同干草块（strength 0.5），适合用镐挖
+     * （见 data/minecraft/tags/block/mineable/pickaxe.json）。
+     * <p>挖掘后永不掉落，只触发幸运事件（{@link LuckyBlockEvents}）；
+     * {@code noLootTable()} 保证爆炸/活塞等其它破坏方式同样不掉落。
+     */
+    public static final DeferredBlock<LuckyBlock> LUCKY_BLOCK =
+        BLOCKS.register("lucky_block",
+            () -> new LuckyBlock(BlockBehaviour.Properties.of()
+                .mapColor(MapColor.GOLD)
+                .strength(0.5F)
+                .sound(SoundType.STONE)
+                .noLootTable()));
+
+    /**
+     * 幸运事件"落石 + TNT 连发"专用的 TNT 方块（继承原版 TNT，外观同原版）。
+     * <p>手动点燃引信 60 刻、被爆炸波及则立即爆炸（见 {@link LuckyTntBlock}）。
+     * <p><b>故意不注册物品</b>：它只由该幸运事件生成，不进创造栏、被挖掉也不掉落。
+     */
+    public static final DeferredBlock<LuckyTntBlock> LUCKY_TNT =
+        BLOCKS.register("lucky_tnt",
+            () -> new LuckyTntBlock(BlockBehaviour.Properties.of()
+                .mapColor(MapColor.FIRE)
+                .instabreak()
+                .sound(SoundType.GRASS)
+                .ignitedByLava()
+                .noLootTable()));
+
+    /**
+     * <b>支援幸运方块</b>（需求 6.5.21）：旁观操控里确认"送到某位玩家"之后，在那位玩家附近生成的容器，
+     * 里面装着刚送出的生物/物品，<b>5 秒后自己碎裂</b>把内容爆出来（见 {@link SupportLuckyBlock}）。
+     * <p>外观沿用幸运方块贴图；{@code noLootTable()} 保证它碎裂时不掉落任何东西。
+     * <p><b>故意不注册物品</b>：它只由这条流程生成，不进创造栏、也不该被玩家当材料使用。
+     */
+    public static final DeferredBlock<SupportLuckyBlock> SUPPORT_LUCKY_BLOCK =
+        BLOCKS.register("support_lucky_block",
+            () -> new SupportLuckyBlock(BlockBehaviour.Properties.of()
+                .mapColor(MapColor.GOLD)
+                .strength(0.5F)
+                .sound(SoundType.STONE)
+                .noLootTable()));
+
     public static final DeferredBlock<LuckyDimensionBlock> LUCKY_DIMENSION_BLOCK =
         BLOCKS.register("lucky_dimension_block",
             () -> new LuckyDimensionBlock(BlockBehaviour.Properties.of()
@@ -75,6 +117,7 @@ public class ModBlocks {
                 .noOcclusion()));
 
     static {
+        ModItems.ITEMS.registerSimpleBlockItem(LUCKY_BLOCK);
         ModItems.ITEMS.registerSimpleBlockItem(LUCKY_DIMENSION_BLOCK);
         ModItems.ITEMS.registerSimpleBlockItem(HORIZONTAL_DRIPSTONE);
     }

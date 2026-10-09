@@ -9,6 +9,7 @@
     "description": {
       "translate": "advancements.joes_addons_for_abmc.staff.description"
     },
+    "background": "minecraft:textures/gui/advancements/backgrounds/stone.png",
     "frame": "task",
     "show_toast": true,
     "announce_to_chat": true,

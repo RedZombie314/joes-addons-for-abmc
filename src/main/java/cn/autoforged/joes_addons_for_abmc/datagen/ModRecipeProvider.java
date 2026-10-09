@@ -18,15 +18,13 @@ public class ModRecipeProvider extends RecipeProvider {
 
     @Override
     protected void buildRecipes(RecipeOutput output) {
-        ShapedRecipeBuilder.shaped(RecipeCategory.COMBAT, ModItems.GLISTERING_MELON_KNIFE.get())
-            .pattern(" G ")
-            .pattern(" M ")
-            .pattern(" T ")
-            .define('G', Items.GLISTERING_MELON_SLICE)
-            .define('M', Items.MAGMA_CREAM)
-            .define('T', Items.TOTEM_OF_UNDYING)
-            .unlockedBy("has_totem", has(Items.TOTEM_OF_UNDYING))
-            .save(output);
+        // 闪烁西瓜刀（glistering_melon_knife）**故意没有合成配方**（需求 6.7.2：只能从幸运方块开出）。
+        // 原来这里是 " 西瓜片 / 岩浆膏 / 不死图腾 " 竖排三格的配方，连同它自动生成的
+        // recipe-book 解锁进度（advancement/recipes/combat/glistering_melon_knife.json）一起删掉了。
+        // 获取途径只剩：幸运物品池 #joes_addons_for_abmc:lucky_items（幸运方块开出）与创造模式物品栏。
+        // 注意"工作台帽子 / 合成权杖"那套合成事件是从 *配方注册表* 里取配方的
+        // （见 crafting/CraftingScan：player.server.getRecipeManager().getOrderedRecipes()），
+        // 所以配方一删，那边也自然合成不出这把刀，不需要额外处理。
 
         ShapedRecipeBuilder.shaped(RecipeCategory.MISC, ModItems.NETHERITE_CORE.get())
             .pattern("NNN")

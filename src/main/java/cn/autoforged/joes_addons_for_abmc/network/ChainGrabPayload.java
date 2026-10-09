@@ -30,6 +30,9 @@ public record ChainGrabPayload(int mode, double sx, double sy, double sz,
     public static final int MODE_ITEM = 0;
     /** 生物：拉到停止距离后断开并保持速度惯性甩出。 */
     public static final int MODE_LIVING = 1;
+    /** 铁抓钩挂住方块：链头固定在世界坐标上（entityId = -1），玩家被拉向该点。
+     *  <p>客户端只用它区分来源，渲染方式与其它模式相同（链头取坐标而不是实体）。 */
+    public static final int MODE_BLOCK = 2;
 
     public static final CustomPacketPayload.Type<ChainGrabPayload> TYPE =
         new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "chain_grab"));

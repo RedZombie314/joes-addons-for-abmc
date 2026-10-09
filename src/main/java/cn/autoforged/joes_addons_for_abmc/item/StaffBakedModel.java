@@ -51,6 +51,7 @@ public class StaffBakedModel extends BakedModelWrapper<BakedModel> {
     private final BakedModel spawnerModel;
     private final BakedModel tntModel;
     private final BakedModel lightningRodModel;
+    private final BakedModel luckyModel;
     private final BakedModel mcModel;
     // 被“无效化”的权杖：渲染空权杖 + 蛛网覆盖层（自定义渲染器）
     private final BakedModel cobwebNullifiedModel;
@@ -128,6 +129,7 @@ public class StaffBakedModel extends BakedModelWrapper<BakedModel> {
         if ("spawner".equals(blockType)) return spawnerModel;
         if ("tnt".equals(blockType)) return tntModel;
         if ("lightning_rod".equals(blockType)) return lightningRodModel;
+        if ("lucky_block".equals(blockType)) return luckyModel;
         if ("minecraft_game_icon".equals(blockType)) return mcModel;
         return null;
     }
@@ -151,7 +153,7 @@ public class StaffBakedModel extends BakedModelWrapper<BakedModel> {
                            BakedModel redMushroomModel, BakedModel redstoneModel, BakedModel snowModel,
                            BakedModel beeNestModel, BakedModel amethystModel, BakedModel cobwebModel,
                            BakedModel spawnerModel, BakedModel tntModel, BakedModel lightningRodModel,
-                           BakedModel mcModel) {
+                           BakedModel mcModel, BakedModel luckyModel) {
         super(new RotationDelegate(defaultModel));
         this.goldModel = new RotationDelegate(goldModel);
         this.netheriteModel = new RotationDelegate(netheriteModel);
@@ -194,6 +196,7 @@ public class StaffBakedModel extends BakedModelWrapper<BakedModel> {
         this.tntModel = new RotationDelegate(tntModel);
         this.lightningRodModel = new RotationDelegate(lightningRodModel);
         this.mcModel = new RotationDelegate(mcModel);
+        this.luckyModel = new RotationDelegate(luckyModel);
         // 无效化权杖 = 空权杖模型 + 蛛网覆盖层（BEWLR 渲染，空权杖模型作为基础）
         this.cobwebNullifiedModel = new CobwebNullifiedDelegate(defaultModel);
         cn.autoforged.joes_addons_for_abmc.client.CobwebStaffBEWLR.INSTANCE.setBaseModel(defaultModel);
@@ -296,6 +299,9 @@ public class StaffBakedModel extends BakedModelWrapper<BakedModel> {
         }
         if ("note_block".equals(blockType)) {
             return noteblockModel;
+        }
+        if ("lucky_block".equals(blockType)) {
+            return luckyModel;
         }
         if ("oak_log".equals(blockType)) {
             return oakModel;

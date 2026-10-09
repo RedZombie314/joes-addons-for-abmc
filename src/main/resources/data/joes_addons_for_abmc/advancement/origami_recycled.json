@@ -1,0 +1,28 @@
+{
+  "parent": "joes_addons_for_abmc:angry_birds",
+  "display": {
+    "icon": {
+      "id": "minecraft:enchanted_book"
+    },
+    "title": {
+      "translate": "advancements.joes_addons_for_abmc.origami_recycled.title"
+    },
+    "description": {
+      "translate": "advancements.joes_addons_for_abmc.origami_recycled.description"
+    },
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": true,
+    "hidden": false
+  },
+  "criteria": {
+    "recycle_the_origami": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "requirements": [
+    [
+      "recycle_the_origami"
+    ]
+  ]
+}

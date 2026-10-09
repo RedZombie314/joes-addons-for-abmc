@@ -24,6 +24,8 @@ public class ModNoiseSettings {
     );
 
     public static void bootstrap(BootstrapContext<NoiseGeneratorSettings> context) {
+        // 幸运维度：地形与主世界同型，但整片都是幸运维度方块。
+        // disableMobGeneration = true + 生群系 spawners 全空（见 ModBiomes）→ 该维度不会自然生成任何生物。
         context.register(LUCKY_DIM, new NoiseGeneratorSettings(
             NoiseSettings.create(-64, 384, 1, 2),
             ModBlocks.LUCKY_DIMENSION_BLOCK.get().defaultBlockState(),
@@ -40,7 +42,7 @@ public class ModNoiseSettings {
             ),
             List.of(),
             0,
-            false,
+            true,
             false,
             false,
             false

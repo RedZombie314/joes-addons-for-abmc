@@ -26,7 +26,7 @@ import java.util.function.Supplier;
  *
  * 当添加新的权杖类型（blocktype）时，请记得在此处添加对应的 ItemStack，
  * 以确保新权杖能够在创造模式物品栏中出现。
- * 添加位置：在 staffIcons 数组中添加新的条目即可。
+ * 添加位置：在 ALL_STAFF_BLOCK_TYPES 数组中添加新的条目即可（顺序即物品栏中的显示顺序）。
  */
 public class ModCreativeTab {
     public static final DeferredRegister<CreativeModeTab> CREATIVE_MODE_TABS =
@@ -50,6 +50,7 @@ public class ModCreativeTab {
         "anvil",
         "lapis_block",
         "magma_block",
+        "lucky_block",
         "command_block",
         "end_portal_frame",
         "enchanting_table",
@@ -103,8 +104,27 @@ public class ModCreativeTab {
                 output.accept(ModItems.GLISTERING_MELON_KNIFE.get()); // 第二把用于展示在创造栏中
 
                 output.accept(ModItems.NETHERITE_CORE.get());
+                // 幸运方块：完整方块，挖掉不掉东西、只触发幸运事件（幸运事件表后续实装）
+                output.accept(cn.autoforged.joes_addons_for_abmc.block.ModBlocks.LUCKY_BLOCK.get());
+                // 烈焰弹发射器：右键/长按右键每 10 刻发射一颗烈焰人火球
+                output.accept(ModItems.FIRE_CHARGE_LAUNCHER.get());
+                // 烈焰手杖：同样的发射逻辑，但打的是受重力、威力 2、速度 2 倍的恶魂火球
+                output.accept(ModItems.BLAZE_STAFF.get());
+                // 工作台帽子：戴头上、无护甲值、无耐久；戴着且主手为空时右键触发"合成"事件
+                output.accept(ModItems.CRAFTING_TABLE_HAT.get());
                 // 弹奏工具：演奏 playable 类可持有结构（贴图暂为空白）
                 output.accept(ModItems.STRUMMING_TOOL.get());
+                // wart on a stick：右击方块种成熟地狱疣；右击生物把地狱疣塞进它头盔栏
+                output.accept(ModItems.WART_ON_A_STICK.get());
+                // 铁抓钩：右击方块把自己拉过去；右击实体把它拉过来
+                output.accept(ModItems.IRON_HOOK.get());
+                // 翅膀：穿在胸甲栏，获得飞行能力（鞘翅外形 + 正弦扇动动画）
+                output.accept(ModItems.WINGS.get());
+                // 爆炸之箭：任何弓都能用；命中实体立刻爆炸、命中方块 5 秒后爆炸
+                output.accept(ModItems.EXPLOSIVE_ARROW.get());
+                // 英雄之剑：原版钻石剑 + 一整套附魔（锋利V/亡灵克星V/节肢杀手V/抢夺V/横扫之刃V/火焰附加II/耐久V/经验修补），
+                //   不带任何累计惩罚；附魔用物品栏参数里的注册表查表，与发奖时用的是同一份代码
+                output.accept(cn.autoforged.joes_addons_for_abmc.block.LuckyHeroEvents.heroSword(parameters.holders()));
                 output.accept(ModItems.GIANT_NETHERITE_BOW.get());
                 output.accept(ModItems.GIANT_NETHERITE_ARROW.get());
                 output.accept(ModItems.PRISMARINE_BOW.get());
@@ -115,12 +135,28 @@ public class ModCreativeTab {
                 output.accept(ModItems.OMEGA_GAME_ICON.get());
                 // 女巫Boss 刷怪蛋：右键直接召唤女巫Boss
                 output.accept(ModItems.WITCH_BOSS_SPAWN_EGG.get());
+                // 苦力蜂刷怪蛋：右键直接召唤一只 Beeper
+                output.accept(ModItems.BEEPER_SPAWN_EGG.get());
 
                 // ===== 附魔千纸鹤 ====
                 // 刷怪蛋：右键直接召唤一只附魔千纸鹤
                 output.accept(ModItems.ORIGAMI_SPAWN_EGG.get());
                 // 收容载体：装有千纸鹤的玻璃瓶（可由玻璃瓶右键千纸鹤获得）
                 output.accept(ModItems.ORIGAMI_BOTTLE.get());
+
+                // ===== 幸运方块选择器 =====
+                // 刷怪蛋：右键在视线前方召唤一个「选择框」（外观暂用白色混凝土）
+                output.accept(ModItems.LUCKY_SELECTOR_SPAWN_EGG.get());
+                // BeeBoss 刷怪蛋：召唤一只 BeeBoss 蜜蜂（外观同原版蜜蜂刷怪蛋）
+                output.accept(ModItems.BEEBOSS_SPAWN_EGG.get());
+
+                // ===== 幸运核心（Orb of Luck） =====
+                // 刷怪蛋：右键在视线落点的方块上召唤一个核心（外观暂用光源方块贴图）
+                output.accept(ModItems.ORB_OF_LUCK_SPAWN_EGG.get());
+                // 玩家刷怪蛋：直接放下一具"被幸运核心附体的玩家空壳"，皮肤随机（命名即指定皮肤）
+                output.accept(ModItems.ORB_PLAYER_SHELL_SPAWN_EGG.get());
+                // 核心物品：第一人称手持时手臂末端会有一颗光球（世界里空手右击核心获得）
+                output.accept(ModItems.ORB_OF_LUCK.get());
 
                 // ===== 废弃传送门藏宝图 ====
                 output.accept(ModItems.RUINED_PORTAL_MAP.get());
@@ -131,6 +167,8 @@ public class ModCreativeTab {
                 // ===== 唤醒药水 =====
                 // 正常时长的喷溅型唤醒药水
                 output.accept(splashPotion(ModPotions.AWAKENING, 0x23A248));
+                // 英雄药水（可饮用）：力量V/速度V/抗性V/吸收V/再生V/急迫V/跳跃II，各 3 分钟；也由幸运物品事件发放
+                output.accept(PotionContents.createItemStack(Items.POTION, ModPotions.HEROISM));
 
                 // ===== 变形药水 =====
                 // 随机变形喷溅药水：未绑定固定目标，命中生物的瞬间从原版方块中随机选取一个作为变形目标

@@ -3,6 +3,7 @@ package cn.autoforged.joes_addons_for_abmc.potion;
 import cn.autoforged.joes_addons_for_abmc.ModMain;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.item.alchemy.Potion;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredRegister;
@@ -40,4 +41,25 @@ public class ModPotions {
     public static final DeferredHolder<Potion, Potion> TRANSMUTATION_ANTIDOTE =
         POTIONS.register("transmutation_antidote",
             () -> new Potion(new MobEffectInstance(ModMobEffects.TRANSMUTATION_ANTIDOTE, 1)));
+
+    /** 英雄药水的持续时间：3 分钟 = 3600 刻。 */
+    public static final int HEROISM_DURATION_TICKS = 3 * 60 * 20;
+
+    /**
+     * 英雄药水（Potion of Heroism）：饮用后 3 分钟内获得
+     * <b>力量 V、速度 V、抗性提升 IV、伤害吸收 V、再生 V、急迫 V、跳跃提升 II</b>
+     * （I 级 = amplifier 0，所以 V 级 = 4、IV 级 = 3、II 级 = 1）。
+     *
+     * <p>名字走原版规则：语言键 {@code item.minecraft.potion.effect.heroism}（= Potion of Heroism）。
+     * 由幸运物品子事件 {@code item/heroism_potion} 发放（见 {@code LuckyHeroEvents}）。
+     */
+    public static final DeferredHolder<Potion, Potion> HEROISM = POTIONS.register("heroism",
+        () -> new Potion(
+            new MobEffectInstance(MobEffects.DAMAGE_BOOST, HEROISM_DURATION_TICKS, 4),      // 力量 V
+            new MobEffectInstance(MobEffects.MOVEMENT_SPEED, HEROISM_DURATION_TICKS, 4),    // 速度 V
+            new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, HEROISM_DURATION_TICKS, 3), // 抗性提升 IV
+            new MobEffectInstance(MobEffects.ABSORPTION, HEROISM_DURATION_TICKS, 4),        // 伤害吸收 V
+            new MobEffectInstance(MobEffects.REGENERATION, HEROISM_DURATION_TICKS, 4),      // 再生 V
+            new MobEffectInstance(MobEffects.DIG_SPEED, HEROISM_DURATION_TICKS, 4),         // 急迫 V
+            new MobEffectInstance(MobEffects.JUMP, HEROISM_DURATION_TICKS, 1)));            // 跳跃提升 II
 }

@@ -64,4 +64,19 @@ a4test/
 # 上传/发布用本地素材与临时反编译目录
 uploads/
 tlmaid_tmp/
+# 第三方参考源码/反编译产物（本地查阅用，不入库；带前导斜杠=仅仓库根目录）
+/tools/aether-src/
+/tools/tf-classes/
+/tools/crash-6.5.9/
+/tools/jvmtest/
+/tools/jarcheck/
+/tools/jarcheck-661/
+/tools/barsprites/
+/Patchouli-release-*/
+/Morph-*/
+/.trae/
+/data/
+# 崩溃日志与临时备份
+hs_err_pid*.log
+/witchbosshut.nbt.bak
 

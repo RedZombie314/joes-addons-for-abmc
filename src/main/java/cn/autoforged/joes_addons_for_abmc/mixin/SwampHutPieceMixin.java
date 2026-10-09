@@ -18,7 +18,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
  * 拦截原版沼泽小屋（SwampHutPiece）的生成，按概率替换为自定义 witchbosshut 结构。
- * 概率规则：1% 或连续 200 座未出现则保底。
+ * 概率规则：1/10 或连续 20 座未出现则保底。
  * 调试模式下，仅第一座小屋必定替换，后续恢复正常概率。
  *
  * 线程注意：postProcess 在世界生成 worker 线程执行，严禁访问 SavedData（非线程安全，

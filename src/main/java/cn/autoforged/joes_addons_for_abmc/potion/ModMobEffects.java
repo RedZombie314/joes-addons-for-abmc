@@ -38,6 +38,18 @@ public class ModMobEffects {
     // ============ 原版附魔名批量注册为占位状态效果 ============
     // 仅注册为新的状态效果（无实际效果、无贴图），对应附魔魔咒名称。
     // 若同名状态效果已在注册表中存在则跳过，避免重复注册。
+
+    /**
+     * “保护”（{@code minecraft:protection}）占位效果。
+     * <p>
+     * 单独留一个具名引用，供需要点名取用的场合（目前是“附体空壳自带保护 16”，见
+     * {@code PlayerShellEntity#applyCoreBackedStats}）。
+     * 它<b>同时仍在</b> {@link #ENCHANTMENT_EFFECTS} 里，所以随机附魔池、图标隐藏、
+     * 附魔名映射三处逻辑都不受影响 —— 只是多了一个可以直接引用的句柄。
+     */
+    public static final DeferredHolder<MobEffect, MobEffect> PROTECTION =
+        MOB_EFFECTS.register("protection", () -> new PlaceholderMobEffect());
+
     public static final java.util.List<DeferredHolder<MobEffect, MobEffect>> ENCHANTMENT_EFFECTS =
         registerEnchantmentEffects();
 
@@ -49,12 +61,14 @@ public class ModMobEffects {
             "feather_falling", "fire_aspect", "fire_protection", "flame", "fortune",
             "frost_walker", "impaling", "infinity", "looting",
             "loyalty", "luck_of_the_sea", "lure", "mending", "multishot",
-            "piercing", "power", "projectile_protection", "protection", "punch",
+            "piercing", "power", "projectile_protection", "punch",
             "quick_charge", "respiration", "riptide", "sharpness", "silk_touch",
             "smite", "soul_speed", "sweeping_edge", "swift_sneak", "thorns", "unbreaking",
             "wind_burst"
         };
         java.util.List<DeferredHolder<MobEffect, MobEffect>> list = new java.util.ArrayList<>();
+        // 保护是单独注册的具名常量（见 PROTECTION），这里补回池子里，保持随机池内容与以前完全一致
+        list.add(PROTECTION);
         for (String n : names) {
             net.minecraft.resources.ResourceLocation rl =
                 net.minecraft.resources.ResourceLocation.fromNamespaceAndPath(ModMain.MODID, n);

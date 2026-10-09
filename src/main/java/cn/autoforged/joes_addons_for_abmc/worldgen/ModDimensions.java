@@ -93,6 +93,12 @@ public class ModDimensions {
         ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "creeper_clan");
 
     public static void bootstrapDimensionType(BootstrapContext<DimensionType> context) {
+        // 幸运维度：与主世界同一套天光/昼夜，但 MonsterSettings 的第一个参数 piglinSafe = true。
+        // piglin_safe 是"下界那一条"规则：它为 false 时，猪灵/猪灵蛮兵/疣猪兽会按 isConverting()
+        // 逐刻累积转化计时、最后变成僵尸猪灵/僵尸疣猪兽（AbstractPiglin.java:95、Hoglin.java:323，
+        // 判据就是 !level.dimensionType().piglinSafe()）。本维度按需求"不会导致猪灵等生物僵尸化"，
+        // 所以直接把它置 true —— 这是原版为"下界"提供的开关，用它比去 mixin 里拦转化要干净得多
+        // （拦转化还得处理计时器、转化后的实体类型等一堆状态）。
         context.register(LUCKY_DIM_TYPE, new DimensionType(
             OptionalLong.empty(),
             true,
@@ -108,7 +114,7 @@ public class ModDimensions {
             net.minecraft.tags.BlockTags.INFINIBURN_OVERWORLD,
             BuiltinDimensionTypes.OVERWORLD_EFFECTS,
             0.0F,
-            new DimensionType.MonsterSettings(false, false, net.minecraft.util.valueproviders.ConstantInt.of(0), 0)
+            new DimensionType.MonsterSettings(true, false, net.minecraft.util.valueproviders.ConstantInt.of(0), 0)
         ));
 
         context.register(PHYSICS_DIM_TYPE, new DimensionType(

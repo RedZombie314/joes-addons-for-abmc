@@ -57,6 +57,15 @@ public class ModConfig {
     /** 调试模式：开启后低概率事件以高概率发生。 */
     public static final ModConfigSpec.BooleanValue DEBUG_MODE;
 
+    /** 幸运方块选择器：寻物（{@code /jafa seek}）时悬停在掉落物正上方的高度（像素；16 像素 = 1 格）。 */
+    public static final ModConfigSpec.IntValue SELECTOR_SEEK_HOVER_PX;
+
+    /** 幸运方块选择器：寻物时把掉落物向上抬起的距离（像素；16 像素 = 1 格）。 */
+    public static final ModConfigSpec.IntValue SELECTOR_SEEK_LIFT_PX;
+
+    /** 幸运方块选择器：发送（{@code /jafa send}）时物品展示实体在 0~0.5 时间码里向上的距离（像素）。 */
+    public static final ModConfigSpec.IntValue SELECTOR_SEND_LIFT_PX;
+
     static {
         ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
 
@@ -88,7 +97,8 @@ public class ModConfig {
             .comment(
                 "Whether lucky_dimension_block uses random textures from full cube blocks.",
                 "When enabled, the block changes appearance every 10 ticks (staggered per-block by position)",
-                "with the filter.png texture overlay at 50% opacity.",
+                "and draws only that random material. The 50% filter.png overlay is currently disabled;",
+                "its code is kept in both renderers and can be re-enabled by uncommenting the call sites.",
                 "When disabled, the block shows its own static texture without any overlay."
             )
             .translation("joes_addons_for_abmc.config.lucky_dimension_block.lucky_dimension_block_random_textures")
@@ -266,6 +276,36 @@ public class ModConfig {
             )
             .translation("joes_addons_for_abmc.config.start.awake_brew_bottles_height")
             .defineInRange("awake_brew_bottles_height", 0.52, -1.0, 2.0);
+        builder.pop();
+
+        builder.translation("joes_addons_for_abmc.config.lucky_selector").push("lucky_selector");
+        SELECTOR_SEEK_HOVER_PX = builder
+            .comment(
+                "Lucky Selector: how high above the target item entity the selector hovers during /jafa seek.",
+                "Unit: pixels (16 px = 1 block).",
+                "Range: 0 .. 128, default 16"
+            )
+            .translation("joes_addons_for_abmc.config.lucky_selector.seek_hover_px")
+            .defineInRange("seek_hover_px", 16, 0, 128);
+        SELECTOR_SEEK_LIFT_PX = builder
+            .comment(
+                "Lucky Selector: how far the target item entity is lifted during /jafa seek.",
+                "The lift starts at timecode 0.5 of the retreat animation and finishes at 0.75",
+                "(these two timecodes are fixed to the animation timeline, not configurable).",
+                "Unit: pixels (16 px = 1 block).",
+                "Range: 0 .. 256, default 24"
+            )
+            .translation("joes_addons_for_abmc.config.lucky_selector.seek_lift_px")
+            .defineInRange("seek_lift_px", 24, 0, 256);
+        SELECTOR_SEND_LIFT_PX = builder
+            .comment(
+                "Lucky Selector: how far the carried item display rises during /jafa send.",
+                "It rises from timecode 0 to 0.5 of the send animation, then shrinks away from 0.5 to 0.75.",
+                "Unit: pixels (16 px = 1 block).",
+                "Range: 0 .. 256, default 24"
+            )
+            .translation("joes_addons_for_abmc.config.lucky_selector.send_lift_px")
+            .defineInRange("send_lift_px", 24, 0, 256);
         builder.pop();
 
         builder.translation("joes_addons_for_abmc.config.debug").push("debug");

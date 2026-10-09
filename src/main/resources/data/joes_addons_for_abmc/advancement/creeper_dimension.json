@@ -1,0 +1,31 @@
+{
+  "parent": "joes_addons_for_abmc:more_dimensions",
+  "display": {
+    "icon": {
+      "id": "minecraft:gunpowder"
+    },
+    "title": {
+      "translate": "advancements.joes_addons_for_abmc.creeper_dimension.title"
+    },
+    "description": {
+      "translate": "advancements.joes_addons_for_abmc.creeper_dimension.description"
+    },
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": true,
+    "hidden": false
+  },
+  "criteria": {
+    "enter_creeper_clan": {
+      "trigger": "minecraft:changed_dimension",
+      "conditions": {
+        "to": "joes_addons_for_abmc:creeper_clan"
+      }
+    }
+  },
+  "requirements": [
+    [
+      "enter_creeper_clan"
+    ]
+  ]
+}

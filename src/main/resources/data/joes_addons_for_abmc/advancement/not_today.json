@@ -1,0 +1,28 @@
+{
+  "parent": "joes_addons_for_abmc:greed",
+  "display": {
+    "icon": {
+      "id": "minecraft:mace"
+    },
+    "title": {
+      "translate": "advancements.joes_addons_for_abmc.not_today.title"
+    },
+    "description": {
+      "translate": "advancements.joes_addons_for_abmc.not_today.description"
+    },
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": true,
+    "hidden": false
+  },
+  "criteria": {
+    "hit_by_slow_falling": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "requirements": [
+    [
+      "hit_by_slow_falling"
+    ]
+  ]
+}

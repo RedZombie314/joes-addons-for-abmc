@@ -6,9 +6,11 @@ import javax.annotation.Nullable;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
 
 import cn.autoforged.joes_addons_for_abmc.damage.ModDamageTypes;
 
@@ -20,6 +22,9 @@ import cn.autoforged.joes_addons_for_abmc.damage.ModDamageTypes;
  * - 免疫任何伤害（无法被玩家/环境杀死）；
  * - 与 TNT 相反，其爆炸会对玩家（包括投掷者本人）造成伤害；
  * - 持久化 owner、fuse、爆炸半径，重载后行为保持一致。
+ * <p>
+ * 另有<b>直线飞行模式</b>（{@link #launchFlying}）：供"幸运核心附体玩家"的远程攻击当炮弹用 ——
+ * 关掉重力、锁定方向、每刻加速，撞到方块或生物即引爆。权杖那条抛掷路径完全不碰这个模式。
  *
  * 实现要点：苦力怕完全点燃后原版会在 30 刻内自爆。这里覆写 tick()，每次调用 super.tick()
  * （保证重力/移动等基础逻辑）后，通过反射把私有 swell 压低到 maxSwell 之下并做脉冲闪烁，
@@ -62,11 +67,35 @@ public class TntStaffCreeper extends Creeper {
     @Nullable
     private UUID ownerUuid;
 
+    // ====================== 直线飞行模式 ======================
+    // 供"幸运核心附体玩家"的远程攻击使用：把这只苦力怕当炮弹射出去。
+    // 与 TNT 权杖的抛掷模式互不影响（控制对象默认不在飞行，权杖那条路径一个字段都不碰）。
+    // 飞行/加速/命中判定/寿命全在 FlyingBombControl 里 —— 爆裂猫、爆裂僵尸用的是同一套。
+
+    /** 飞行控制：直线、匀加速、撞到方块或生物即爆、飞满 200 刻必爆。 */
+    private final FlyingBombControl bomb = new FlyingBombControl();
+
     public TntStaffCreeper(EntityType<? extends TntStaffCreeper> entityType, Level level) {
         super(entityType, level);
         // 作为一种被投掷的炸弹，移除普通苦力怕的移动/AI 目标行为，避免其四处游荡
         this.goalSelector.removeAllGoals(goal -> true);
         this.targetSelector.removeAllGoals(goal -> true);
+    }
+
+    /**
+     * 切换为"直线飞行"模式：关掉重力、锁定方向，此后每刻按加速度加速，撞到方块或生物即引爆。
+     * <p>
+     * 具体算法见 {@link FlyingBombControl}（含"为什么设速必须在 super.tick() 之前"）。
+     */
+    public void launchFlying(Entity shooter, Vec3 direction, float initialSpeedBlocksPerSecond,
+                             float accelerationBlocksPerSecondSquared) {
+        this.bomb.launch(this, shooter, direction, initialSpeedBlocksPerSecond, accelerationBlocksPerSecondSquared);
+        // 这是"附体攻击"的弹体，不能被和平难度或远处无玩家给刷掉
+        this.setPersistenceRequired();
+    }
+
+    public boolean isFlying() {
+        return this.bomb.isFlying();
     }
 
     public void setExplosionRadius(int radius) {
@@ -98,6 +127,8 @@ public class TntStaffCreeper extends Creeper {
         if (this.ownerUuid != null) compound.putUUID(TAG_JOES_OWNER, this.ownerUuid);
         compound.putInt(TAG_JOES_FUSE, this.fuse);
         compound.putInt(TAG_JOES_RADIUS, this.explosionRadius);
+        // 飞行状态也要存（NoGravity 是原版自己存的，只存一半读档后会变成悬在空中不动的苦力怕）
+        this.bomb.save(compound);
     }
 
     @Override
@@ -106,6 +137,7 @@ public class TntStaffCreeper extends Creeper {
         if (compound.hasUUID(TAG_JOES_OWNER)) this.ownerUuid = compound.getUUID(TAG_JOES_OWNER);
         if (compound.contains(TAG_JOES_FUSE, 3)) this.fuse = compound.getInt(TAG_JOES_FUSE);
         if (compound.contains(TAG_JOES_RADIUS, 3)) this.explosionRadius = compound.getInt(TAG_JOES_RADIUS);
+        this.bomb.load(compound);
     }
 
     /** 免疫任何伤害：任何伤害源都无法对本品造成伤害或使其死亡。 */
@@ -122,6 +154,9 @@ public class TntStaffCreeper extends Creeper {
 
     @Override
     public void tick() {
+        // 飞行模式的设速必须在 super.tick() 之前：本刻的位移是 travel() 用 deltaMovement 算的
+        this.bomb.tickSpeed(this);
+
         // 完整的基础移动/重力逻辑（包括 Creeper.tick 中原有的 swell 充能判定）
         super.tick();
 
@@ -139,8 +174,15 @@ public class TntStaffCreeper extends Creeper {
         }
 
         if (this.fuse > 1) {
-            // 只判定实心方块接触（复用 TNT 的判定），避免与投掷者等实体碰撞时瞬爆
-            if (this.onGround() || TntStaffPrimedTnt.touchingSolidBlock(this)) {
+            if (this.bomb.isFlying()) {
+                // 飞行弹：撞到方块、撞到生物、或飞满 200 刻 → 引爆（见 FlyingBombControl）
+                if (this.bomb.shouldDetonate(this)) {
+                    this.fuse = 1;
+                } else {
+                    this.fuse--;
+                }
+            } else if (this.onGround() || TntStaffPrimedTnt.touchingSolidBlock(this)) {
+                // 权杖那条抛掷路径：只判定实心方块接触，避免与投掷者等实体碰撞时瞬爆
                 this.fuse = 1;
             } else {
                 this.fuse--;

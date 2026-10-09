@@ -11,8 +11,14 @@ import cn.autoforged.joes_addons_for_abmc.entity.LapisFallingBlockRenderer;
 import cn.autoforged.joes_addons_for_abmc.entity.PortalRenderer;
 import cn.autoforged.joes_addons_for_abmc.entity.PlayerShellRenderer;
 import cn.autoforged.joes_addons_for_abmc.entity.ModEntities;
+import net.minecraft.client.renderer.entity.CatRenderer;
 import net.minecraft.client.renderer.entity.CreeperRenderer;
+import net.minecraft.client.renderer.entity.FireworkEntityRenderer;
+import net.minecraft.client.renderer.entity.PigRenderer;
+import net.minecraft.client.renderer.entity.SkeletonRenderer;
+import net.minecraft.client.renderer.entity.SlimeRenderer;
 import net.minecraft.client.renderer.entity.TntRenderer;
+import net.minecraft.client.renderer.entity.ZombieRenderer;
 import cn.autoforged.joes_addons_for_abmc.item.ModDataComponents;
 import cn.autoforged.joes_addons_for_abmc.item.ModItems;
 import cn.autoforged.joes_addons_for_abmc.item.StaffBakedModel;
@@ -61,6 +67,7 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.renderer.entity.ItemEntityRenderer;
 import net.minecraft.client.renderer.entity.ThrownItemRenderer;
 
 import net.minecraft.client.renderer.RenderType;
@@ -318,6 +325,13 @@ public class ClientEvents {
     private static final ResourceLocation STAFF_NOTEBLOCK_MODEL_ID =
         ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "item/staff_noteblock");
 
+    private static final ResourceLocation STAFF_LUCKY_MODEL_ID =
+        ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "item/staff_lucky");
+
+    private static final net.minecraft.client.resources.model.ModelResourceLocation STAFF_LUCKY_STANDALONE =
+        new net.minecraft.client.resources.model.ModelResourceLocation(STAFF_LUCKY_MODEL_ID,
+        net.minecraft.client.resources.model.ModelResourceLocation.STANDALONE_VARIANT);
+
     private static final net.minecraft.client.resources.model.ModelResourceLocation STAFF_NOTEBLOCK_STANDALONE =
         new net.minecraft.client.resources.model.ModelResourceLocation(STAFF_NOTEBLOCK_MODEL_ID,
             net.minecraft.client.resources.model.ModelResourceLocation.STANDALONE_VARIANT);
@@ -476,6 +490,20 @@ public class ClientEvents {
             (stack, tintIndex) -> 0xFF000000 | witchEgg.getColor(tintIndex),
             ModItems.WITCH_BOSS_SPAWN_EGG.get()
         );
+        // 苦力蜂刷怪蛋：套用原版苦力怕刷怪蛋的两层颜色（底色 + 斑点），即苦力怕配色。
+        net.minecraft.world.item.SpawnEggItem beeperEgg =
+            (net.minecraft.world.item.SpawnEggItem) net.minecraft.world.item.Items.CREEPER_SPAWN_EGG;
+        event.getItemColors().register(
+            (stack, tintIndex) -> 0xFF000000 | beeperEgg.getColor(tintIndex),
+            ModItems.BEEPER_SPAWN_EGG.get()
+        );
+        // BeeBoss 刷怪蛋：套用原版蜜蜂刷怪蛋的两层颜色（底色 + 斑点），外观与蜜蜂蛋一致。
+        net.minecraft.world.item.SpawnEggItem beeEgg =
+            (net.minecraft.world.item.SpawnEggItem) net.minecraft.world.item.Items.BEE_SPAWN_EGG;
+        event.getItemColors().register(
+            (stack, tintIndex) -> 0xFF000000 | beeEgg.getColor(tintIndex),
+            ModItems.BEEBOSS_SPAWN_EGG.get()
+        );
     }
 
     // 从物品/方块的默认贴图中提取“中位主色”：不透明像素颜色升序排序后取中位数
@@ -558,6 +586,7 @@ public class ClientEvents {
         event.register(STAFF_TNT_STANDALONE);
         event.register(STAFF_MC_STANDALONE);
         event.register(STAFF_LIGHTNING_ROD_STANDALONE);
+        event.register(STAFF_LUCKY_STANDALONE);
     }
 
     public static final KeyMapping STAFF_SWAP_BLOCKTYPE = new KeyMapping(
@@ -649,7 +678,74 @@ public class ClientEvents {
     private static boolean wasBlocking = false;
     public static boolean isClientBlocking = false;
 
+    /** 工作台帽子：上一刻右键是否处于按下状态（用于取"按下/松开"的边沿）。 */
+    private static boolean wasHatUseKeyDown = false;
+    /** 工作台帽子：按住右键已经持续的刻数（到 15 刻再发一次触发请求）。 */
+    private static int hatHoldTicks = 0;
+
     private static boolean propertiesRegistered = false;
+
+    /**
+     * wart on a stick：头盔栏里挂着地狱疣时，第一人称视角铺满地狱疣贴图。
+     * <p>插在原版 CAMERA_OVERLAYS（南瓜模糊/水下/着火）之后：盖在世界之上、准星与快捷栏之下，
+     * 并且旁观模式下同样会渲染（判定用摄像机实体，所以旁观戴着地狱疣的生物也生效）。
+     */
+    @SubscribeEvent
+    public static void registerWartHelmetOverlay(
+        net.neoforged.neoforge.client.event.RegisterGuiLayersEvent event) {
+        event.registerAbove(net.neoforged.neoforge.client.gui.VanillaGuiLayers.CAMERA_OVERLAYS,
+            ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "wart_helmet_overlay"),
+            cn.autoforged.joes_addons_for_abmc.client.WartHelmetOverlay::render);
+    }
+
+    /**
+     * 翅膀（wings）：给玩家（两种手臂模型）与盔甲架附加渲染层，穿在胸甲栏时按鞘翅模型画出来。
+     * <p>与原版鞘翅一致：只覆盖玩家与盔甲架（原版 {@code ElytraLayer} 也是挂在这两处）。
+     */
+    @SubscribeEvent
+    public static void addWingsLayers(EntityRenderersEvent.AddLayers event) {
+        for (net.minecraft.client.resources.PlayerSkin.Model skin : event.getSkins()) {
+            net.minecraft.client.renderer.entity.EntityRenderer<? extends net.minecraft.world.entity.player.Player> renderer
+                = event.getSkin(skin);
+            if (renderer instanceof net.minecraft.client.renderer.entity.player.PlayerRenderer playerRenderer) {
+                playerRenderer.addLayer(new cn.autoforged.joes_addons_for_abmc.client.WingsLayer<>(
+                    playerRenderer, event.getEntityModels()));
+            }
+        }
+        net.minecraft.client.renderer.entity.EntityRenderer<?> armorStand =
+            event.getRenderer(net.minecraft.world.entity.EntityType.ARMOR_STAND);
+        if (armorStand instanceof net.minecraft.client.renderer.entity.ArmorStandRenderer standRenderer) {
+            standRenderer.addLayer(new cn.autoforged.joes_addons_for_abmc.client.WingsLayer<>(
+                standRenderer, event.getEntityModels()));
+        }
+    }
+
+    /**
+     * 工作台帽子：戴在头上时用<b>物品模型</b>（Blockbench 导出的 3D 帽子）画出来。
+     *
+     * <p>只挂<b>玩家（两种手臂模型）与盔甲架</b> —— 与原版鞘翅、本模组翅膀同一个覆盖范围
+     * （原版 {@code CustomHeadLayer} 也只挂在 mob 渲染器上，玩家这边从来没人管）。
+     *
+     * <p>帽子在头上的位置/旋转/缩放由模型 JSON 的 {@code display.head} 决定，
+     * 所以调位置不用改代码（见 {@code CraftingHatLayer} 的类注释）。
+     */
+    @SubscribeEvent
+    public static void addCraftingHatLayers(EntityRenderersEvent.AddLayers event) {
+        for (net.minecraft.client.resources.PlayerSkin.Model skin : event.getSkins()) {
+            net.minecraft.client.renderer.entity.EntityRenderer<? extends net.minecraft.world.entity.player.Player> renderer
+                = event.getSkin(skin);
+            if (renderer instanceof net.minecraft.client.renderer.entity.player.PlayerRenderer playerRenderer) {
+                playerRenderer.addLayer(new cn.autoforged.joes_addons_for_abmc.client.CraftingHatLayer<>(
+                    playerRenderer));
+            }
+        }
+        net.minecraft.client.renderer.entity.EntityRenderer<?> armorStand =
+            event.getRenderer(net.minecraft.world.entity.EntityType.ARMOR_STAND);
+        if (armorStand instanceof net.minecraft.client.renderer.entity.ArmorStandRenderer standRenderer) {
+            standRenderer.addLayer(new cn.autoforged.joes_addons_for_abmc.client.CraftingHatLayer<>(
+                standRenderer));
+        }
+    }
 
     @SubscribeEvent
     public static void registerKeyMappings(RegisterKeyMappingsEvent event) {
@@ -696,8 +792,22 @@ public class ClientEvents {
             cn.autoforged.joes_addons_for_abmc.block.ModBlocks.JOB_FROSTED_ICE.get(),
             RenderType.translucent());
         // 霜冰原方块若被还原出不可见/其它半透明方块则由原版处理，无需设置。
-        event.registerEntityRenderer(ModEntities.THROWN_GLISTERING_MELON_KNIFE.get(), ThrownItemRenderer::new);
+        // 闪烁西瓜刀：渲染物品模型本身（带厚度），刀尖朝飞行方向——不用会一直正对摄像机的 ThrownItemRenderer
+        event.registerEntityRenderer(ModEntities.THROWN_GLISTERING_MELON_KNIFE.get(),
+            cn.autoforged.joes_addons_for_abmc.client.ThrownGlisteringMelonKnifeRenderer::new);
         event.registerEntityRenderer(ModEntities.PRISMARINE_ARROW.get(), PrismarineArrowRenderer::new);
+        // 需求 3'（6.5.28 修的崩溃）：可操控飞行金马<b>必须</b>登记渲染器。
+        // 漏了它的表现是"一召唤就崩"：客户端 LevelRenderer → EntityRenderDispatcher#shouldRender
+        // 拿到 null 渲染器直接 NPE（EntityRenderDispatcher.java:136），根本走不到画的那一步。
+        // 用原版马的渲染器：毛色、鞍、金马铠、缰绳全照旧。
+        event.registerEntityRenderer(ModEntities.PILOT_GOLDEN_HORSE.get(),
+            net.minecraft.client.renderer.entity.HorseRenderer::new);
+        // 爆炸之箭：暂时沿用原版箭的实体贴图
+        event.registerEntityRenderer(ModEntities.EXPLOSIVE_ARROW.get(),
+            cn.autoforged.joes_addons_for_abmc.client.ExplosiveArrowRenderer::new);
+        // 烈焰手杖的恶魂火球：与原版火焰弹同款渲染（物品贴图广告牌 + 全亮），尺寸照搬原版 FIREBALL 的 3.0
+        event.registerEntityRenderer(ModEntities.BLAZE_STAFF_FIREBALL.get(),
+            ctx -> new ThrownItemRenderer<cn.autoforged.joes_addons_for_abmc.entity.BlazeStaffFireball>(ctx, 3.0F, true));
         event.registerEntityRenderer(ModEntities.BEDROCK_FALLING_BLOCK.get(), BedrockFallingBlockRenderer::new);
         event.registerEntityRenderer(ModEntities.LAPIS_FALLING_BLOCK.get(), LapisFallingBlockRenderer::new);
         event.registerEntityRenderer(ModEntities.TRANSMUTATION_FALLING_BLOCK.get(),
@@ -708,13 +818,35 @@ public class ClientEvents {
         event.registerEntityRenderer(ModEntities.PORTAL.get(), PortalRenderer::new);
         event.registerEntityRenderer(ModEntities.POTION_PORTAL.get(), cn.autoforged.joes_addons_for_abmc.entity.PotionPortalRenderer::new);
         event.registerEntityRenderer(ModEntities.HEROBRINE_HEAD.get(), HerobrineHeadRenderer::new);
+        // 幸运核心：公告板面片 + 自定义 core shader（joes_addons_for_abmc:orbofluck），不使用贴图
+        event.registerEntityRenderer(ModEntities.ORB_OF_LUCK.get(),
+            cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckRenderer::new);
         event.registerEntityRenderer(ModEntities.PLAYER_SHELL.get(), PlayerShellRenderer::new);
         event.registerEntityRenderer(ModEntities.TNT_STAFF_PRIMED_TNT.get(), TntRenderer::new);
         event.registerEntityRenderer(ModEntities.TNT_STAFF_CREEPER.get(), CreeperRenderer::new);
+        // 附体召唤物：爆裂猫 / 爆裂僵尸 —— 它们是原版 Cat / Zombie 的派生类，直接用原版渲染器
+        event.registerEntityRenderer(ModEntities.ORB_EXPLOSIVE_CAT.get(), CatRenderer::new);
+        event.registerEntityRenderer(ModEntities.ORB_EXPLOSIVE_ZOMBIE.get(), ZombieRenderer::new);
+        // 附体召唤物：爆裂史莱姆 / 爆裂骷髅 —— 同上，直接用原版 Slime / Skeleton 渲染器
+        event.registerEntityRenderer(ModEntities.ORB_EXPLOSIVE_SLIME.get(), SlimeRenderer::new);
+        event.registerEntityRenderer(ModEntities.ORB_EXPLOSIVE_SKELETON.get(), SkeletonRenderer::new);
+        // 骷髅马：覆盖原版渲染器，补一层马凯 —— 附体召唤的骷髅马骑士有 30% 铁 / 30% 金马凯，
+        // 而原版 UndeadHorseRenderer 压根不画马凯（HorseArmorLayer 只挂在 HorseRenderer 上）。
+        // 只覆盖骷髅马，僵尸马仍是原版。
+        event.registerEntityRenderer(net.minecraft.world.entity.EntityType.SKELETON_HORSE,
+            cn.autoforged.joes_addons_for_abmc.client.UndeadHorseArmorLayer.Renderer::new);
         event.registerEntityRenderer(ModEntities.BREWING_STAFF_CLOUD.get(),
             cn.autoforged.joes_addons_for_abmc.client.BrewingStaffCloudRenderer::new);
-        // 附魔千纸鹤：先用 ThrownItemRenderer 渲染为一张“纸”贴图（依赖 ItemSupplier）。以后要自定义模型可替换此渲染器。
-        event.registerEntityRenderer(ModEntities.ENCHANTED_ORIGAMI.get(), ThrownItemRenderer::new);
+        // 附魔千纸鹤：按物品模型（EnchantedOrigamiEntity#getItem）渲染，但姿态用它自己的 yaw/pitch，
+        // 不再像 ThrownItemRenderer 那样永远正对摄像机。
+        event.registerEntityRenderer(ModEntities.ENCHANTED_ORIGAMI.get(),
+            cn.autoforged.joes_addons_for_abmc.client.EnchantedOrigamiRenderer::new);
+        // 幸运方块选择器：自带 Blockbench 模型（LuckySelectorModel），飞行的「选择框」
+        event.registerEntityRenderer(ModEntities.LUCKY_SELECTOR.get(),
+            cn.autoforged.joes_addons_for_abmc.client.LuckySelectorRenderer::new);
+        // 幸运掉落物：外观与普通掉落物完全一样，直接用原版 ItemEntityRenderer
+        // （泛型上 T 推成 ItemEntity 即可，LuckyItemEntity 是它的子类）
+        event.registerEntityRenderer(ModEntities.LUCKY_ITEM.get(), ItemEntityRenderer::new);
         // 魔咒子弹：空渲染器（什么都不画）。之后若要贴图可在 render() 里绘制。
         event.registerEntityRenderer(ModEntities.ENCHANTMENT_BULLET.get(), ctx ->
             new net.minecraft.client.renderer.entity.EntityRenderer<cn.autoforged.joes_addons_for_abmc.entity.EnchantmentBullet>(ctx) {
@@ -736,8 +868,19 @@ public class ClientEvents {
         // 可持有的结构：参照原版 BlockDisplayRenderer 的渲染体系，逐结构方块渲染（支持 xyz 三轴视觉旋转）。
         event.registerEntityRenderer(ModEntities.HOLDABLE_STRUCTURE.get(),
             cn.autoforged.joes_addons_for_abmc.entity.HoldableStructureRenderer::new);
-        event.registerBlockEntityRenderer(ModBlockEntities.LUCKY_DIMENSION_BLOCK_ENTITY.get(), LuckyDimensionBlockRenderer::new);
-        event.registerBlockEntityRenderer(ModBlockEntities.LUCKY_PORTAL_BLOCK_ENTITY.get(), LuckyPortalBlockRenderer::new);
+        // 苦力蜂（Beeper）：蜜蜂模型 + beeper 贴图
+        event.registerEntityRenderer(ModEntities.BEEPER.get(), cn.autoforged.joes_addons_for_abmc.client.BeeperRenderer::new);
+        // ===== 6.5.5 新增的幸运事件实体 =====
+        // 金粒猪 / 烟花猪：都是原版猪的派生类，直接用原版 PigRenderer
+        event.registerEntityRenderer(ModEntities.GOLD_NUGGET_PIG.get(), PigRenderer::new);
+        event.registerEntityRenderer(ModEntities.FIREWORK_PIG.get(), PigRenderer::new);
+        // 诱猪胡萝卜：外观就是普通掉落物（物品栏里那件是带自定义名字的胡萝卜）
+        event.registerEntityRenderer(ModEntities.PIG_BAIT_CARROT.get(), ItemEntityRenderer::new);
+        // 摇摆烟花火箭：原版烟花火箭渲染器（类名是 FireworkEntityRenderer，渲染 entity.getItem()）
+        event.registerEntityRenderer(ModEntities.LUCKY_FIREWORK_ROCKET.get(), FireworkEntityRenderer::new);
+        // 反弹盾牌：物品展示实体（正常大小的盾牌）。原版 ItemDisplayRenderer 构造器是 protected，包了个壳
+        event.registerEntityRenderer(ModEntities.REFLECTING_SHIELD.get(),
+            cn.autoforged.joes_addons_for_abmc.client.ReflectingShieldDisplayRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.LUCKY_DIMENSION_BLOCK_ENTITY.get(), LuckyDimensionBlockRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.LUCKY_PORTAL_BLOCK_ENTITY.get(), LuckyPortalBlockRenderer::new);
     }
@@ -752,6 +895,11 @@ public class ClientEvents {
                     lr.addLayer(new cn.autoforged.joes_addons_for_abmc.client.TransplantedHeadLayer(lr));
                     lr.addLayer(new cn.autoforged.joes_addons_for_abmc.client.TransplantedFeetLayer(lr));
                     lr.addLayer(new cn.autoforged.joes_addons_for_abmc.client.EnchantGlintLayer(lr));
+                    // BeeBoss 蜜蜂：渲染其主手物品（原版蜜蜂与 Beeper 均适用）
+                    if (renderer instanceof net.minecraft.client.renderer.entity.BeeRenderer br) {
+                        br.addLayer(new cn.autoforged.joes_addons_for_abmc.client.BeeBossHeldItemLayer(br,
+                            net.minecraft.client.Minecraft.getInstance().getItemRenderer()));
+                    }
                 }
             } catch (Exception ignored) {
                 // 个别类型添加层失败，不影响其余类型
@@ -1162,6 +1310,10 @@ public class ClientEvents {
     @SubscribeEvent
     public static void registerLayerDefinitions(EntityRenderersEvent.RegisterLayerDefinitions event) {
         event.registerLayerDefinition(HEROBRINE_HEAD_LAYER, HerobrineHeadRenderer::createHerobrineHeadLayer);
+        // 幸运方块选择器：Blockbench 导出的自带骨骼模型
+        event.registerLayerDefinition(
+            cn.autoforged.joes_addons_for_abmc.client.model.LuckySelectorModel.LAYER_LOCATION,
+            cn.autoforged.joes_addons_for_abmc.client.model.LuckySelectorModel::createBodyLayer);
     }
 
     @SubscribeEvent
@@ -1210,7 +1362,8 @@ public class ClientEvents {
             && event.getModels().containsKey(STAFF_SPAWNER_STANDALONE)
             && event.getModels().containsKey(STAFF_TNT_STANDALONE)
             && event.getModels().containsKey(STAFF_MC_STANDALONE)
-            && event.getModels().containsKey(STAFF_LIGHTNING_ROD_STANDALONE)) {
+            && event.getModels().containsKey(STAFF_LIGHTNING_ROD_STANDALONE)
+            && event.getModels().containsKey(STAFF_LUCKY_STANDALONE)) {
             net.minecraft.client.resources.model.BakedModel defaultModel = event.getModels().get(staffMRL);
             net.minecraft.client.resources.model.BakedModel goldModel = event.getModels().get(STAFF_GOLD_STANDALONE);
             net.minecraft.client.resources.model.BakedModel netheriteModel = event.getModels().get(STAFF_NETHERITE_STANDALONE);
@@ -1252,7 +1405,8 @@ public class ClientEvents {
             net.minecraft.client.resources.model.BakedModel tntModel = event.getModels().get(STAFF_TNT_STANDALONE);
             net.minecraft.client.resources.model.BakedModel mcModel = event.getModels().get(STAFF_MC_STANDALONE);
             net.minecraft.client.resources.model.BakedModel lightningRodModel = event.getModels().get(STAFF_LIGHTNING_ROD_STANDALONE);
-            event.getModels().put(staffMRL, new StaffBakedModel(defaultModel, goldModel, netheriteModel, diamondModel, bedrockModel, obsidianModel, boneModel, furnaceModel, furnaceOnModel, bellModel, anvilModel, lapisModel, magmaModel, omegaModel, commandModel, endPortalModel, enchantModel, playerHeadModel, herobrineModel, barrierModel, dripstoneModel, cauldronModel, brewingStandModel, craftingTableModel, emeraldModel, iceModel, ironModel, netherrackModel, noteblockModel, oakModel, pistonModel, redMushroomModel, redstoneModel, snowModel, beeNestModel, amethystModel, cobwebModel, spawnerModel, tntModel, lightningRodModel, mcModel));
+        net.minecraft.client.resources.model.BakedModel luckyModel = event.getModels().get(STAFF_LUCKY_STANDALONE);
+            event.getModels().put(staffMRL, new StaffBakedModel(defaultModel, goldModel, netheriteModel, diamondModel, bedrockModel, obsidianModel, boneModel, furnaceModel, furnaceOnModel, bellModel, anvilModel, lapisModel, magmaModel, omegaModel, commandModel, endPortalModel, enchantModel, playerHeadModel, herobrineModel, barrierModel, dripstoneModel, cauldronModel, brewingStandModel, craftingTableModel, emeraldModel, iceModel, ironModel, netherrackModel, noteblockModel, oakModel, pistonModel, redMushroomModel, redstoneModel, snowModel, beeNestModel, amethystModel, cobwebModel, spawnerModel, tntModel, lightningRodModel, mcModel, luckyModel));
         }
     }
 
@@ -1335,6 +1489,21 @@ public class ClientEvents {
             }
             int alpha = Math.min(255,
                 (int) ((StaffClientState.commandStaffModeFlashTicks / 60.0f) * 255.0f));
+            int screenWidth = mc.getWindow().getGuiScaledWidth();
+            int screenHeight = mc.getWindow().getGuiScaledHeight();
+            int textWidth = font.width(text);
+            guiGraphics.drawString(font, text, (screenWidth - textWidth) / 2, staffModeTextY(mc, screenHeight - 60),
+                (alpha << 24) | (color & 0xFFFFFF));
+        }
+
+        // 蜂巢权杖：切到手里后在屏幕中下方短暂显示蜂巢内蜜蜂数量并淡出（仿命令方块权杖提示）
+        if (isHoldingBeeNestStaff() && StaffClientState.beeStaffCountFlashTicks > 0) {
+            GuiGraphics guiGraphics = event.getGuiGraphics();
+            Font font = mc.font;
+            String text = "蜂巢蜜蜂: " + StaffClientState.beeStaffCountToShow;
+            int color = 0x55C8FF;
+            int alpha = Math.min(255,
+                (int) ((StaffClientState.beeStaffCountFlashTicks / 60.0f) * 255.0f));
             int screenWidth = mc.getWindow().getGuiScaledWidth();
             int screenHeight = mc.getWindow().getGuiScaledHeight();
             int textWidth = font.width(text);
@@ -1563,6 +1732,62 @@ public class ClientEvents {
             && "iron_block".equals(offHand.getOrDefault(ModDataComponents.BLOCKTYPE.get(), "empty"));
     }
 
+    /** 判断当前是否持有蜂巢权杖（主手或副手）。 */
+    private static boolean isHoldingBeeNestStaff() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) return false;
+        ItemStack mainHand = mc.player.getMainHandItem();
+        if (mainHand.getItem() instanceof StaffItem
+            && "bee_nest".equals(mainHand.getOrDefault(ModDataComponents.BLOCKTYPE.get(), "empty"))) {
+            return true;
+        }
+        ItemStack offHand = mc.player.getOffhandItem();
+        return offHand.getItem() instanceof StaffItem
+            && "bee_nest".equals(offHand.getOrDefault(ModDataComponents.BLOCKTYPE.get(), "empty"));
+    }
+
+    /**
+     * 黑暗分身渲染期间的贴图替换开关：Pre 置位、Post 复位。
+     * 刻意「每个实体渲染前都重设一次」而不是单纯置位/复位——即使某次 Post 因渲染提前返回而没触发，
+     * 下一个实体的 Pre 也会把状态覆盖掉，因此不会卡住。渲染是单线程的，内部用 ThreadLocal 隔离工作线程。
+     */
+    @SubscribeEvent
+    public static void onDarkCloneRenderPre(
+            net.neoforged.neoforge.client.event.RenderLivingEvent.Pre event) {
+        cn.autoforged.joes_addons_for_abmc.client.DarkCloneTextureCache.setActive(
+            cn.autoforged.joes_addons_for_abmc.entity.DarkCloneAttachments.isDarkClone(event.getEntity()));
+    }
+
+    @SubscribeEvent
+    public static void onDarkCloneRenderPost(
+            net.neoforged.neoforge.client.event.RenderLivingEvent.Post event) {
+        cn.autoforged.joes_addons_for_abmc.client.DarkCloneTextureCache.setActive(false);
+    }
+
+    /**
+     * 黑暗分身·记录：按下左键（攻击键）时请求服务端记录准星所指生物。
+     *
+     * <p>用 {@code InteractionKeyMappingTriggered} 而不是在 ClientTickEvent 里读
+     * {@code keyAttack.isDown()}：原版是 {@code while (keyAttack.consumeClick()) startAttack()}，
+     * 而 {@code startAttack()} 里恰好触发一次本事件，所以每一次点击都不会被漏掉；
+     * isDown() 的边沿检测则会漏掉「同一 tick 内按下又松开」的快速点击。
+     * 也不能自己去调 {@code consumeClick()}——那会把点击从原版攻击逻辑里抢走。
+     *
+     * <p>只在完整姿态（主手黑草方块 + 副手白草方块）下发包，避免无关左键刷包；
+     * 服务端会重新校验姿态与射线，包体为空，客户端无法伪造记录目标。
+     */
+    @SubscribeEvent
+    public static void onDarkCloneRecordKey(
+            net.neoforged.neoforge.client.event.InputEvent.InteractionKeyMappingTriggered event) {
+        if (!event.isAttack()) return;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.level == null) return;
+        // 只要是「持有黑草方块」就发包：记录需要完整姿态、256 格抹除只需黑草方块，
+        // 两者都由服务端判定，客户端只负责别在无关的左键上刷包。
+        if (!cn.autoforged.joes_addons_for_abmc.entity.DarkCloneHelper.holdsBlackGrassBlock(mc.player)) return;
+        PacketDistributor.sendToServer(new cn.autoforged.joes_addons_for_abmc.network.DarkCloneRecordPayload());
+    }
+
     @SubscribeEvent
     public static void registerClientPayloads(RegisterPayloadHandlersEvent event) {
         PayloadRegistrar registrar = event.registrar(ModMain.MODID);
@@ -1754,6 +1979,10 @@ public class ClientEvents {
         private static boolean wasCobwebAttackPressed = false;
         // 铁链权杖：攻击键（左键）按下状态，用于边沿检测触发铁链断开（甩出目标）
         private static boolean wasChainAttackPressed = false;
+        // 蜂巢权杖：攻击键（左键）按下状态，用于边沿检测触发释放全部蜜蜂
+        private static boolean wasBeeAttackPressed = false;
+        // 蜂巢权杖：左Alt 按住时的本地释放倒计时（每 10 刻放一只）
+        private static int beeAltReleaseCooldown = 0;
         // 命令方块权杖：攻击键（左键）按下状态，用于边沿检测触发能力动作
         private static boolean wasCommandStaffAttackPressed = false;
         // 酿造台权杖：攻击键（左键）按下状态，用于边沿检测切换 form（药瓶/药水云）
@@ -1761,6 +1990,8 @@ public class ClientEvents {
         private static boolean wasNoteSheetAttackPressed = false;
         // 命令方块权杖：是否正手持的边沿检测（刚拿起时显示一次当前模式）
         private static boolean wasCommandStaffHeld = false;
+        // 蜂巢权杖：是否正手持的边沿检测（刚拿起时显示一次蜂巢蜜蜂数量）
+        private static boolean wasBeeStaffHeld = false;
         // 客户端本地维护的传送门预览状态（逐帧渲染幽灵，避免服务端20Hz同步造成步进式跳动）
         private static double portalDist = 2.0;
         private static boolean portalAimExit = false;
@@ -1885,6 +2116,51 @@ public class ClientEvents {
 
             // 木锄调试 holdable structure：仅对锁定（吸附）中的结构生效（服务端也会兜底校验）
             updateWoodenHoeDebug(mc);
+
+            // 幸运维度内：外观是"烘进区块网格"的，网格有缓存，必须重新编译才会变。
+            // 这里每刻轮转标记玩家周围 3×3×3 = 27 个区块段中的 3 个（约 0.45 秒扫完一遍），
+            // 既让材质变化快到 ~0.5 秒一次，又把重编译的尖峰摊平（不至于一次卡一下）。
+            if (mc.player != null && mc.level != null
+                && mc.level.dimension().location()
+                    .equals(cn.autoforged.joes_addons_for_abmc.block.renderer.LuckyDimensionBlockRenderer.LUCKY_DIMENSION_KEY)) {
+                int sx = mc.player.blockPosition().getX() >> 4;
+                int sy = mc.player.blockPosition().getY() >> 4;
+                int sz = mc.player.blockPosition().getZ() >> 4;
+                int base = mc.player.tickCount * 3;
+                for (int n = 0; n < 3; n++) {
+                    int index = (base + n) % 27;
+                    mc.levelRenderer.setSectionDirty(sx + (index % 3) - 1,
+                        sy + ((index / 3) % 3) - 1, sz + (index / 9) - 1);
+                }
+            }
+
+            // 工作台帽子：戴着帽子 + 主手为空时——
+            //   按下瞬间触发一次；按住不放每 15 刻再触发一次；松开的瞬间通知服务端取消还在飞行中的合成事件。
+            // 注意按键状态用物理键（不受 GUI 影响）：否则右键打开箱子等界面时会被误判成"松开"而取消合成。
+            boolean hatUseKeyDown = mc.options.keyUse.isDown();
+            boolean hatReady = mc.screen == null
+                && mc.player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.HEAD).getItem()
+                    instanceof cn.autoforged.joes_addons_for_abmc.item.CraftingTableHatItem
+                && mc.player.getMainHandItem().isEmpty();
+            if (hatUseKeyDown && !wasHatUseKeyDown) {
+                hatHoldTicks = 0;
+                if (hatReady) {
+                    PacketDistributor.sendToServer(
+                        new cn.autoforged.joes_addons_for_abmc.network.CraftingHatUsePayload());
+                }
+            } else if (hatUseKeyDown && hatReady) {
+                if (++hatHoldTicks >= cn.autoforged.joes_addons_for_abmc.craftinghat.CraftingHatCrafting.COOLDOWN_TICKS) {
+                    hatHoldTicks = 0;
+                    PacketDistributor.sendToServer(
+                        new cn.autoforged.joes_addons_for_abmc.network.CraftingHatUsePayload());
+                }
+            } else if (!hatUseKeyDown && wasHatUseKeyDown) {
+                hatHoldTicks = 0;
+                PacketDistributor.sendToServer(
+                    new cn.autoforged.joes_addons_for_abmc.network.CraftingHatCancelPayload());
+            }
+            wasHatUseKeyDown = hatUseKeyDown;
+            if (!hatReady) hatHoldTicks = 0;
 
             boolean holdingKnifeMain = mc.player.getMainHandItem().getItem() == ModItems.GLISTERING_MELON_KNIFE.get();
             boolean holdingKnifeOff = mc.player.getOffhandItem().getItem() == ModItems.GLISTERING_MELON_KNIFE.get();
@@ -2012,6 +2288,28 @@ public class ClientEvents {
             }
             wasChainAttackPressed = chainAttackPressed;
 
+            // 蜂巢权杖：持有权杖时按下攻击键（左键）→ 释放全部蜜蜂（服务端做 128 格预判）
+            boolean holdingBeeStaff = isHoldingBeeNestStaff();
+            boolean beeAttackPressed = holdingBeeStaff && mc.options.keyAttack.isDown();
+            if (beeAttackPressed && !wasBeeAttackPressed) {
+                PacketDistributor.sendToServer(
+                    new cn.autoforged.joes_addons_for_abmc.network.BeeStaffAttackPayload());
+            }
+            wasBeeAttackPressed = beeAttackPressed;
+            // 蜂巢权杖：按住左Alt → 每 10 刻持续释放一只友善蜜蜂（服务端也已做冷却兜底）
+            boolean beeAltHeld = holdingBeeStaff && PORTAL_CANCEL_KEY.isDown();
+            if (beeAltHeld) {
+                if (beeAltReleaseCooldown <= 0) {
+                    PacketDistributor.sendToServer(
+                        new cn.autoforged.joes_addons_for_abmc.network.BeeStaffReleaseOnePayload());
+                    beeAltReleaseCooldown = 10;
+                } else {
+                    beeAltReleaseCooldown--;
+                }
+            } else {
+                beeAltReleaseCooldown = 0;
+            }
+
             // 命令方块权杖：持有权杖时按下攻击键（左键），按当前能力对准被瞄准的生物执行动作。
             // 仅击杀(1)/抓取(2)/启用AI(3)模式响应左键；无(0)模式左键无任何行为，护盾(4)为持续生效模式。
             boolean holdingCommandStaff = isHoldingCommandStaff();
@@ -2020,6 +2318,21 @@ public class ClientEvents {
                 StaffClientState.commandStaffModeFlashTicks = 60;
             }
             wasCommandStaffHeld = holdingCommandStaff;
+
+            // 蜂巢权杖：切到手里时在屏幕中下方短暂显示蜂巢内蜜蜂数量（仿命令方块权杖）
+            boolean holdingBeeStaffNow = isHoldingBeeNestStaff();
+            if (holdingBeeStaffNow && !wasBeeStaffHeld) {
+                ItemStack heldBee = mc.player.getMainHandItem().getItem() instanceof StaffItem
+                    ? mc.player.getMainHandItem() : mc.player.getOffhandItem();
+                StaffClientState.beeStaffCountToShow =
+                    heldBee.getOrDefault(net.minecraft.core.component.DataComponents.BEES,
+                        java.util.List.of()).size();
+                StaffClientState.beeStaffCountFlashTicks = 60;
+            }
+            wasBeeStaffHeld = holdingBeeStaffNow;
+            if (StaffClientState.beeStaffCountFlashTicks > 0) {
+                StaffClientState.beeStaffCountFlashTicks--;
+            }
 
             int commandStaffModeLocal = StaffClientState.commandStaffMode;
             boolean commandStaffAttackPressed = holdingCommandStaff && mc.options.keyAttack.isDown();
@@ -2301,10 +2614,22 @@ public class ClientEvents {
 
     }
 
-    // 逐帧渲染传送门“幽灵”预览：直接使用本帧的视线，平滑且不抖动
+    /**
+     * 幸运维度地形的随机外观：在区块编译阶段写进区块段自己的顶点缓冲（和普通方块一起合批、
+     * 一起做剔除、全视距生效），取代原先"每个方块一次 BER 派发"的方案。
+     */
+    @SubscribeEvent
+    public static void onAddSectionGeometry(net.neoforged.neoforge.client.event.AddSectionGeometryEvent event) {
+        cn.autoforged.joes_addons_for_abmc.block.renderer.LuckyDimensionSectionRenderer.addGeometry(event);
+    }
+
     @SubscribeEvent
     public static void onRenderLevelStage(RenderLevelStageEvent event) {
         if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_TRANSLUCENT_BLOCKS) return;
+
+        // 显式提交幸运维度方块在方块实体通道里写入的批次
+        // （原版该通道后只 flush 固定几个类型，不显式提交就会"代码跑了但画面没有"）
+        cn.autoforged.joes_addons_for_abmc.block.renderer.LuckyDimensionBlockRenderer.flushBatches();
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
 
@@ -2317,6 +2642,13 @@ public class ClientEvents {
 
         // 铁链线段（铁块权杖）：钩取中渲染“玩家发射点→目标”，未命中时播放发射收回动画
         renderChainBeam(mc, event);
+
+        // 附体空壳的铁抓钩：在“空壳 → 被拉的玩家”之间画同款铁链（用户指定的近战攻击）
+        renderOrbHookChain(mc, event);
+
+        // 守卫者光波（附体远程攻击）：服务端算好"起点/终点/颜色/亮多久"，这里照着画一条激光。
+        // 必须放在下面那条"仅按住右键瞄准时显示"的提前返回之前 —— 它跟玩家按住什么键无关。
+        cn.autoforged.joes_addons_for_abmc.client.GuardianLaserClient.render(event);
 
         if (!mc.options.keyUse.isDown()) return; // 仅按住右键瞄准时显示
         if (!isHoldingEndPortalStaffClient(mc.player)) return;
@@ -2367,11 +2699,6 @@ public class ClientEvents {
         return false;
     }
 
-    /** 守卫者激光光束纹理（原版守护者攻击光束，白色发光）。该纹理为 32×32、
-     *  横向双帧：左半与右半各是一条光束（原版交替闪烁实现“变形”动画），渲染时只取其一。 */
-    private static final ResourceLocation GUARDIAN_BEAM_TEX =
-        net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("minecraft", "textures/entity/guardian_beam.png");
-
     // 蛛丝起始点低通平滑滤波器：随玩家移动/转头逐帧向目标点收敛，降低丝带起始端的帧间抖动。
     private static boolean beamSmoothReady;
     private static Vec3 beamSmoothAnchor;
@@ -2407,93 +2734,78 @@ public class ClientEvents {
         try {
             MultiBufferSource.BufferSource buf =
                 MultiBufferSource.immediate(new ByteBufferBuilder(1 << 16));
-            renderGuardianLaser(event.getPoseStack(), cam, start, anchor, buf);
+            renderWebStar(event.getPoseStack(), cam, start, anchor, buf);
             buf.endBatch();
         } catch (Throwable t) {
             // 单帧渲染异常不影响后续帧与主渲染管线
         }
     }
 
-    /** 在 a、b 之间沿线段排列一串“守卫者激光”贴图：每个贴图保持原版守卫者光束贴图的
-     *  正常大小（不拉伸），面向相机（billboard）渲染，每格排列一个。数量随 a→b 距离成正比
-     *  增减（距离越大贴图越多），仿佛在一条线上排列了多个激光贴图。
-     *  <p>guardian_beam.png 是 32×32、横向双帧纹理（左半与右半各是一条光束，原版通过
-     *  U 0..0.5 / 0.5..1.0 交替闪烁实现“变形”动画）。这里 U 固定只取 0..0.5（其中一帧），
-     *  避免两帧同时渲染在贴图上造成“多个贴图叠加”。 */
-    private static void renderGuardianLaser(PoseStack ps, Vec3 cam, Vec3 a, Vec3 b,
-                                            MultiBufferSource ms) {
+    /** 蛛网十字星贴图：web.png（13×32 竖直椭圆蛛网）。 */
+    private static final ResourceLocation WEB_TEX =
+        net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("joes_addons_for_abmc", "textures/block/web.png");
+
+    /** 在 a、b 之间沿线段排列一串“蛛网十字星”：每个十字星由两片互相垂直的 billboard 平面
+     *  （十字交叉）构成，每片都显示完整 web.png 蛛网贴图，采用固定正交基（不依赖相机方向），
+     *  使两片从大多数角度都可见、构成立体十字星。数量随 a→b 距离成正比增减。 */
+    private static void renderWebStar(PoseStack ps, Vec3 cam, Vec3 a, Vec3 b,
+                                        MultiBufferSource ms) {
         double rx = b.x - a.x, ry = b.y - a.y, rz = b.z - a.z;
         double lenSq = rx * rx + ry * ry + rz * rz;
         if (lenSq < 1.0E-8) return;
         double len = Math.sqrt(lenSq);
-        Vec3 dir = new Vec3(rx / len, ry / len, rz / len);
+        Vec3 forward = new Vec3(rx / len, ry / len, rz / len);
 
-        // 沿线方向每 0.35 格一个贴图：个数随距离增减，至少 1 个。
-        // 间距小于贴图边长（0.5），使相邻贴图在激光方向上互相重叠，
-        // 消除“贴图之间相隔太远”造成的视觉断开，透明区也被相邻贴图覆盖。
+        // 沿线方向每 0.35 格一个十字星：个数随距离增减，至少 1 个。
         double spacing = 0.35;
         int count = Math.max(1, (int) Math.floor(len / spacing));
 
-        // billboard 朝向：正对相机的“完整 billboard”，同时用世界竖直方向对齐贴图的上方——
-        // right = look × worldUp（水平横轴），up = right × look（屏幕上的竖直方向）。
-        // 这样贴图始终面向玩家视角，且贴图内容（纵向光束）保持竖直、不会旋转 90°。
-        Vec3 mid = new Vec3((a.x + b.x) * 0.5, (a.y + b.y) * 0.5, (a.z + b.z) * 0.5);
-        Vec3 toCam = new Vec3(cam.x - mid.x, cam.y - mid.y, cam.z - mid.z);
-        double tcl = toCam.length();
-        Vec3 right, up;
-        if (tcl < 1.0E-6) {
-            right = new Vec3(1, 0, 0);
-            up = new Vec3(0, 1, 0);
+        // 固定正交基（不依赖相机方向）：side1 = 世界 up 投影到垂直于 forward 的平面；
+        // side2 = forward × side1。两片各由 (side, forward) 张成、互相垂直，形成绕链条方向的十字。
+        Vec3 up = new Vec3(0, 1, 0);
+        double fU = forward.dot(up);
+        Vec3 side1raw = new Vec3(up.x - forward.x * fU, up.y - forward.y * fU, up.z - forward.z * fU);
+        double s1len = side1raw.length();
+        Vec3 side1, side2;
+        if (s1len < 1.0E-6) {
+            side1 = new Vec3(1, 0, 0);
+            side2 = new Vec3(0, 0, 1);
         } else {
-            Vec3 look = toCam.scale(1.0 / tcl);
-            // look × worldUp = (-look.z, 0, look.x)：水平且垂直于视线
-            right = new Vec3(-look.z, 0, look.x);
-            double rl = right.length();
-            if (rl < 1.0E-6) {
-                // 视线竖直（正上/正下看）：横轴退化，退化为固定竖直贴图
-                right = new Vec3(1, 0, 0);
-                up = new Vec3(0, 1, 0);
-            } else {
-                right = right.scale(1.0 / rl);
-                up = right.cross(look);
-                double ul = up.length();
-                up = ul < 1.0E-6 ? new Vec3(0, 1, 0) : up.scale(1.0 / ul);
-            }
+            side1 = side1raw.scale(1.0 / s1len);
+            side2 = forward.cross(side1).normalize();
         }
 
-        // 贴图边长（正常大小的一半，不随距离拉伸）
-        float size = 0.5F;
-        float h = size * 0.5F;
-        float hx = (float) (right.x * h), hy = (float) (right.y * h), hz = (float) (right.z * h);
-        float ux = (float) (up.x * h), uy = (float) (up.y * h), uz = (float) (up.z * h);
+        // 贴图半边长：web.png 为 13×16？——实为 13×32（宽 13 / 高 32）。长轴（沿 forward）用 hh，
+        // 短轴（垂直 forward）用 hw，宽高比与贴图保持一致以避免扭曲。
+        float hh = 0.5F;                  // 沿 forward 半边长（贴图高度一半）
+        float hw = hh * (13.0F / 32.0F);  // 垂直 forward 半边长，与贴图 13:32 等比
 
         Matrix4f mat = ps.last().pose();
-        VertexConsumer c = ms.getBuffer(RenderType.entityTranslucent(GUARDIAN_BEAM_TEX));
+        VertexConsumer c = ms.getBuffer(RenderType.entityTranslucent(WEB_TEX));
         int light = 15728880;
         for (int i = 0; i < count; i++) {
-            // 贴图中心沿线段的位置：仅 1 个时居中，否则每格一个
             double t = count == 1 ? len / 2.0 : (i + 0.5) * spacing;
-            float px = (float) (a.x + dir.x * t - cam.x);
-            float py = (float) (a.y + dir.y * t - cam.y);
-            float pz = (float) (a.z + dir.z * t - cam.z);
-            c.addVertex(mat, px + hx + ux, py + hy + uy, pz + hz + uz)
-                .setColor(255, 255, 255, 255).setUv(1, 0)
-                .setOverlay(OverlayTexture.NO_OVERLAY).setLight(light).setNormal(0, 0, 1);
-            c.addVertex(mat, px - hx + ux, py - hy + uy, pz - hz + uz)
-                .setColor(255, 255, 255, 255).setUv(1, 0.5F)
-                .setOverlay(OverlayTexture.NO_OVERLAY).setLight(light).setNormal(0, 0, 1);
-            c.addVertex(mat, px - hx - ux, py - hy - uy, pz - hz - uz)
-                .setColor(255, 255, 255, 255).setUv(0, 0.5F)
-                .setOverlay(OverlayTexture.NO_OVERLAY).setLight(light).setNormal(0, 0, 1);
-            c.addVertex(mat, px + hx - ux, py + hy - uy, pz + hz - uz)
-                .setColor(255, 255, 255, 255).setUv(0, 0)
-                .setOverlay(OverlayTexture.NO_OVERLAY).setLight(light).setNormal(0, 0, 1);
+            float px = (float) (a.x + forward.x * t - cam.x);
+            float py = (float) (a.y + forward.y * t - cam.y);
+            float pz = (float) (a.z + forward.z * t - cam.z);
+            // 第一片：短轴=side1，长轴=forward
+            float h1x = (float) (side1.x * hw), h1y = (float) (side1.y * hw), h1z = (float) (side1.z * hw);
+            float u1x = (float) (forward.x * hh), u1y = (float) (forward.y * hh), u1z = (float) (forward.z * hh);
+            addChainQuad(c, mat, px, py, pz, h1x, h1y, h1z, u1x, u1y, u1z, light);
+            // 第二片：短轴=side2，长轴=forward（与第一片垂直交叉）
+            float h2x = (float) (side2.x * hw), h2y = (float) (side2.y * hw), h2z = (float) (side2.z * hw);
+            float u2x = (float) (forward.x * hh), u2y = (float) (forward.y * hh), u2z = (float) (forward.z * hh);
+            addChainQuad(c, mat, px, py, pz, h2x, h2y, h2z, u2x, u2y, u2z, light);
         }
     }
 
-    /** 原版铁链方块贴图（16×16，单个链环，中心镂空）。 */
-    private static final ResourceLocation CHAIN_TEX =
-        net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("minecraft", "textures/block/chain.png");
+    /** 铁链十字贴图两半：chain1 与 chain2（均为 3×16 竖条，链环上下交错）。
+     *  <p>每个链节由两片互相垂直的 billboard 平面（十字交叉）构成，一片用 chain1、另一片用
+     *  chain2，参考原版铁链方块 "交叉斜面" 的十字拼接法，让两半链环在中间咬合成完整铁链。 */
+    private static final ResourceLocation CHAIN_TEX_1 =
+        net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("joes_addons_for_abmc", "textures/block/chain1.png");
+    private static final ResourceLocation CHAIN_TEX_2 =
+        net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("joes_addons_for_abmc", "textures/block/chain2.png");
 
     /** 铁链线段渲染（铁块权杖）：
      *  钩取中在“玩家发射点（配置偏移）→ 服务端同步终点”之间绘制；
@@ -2512,13 +2824,17 @@ public class ClientEvents {
             event.getPartialTick().getGameTimeDeltaPartialTick(false));
 
         Vec3 cam = event.getCamera().getPosition();
+        // 十字两片各用一种贴图（chain1/chain2），各自使用独立的 BufferSource，避免同一个
+        // immediate buffer 同时被两种 RenderType 交替写入而抛 "Not building!"。
         try {
-            MultiBufferSource.BufferSource buf =
-                MultiBufferSource.immediate(new ByteBufferBuilder(1 << 16));
+            MultiBufferSource.BufferSource buf1 =
+                MultiBufferSource.immediate(new ByteBufferBuilder(1 << 14));
+            MultiBufferSource.BufferSource buf2 =
+                MultiBufferSource.immediate(new ByteBufferBuilder(1 << 14));
             if (active) {
                 // 钩取中：沿锁链曲线节点折线渲染（弧度很小：轻微下垂 + 甩头滞后拖曳）
                 renderChainPolyline(event.getPoseStack(), cam,
-                    cn.autoforged.joes_addons_for_abmc.client.ChainBeamClient.getNodes(), buf);
+                    cn.autoforged.joes_addons_for_abmc.client.ChainBeamClient.getNodes(), buf1, buf2);
             } else {
                 // 未命中：进度 p 0→1，三角波 t 0→1→0 实现“伸出→收回”，仍为直线
                 float p = 1.0F - (float) cn.autoforged.joes_addons_for_abmc.client.ChainBeamClient.getLaunchTicks()
@@ -2526,11 +2842,55 @@ public class ClientEvents {
                 float t = p < 0.5F ? p * 2.0F : (1.0F - p) * 2.0F;
                 Vec3 end = start.add(cn.autoforged.joes_addons_for_abmc.client.ChainBeamClient.getLaunchEnd()
                     .subtract(start).scale(t));
-                renderChainLine(event.getPoseStack(), cam, start, end, buf);
+                renderChainLine(event.getPoseStack(), cam, start, end, buf1, buf2);
             }
-            buf.endBatch();
+            buf1.endBatch();
+            buf2.endBatch();
         } catch (Throwable t) {
             // 单帧渲染异常不影响后续帧与主渲染管线
+            LOGGER.error("[DBG-CHAIN] 铁链渲染异常", t);
+        }
+    }
+
+    /**
+     * <b>附体空壳的铁抓钩</b>（用户指定的近战攻击）：在"空壳 → 被拉的玩家"之间画一串铁链。
+     * <p>
+     * 与铁块权杖那条链共用同一套链节画法（{@link #renderChainPolyline}：十字链节 + chain1/chain2 贴图），
+     * 区别只在两头的来源 —— 这条链的两端都是<b>实体</b>，每帧按它们的实时插值位置现算，
+     * 所以拉扯过程中"链自己越收越短"是自然发生的，服务端只在开始/结束/每 10 刻发一次实体 id
+     * （见 {@code OrbHookPull} 与 {@code OrbHookChainPayload}）。
+     */
+    private static void renderOrbHookChain(Minecraft mc, RenderLevelStageEvent event) {
+        if (cn.autoforged.joes_addons_for_abmc.client.OrbHookChainClient.isEmpty() || mc.level == null) return;
+        float partial = event.getPartialTick().getGameTimeDeltaPartialTick(false);
+        Vec3 cam = event.getCamera().getPosition();
+        // 每帧现读两个实体的实时插值位置：链首跟着空壳、链尾跟着玩家，拉扯中自然越收越短。
+        // 用迭代器遍历：实体没了的那条在这里就地收掉（免得链挂在半空）。
+        java.util.Iterator<java.util.Map.Entry<Integer, Integer>> it =
+            cn.autoforged.joes_addons_for_abmc.client.OrbHookChainClient.chains().entrySet().iterator();
+        while (it.hasNext()) {
+            java.util.Map.Entry<Integer, Integer> entry = it.next();
+            net.minecraft.world.entity.Entity shell = mc.level.getEntity(entry.getKey());
+            net.minecraft.world.entity.Entity target = mc.level.getEntity(entry.getValue());
+            if (shell == null || target == null) {
+                it.remove();
+                continue;
+            }
+            Vec3 start = shell.getEyePosition(partial);
+            Vec3 end = target.getEyePosition(partial);
+            if (start.distanceToSqr(end) < 1.0E-6) continue;
+            try {
+                MultiBufferSource.BufferSource buf1 =
+                    MultiBufferSource.immediate(new ByteBufferBuilder(1 << 14));
+                MultiBufferSource.BufferSource buf2 =
+                    MultiBufferSource.immediate(new ByteBufferBuilder(1 << 14));
+                renderChainPolyline(event.getPoseStack(), cam, new Vec3[]{start, end}, buf1, buf2);
+                buf1.endBatch();
+                buf2.endBatch();
+            } catch (Throwable t) {
+                // 单帧渲染异常不影响后续帧与主渲染管线
+                LOGGER.error("[DBG-CHAIN] 铁抓钩铁链渲染异常", t);
+            }
         }
     }
 
@@ -2538,7 +2898,7 @@ public class ClientEvents {
      *  平面（十字交叉）构成，面向相机，贴图为原版铁链方块材质 chain.png。每格排列一个
      *  链节，数量随 a→b 距离成正比增减，仿佛一根由铁环串成的铁链。 */
     private static void renderChainLine(PoseStack ps, Vec3 cam, Vec3 a, Vec3 b,
-                                        MultiBufferSource ms) {
+                                        MultiBufferSource ms1, MultiBufferSource ms2) {
         double rx = b.x - a.x, ry = b.y - a.y, rz = b.z - a.z;
         double lenSq = rx * rx + ry * ry + rz * rz;
         if (lenSq < 1.0E-8) return;
@@ -2549,40 +2909,42 @@ public class ClientEvents {
         double spacing = 0.25;
         int count = Math.max(1, (int) Math.floor(len / spacing));
 
-        // billboard 朝向：正对相机的“完整 billboard”，并用世界竖直方向对齐贴图的上方，
-        // 使链环贴图内容（纵向）保持竖直且始终面向玩家视角。
-        Vec3 mid = new Vec3((a.x + b.x) * 0.5, (a.y + b.y) * 0.5, (a.z + b.z) * 0.5);
-        Vec3 toCam = new Vec3(cam.x - mid.x, cam.y - mid.y, cam.z - mid.z);
-        double tcl = toCam.length();
-        Vec3 right, up;
-        if (tcl < 1.0E-6) {
-            right = new Vec3(1, 0, 0);
-            up = new Vec3(0, 1, 0);
+        // 十字基向量：绕“链条方向”（即 beam 方向 a→b）成十字，且使用固定正交基（不依赖相机方向）。
+        // forward = 链条方向（贴图 16px 长轴沿此方向排布链环）；
+        // side1 = 世界 up 向量投影到垂直于 forward 的平面（固定，不随相机转头而旋转）；
+        // side2 = forward × side1。两片都由 (side, forward) 张成、且互相垂直，从大多数角度看
+        // 两片都保有屏幕面积、都能看见，而非一片始终侧对相机。
+        Vec3 forward = dir;
+        Vec3 up = new Vec3(0, 1, 0);
+        double fU = forward.dot(up);
+        Vec3 side1raw = new Vec3(up.x - forward.x * fU, up.y - forward.y * fU, up.z - forward.z * fU);
+        double s1len = side1raw.length();
+        Vec3 side1, side2;
+        if (s1len < 1.0E-6) {
+            // forward 与 up 平行（竖直链条）：退化为用水平轴 X/Z 构造正交基
+            side1 = new Vec3(1, 0, 0);
+            side2 = new Vec3(0, 0, 1);
         } else {
-            Vec3 look = toCam.scale(1.0 / tcl);
-            right = new Vec3(-look.z, 0, look.x);
-            double rl = right.length();
-            if (rl < 1.0E-6) {
-                right = new Vec3(1, 0, 0);
-                up = new Vec3(0, 1, 0);
-            } else {
-                right = right.scale(1.0 / rl);
-                up = right.cross(look);
-                double ul = up.length();
-                up = ul < 1.0E-6 ? new Vec3(0, 1, 0) : up.scale(1.0 / ul);
-            }
+            side1 = side1raw.scale(1.0 / s1len);
+            side2 = forward.cross(side1).normalize();
         }
 
-        // 链节半边长（正常大小，不随距离拉伸）
-        float h = 0.3F * 0.5F;
-        float hx1 = (float) (right.x * h), hy1 = (float) (right.y * h), hz1 = (float) (right.z * h);
-        float ux1 = (float) (up.x * h), uy1 = (float) (up.y * h), uz1 = (float) (up.z * h);
-        // 十字第二片：绕视线方向旋转 90°（right2=up，up2=-right），与第一片垂直。
-        float hx2 = ux1, hy2 = uy1, hz2 = uz1;
-        float ux2 = -hx1, uy2 = -hy1, uz2 = -hz1;
+        // 链节半边长：贴图为 3×16（宽 3 / 高 16）。短轴（垂直链条，宽度）用 hw，与贴图宽 3 等比；
+        // 长轴（沿链条，16px 的多个链环排布方向）用 hh。每张贴图在长轴方向铺开若干链环。
+        float hh = 0.3F * 0.5F;         // 沿链条（forward）半边长
+        float hw = hh * (3.0F / 16.0F); // 垂直链条（side）半边长，与贴图 3:16 等比
+        // 第一片：短轴=side1，长轴=forward
+        float hx1 = (float) (side1.x * hw), hy1 = (float) (side1.y * hw), hz1 = (float) (side1.z * hw);
+        float ux1 = (float) (forward.x * hh), uy1 = (float) (forward.y * hh), uz1 = (float) (forward.z * hh);
+        // 第二片：短轴=side2，长轴=forward（与第一片绕 forward 垂直交叉）
+        float hx2 = (float) (side2.x * hw), hy2 = (float) (side2.y * hw), hz2 = (float) (side2.z * hw);
+        float ux2 = (float) (forward.x * hh), uy2 = (float) (forward.y * hh), uz2 = (float) (forward.z * hh);
 
         Matrix4f mat = ps.last().pose();
-        VertexConsumer c = ms.getBuffer(RenderType.entityTranslucent(CHAIN_TEX));
+        // 十字两片各用一种贴图：第一片（hx1/ux1）用 chain1，第二片（hx2/ux2）用 chain2，
+        // 两片互相垂直，链环上下交错咬合成完整铁链。两片走各自独立的 buffer。
+        VertexConsumer c1 = ms1.getBuffer(RenderType.entityTranslucent(CHAIN_TEX_1));
+        VertexConsumer c2 = ms2.getBuffer(RenderType.entityTranslucent(CHAIN_TEX_2));
         int light = 15728880;
         for (int i = 0; i < count; i++) {
             // 链节中心沿线段的位置：仅 1 个时居中，否则每格一个
@@ -2590,15 +2952,15 @@ public class ClientEvents {
             float px = (float) (a.x + dir.x * t - cam.x);
             float py = (float) (a.y + dir.y * t - cam.y);
             float pz = (float) (a.z + dir.z * t - cam.z);
-            addChainQuad(c, mat, px, py, pz, hx1, hy1, hz1, ux1, uy1, uz1, light);
-            addChainQuad(c, mat, px, py, pz, hx2, hy2, hz2, ux2, uy2, uz2, light);
+            addChainQuad(c1, mat, px, py, pz, hx1, hy1, hz1, ux1, uy1, uz1, light);
+            addChainQuad(c2, mat, px, py, pz, hx2, hy2, hz2, ux2, uy2, uz2, light);
         }
     }
 
     /** 沿“鞭子”链节点折线渲染铁链链节：把折线按弧长均匀铺满“十字”链节（与直线版同款
      *  billboard），数量随折线总长成正比增减，从而把弯曲的鞭子链画出来。 */
     private static void renderChainPolyline(PoseStack ps, Vec3 cam, Vec3[] pts,
-                                            MultiBufferSource ms) {
+                                            MultiBufferSource ms1, MultiBufferSource ms2) {
         if (pts == null || pts.length < 2) return;
         // 折线总长
         double total = 0.0;
@@ -2611,43 +2973,20 @@ public class ClientEvents {
         double spacing = 0.25;
         int count = Math.max(1, (int) Math.floor(total / spacing));
 
-        // billboard 朝向：正对相机的“完整 billboard”，以折线中点为参考，
-        // 用世界竖直方向对齐贴图上方，使链环贴图保持竖直。
-        Vec3 mid = pts[0].add(pts[pts.length - 1]).scale(0.5);
-        Vec3 toCam = new Vec3(cam.x - mid.x, cam.y - mid.y, cam.z - mid.z);
-        double tcl = toCam.length();
-        Vec3 right, up;
-        if (tcl < 1.0E-6) {
-            right = new Vec3(1, 0, 0);
-            up = new Vec3(0, 1, 0);
-        } else {
-            Vec3 look = toCam.scale(1.0 / tcl);
-            right = new Vec3(-look.z, 0, look.x);
-            double rl = right.length();
-            if (rl < 1.0E-6) {
-                right = new Vec3(1, 0, 0);
-                up = new Vec3(0, 1, 0);
-            } else {
-                right = right.scale(1.0 / rl);
-                up = right.cross(look);
-                double ul = up.length();
-                up = ul < 1.0E-6 ? new Vec3(0, 1, 0) : up.scale(1.0 / ul);
-            }
-        }
+        // 以折线中点构造固定正交基参考（不再依赖相机方向）
+        Vec3 up = new Vec3(0, 1, 0);
 
-        // 链节半边长（正常大小，不随距离拉伸）
-        float h = 0.3F * 0.5F;
-        float hx1 = (float) (right.x * h), hy1 = (float) (right.y * h), hz1 = (float) (right.z * h);
-        float ux1 = (float) (up.x * h), uy1 = (float) (up.y * h), uz1 = (float) (up.z * h);
-        // 十字第二片：绕视线方向旋转 90°（right2=up，up2=-right），与第一片垂直。
-        float hx2 = ux1, hy2 = uy1, hz2 = uz1;
-        float ux2 = -hx1, uy2 = -hy1, uz2 = -hz1;
-
+        float hh = 0.3F * 0.5F;         // 沿链条（局部 forward）半边长
+        float hw = hh * (3.0F / 16.0F); // 垂直链条（side）半边长，与贴图 3:16 等比
         Matrix4f mat = ps.last().pose();
-        VertexConsumer c = ms.getBuffer(RenderType.entityTranslucent(CHAIN_TEX));
+        // 十字两片各用一种贴图：第一片（hx1/ux1）用 chain1，第二片（hx2/ux2）用 chain2
+        VertexConsumer c1 = ms1.getBuffer(RenderType.entityTranslucent(CHAIN_TEX_1));
+        VertexConsumer c2 = ms2.getBuffer(RenderType.entityTranslucent(CHAIN_TEX_2));
         int light = 15728880;
 
-        // 沿折线按弧长均匀放置链节（游标步进，跨线段线性插值）
+        // 沿折线按弧长均匀放置链节（游标步进，跨线段线性插值）。每个链节的 forward 用当前
+        // 折线段的切线方向，side1 = 世界 up 投影到垂直于 forward 的平面，side2 = forward × side1，
+        // 形成绕链条的固定正交十字（两片都不依赖相机方向、各有屏幕面积，两侧都可见）。
         double step = total / count;
         int segIdx = 0;
         double segStart = 0.0;
@@ -2662,11 +3001,33 @@ public class ClientEvents {
             double segLen = pts[segIdx].distanceTo(pts[segIdx + 1]);
             double t = segLen < 1.0E-8 ? 0.0 : Math.min(1.0, (target - segStart) / segLen);
             Vec3 p = pts[segIdx].lerp(pts[segIdx + 1], t);
+            Vec3 forward = segLen < 1.0E-8
+                ? new Vec3(0, 1, 0)
+                : pts[segIdx + 1].subtract(pts[segIdx]).scale(1.0 / segLen);
+
+            // 固定正交基：side1 = up 投影到 ⊥forward，退化时用水平 X/Z
+            double fU2 = forward.dot(up);
+            Vec3 s1raw = new Vec3(up.x - forward.x * fU2, up.y - forward.y * fU2, up.z - forward.z * fU2);
+            double s1len = s1raw.length();
+            Vec3 side1, side2;
+            if (s1len < 1.0E-6) {
+                side1 = new Vec3(1, 0, 0);
+                side2 = new Vec3(0, 0, 1);
+            } else {
+                side1 = s1raw.scale(1.0 / s1len);
+                side2 = forward.cross(side1).normalize();
+            }
+
+            float hx1 = (float) (side1.x * hw), hy1 = (float) (side1.y * hw), hz1 = (float) (side1.z * hw);
+            float ux1 = (float) (forward.x * hh), uy1 = (float) (forward.y * hh), uz1 = (float) (forward.z * hh);
+            float hx2 = (float) (side2.x * hw), hy2 = (float) (side2.y * hw), hz2 = (float) (side2.z * hw);
+            float ux2 = (float) (forward.x * hh), uy2 = (float) (forward.y * hh), uz2 = (float) (forward.z * hh);
+
             float px = (float) (p.x - cam.x);
             float py = (float) (p.y - cam.y);
             float pz = (float) (p.z - cam.z);
-            addChainQuad(c, mat, px, py, pz, hx1, hy1, hz1, ux1, uy1, uz1, light);
-            addChainQuad(c, mat, px, py, pz, hx2, hy2, hz2, ux2, uy2, uz2, light);
+            addChainQuad(c1, mat, px, py, pz, hx1, hy1, hz1, ux1, uy1, uz1, light);
+            addChainQuad(c2, mat, px, py, pz, hx2, hy2, hz2, ux2, uy2, uz2, light);
         }
     }
 

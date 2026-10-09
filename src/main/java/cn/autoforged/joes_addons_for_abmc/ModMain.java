@@ -353,7 +353,7 @@ public class ModMain {
     private static final int COMMAND_BLOCK_TRADE_SLOTS = 27;
     private static final int EMERALD_BLOCKS_PER_SLOT = 64;
 
-    // --- 女巫小屋（沼泽小屋）·女巫 Boss 变种：1% 概率取代小屋女巫生成；200 座小屋未出现则第 201 座必出 ---
+    // --- 女巫小屋（沼泽小屋）·女巫 Boss 变种：1/10 概率取代小屋女巫生成；20 座小屋未出现则第 21 座必出 ---
     public static final String WITCH_BOSS_TAG = "jafa_is_witch_boss";
     /** 女巫Boss 无小屋标记：true 表示未认领任何小屋（hutless），补给/返回坐标 = 出生点；
      *  false/缺失 = 已认领小屋，补给/返回坐标 = 小屋生成点。 */
@@ -390,6 +390,10 @@ public class ModMain {
      *  及任何其它模组在内的所有 Boss 条统一计数，因此总数天然不会超过 4 个。 */
     private static final java.util.Map<java.util.UUID, net.minecraft.server.level.ServerBossEvent> WITCH_BOSS_EVENTS =
         new java.util.concurrent.ConcurrentHashMap<>();
+    /** 女巫Boss 血条上显示的名字：只显示「女巫」，不带任何阶段后缀（阶段差异由血条颜色体现）。
+     *  <p>注意不要拿 {@link #witchBossStageName(int)} 来当血条名——那个方法返回的是
+     *  「女巫Boss-生物阶段」这类带阶段字样的文本，它现在只给 Jade 提示插件用。 */
+    private static final String WITCH_BOSS_BAR_NAME = "女巫";
     /** 已登记的女巫Boss UUID 集：由 {@link #updateWitchBossBar} 每刻遍历，替代“全世界扫描所有女巫”。
      *  每个被标记为女巫Boss 的实体在此登记，避免每刻 getEntitiesOfClass 全图遍历造成卡顿。 */
     private static final Set<UUID> WITCH_BOSS_TRACKED = ConcurrentHashMap.newKeySet();
@@ -537,7 +541,17 @@ public class ModMain {
     private static final long WITCH_BOSS_ADVANCE_POTION_COOLDOWN = 60L; // 3秒
     /** 主动投进阶药水的搜索半径（格）：覆盖传送逃逸后的 10~15 格距离（原版 RangedAttackGoal 仅 10 格）。 */
     private static final double WITCH_BOSS_ADVANCE_POTION_RANGE = 28.0D;
-    private static final int WITCH_BOSS_PITY_HUTS = 200;
+    /** 成就「让你惹Techno！」用：参与过女巫Boss战斗的玩家 UUID 名单（StringTag 列表，去重）。
+     *  下列行为都会把玩家计入名单：任意阶段对女巫Boss造成伤害（含弹射物/药水）、
+     *  阶段2/3 用动物变形/变形解药扣除血条、摧毁女巫自变形方块。
+     *  女巫Boss被击败时按此名单（外加最后一击的击杀者）授予成就。 */
+    private static final String WITCH_BOSS_FIGHTERS_TAG = "jafa_witch_boss_fighters";
+    /** 参战名单上限：防止极端情况下 NBT 无上限增长。 */
+    private static final int WITCH_BOSS_FIGHTERS_MAX = 64;
+    /** 女巫 Boss 保底：连续这么多座女巫小屋没出 Boss，下一座必出。 */
+    private static final int WITCH_BOSS_PITY_HUTS = 20;
+    /** 女巫 Boss 单座小屋里出 Boss 的概率分母：1/{@link #WITCH_BOSS_CHANCE_DENOMINATOR}（1/10）。 */
+    private static final int WITCH_BOSS_CHANCE_DENOMINATOR = 10;
     // 拥有女巫 Boss 的小屋周围多少格内不再自然刷新女巫（结构自带的女巫 Boss 除外）
     private static final int WITCH_BOSS_NO_SPAWN_RADIUS = 100;
     // 图书管理员保底：连续 300 只大师级图书管理员未卖出命令方块，则下一次必给
@@ -564,6 +578,19 @@ public class ModMain {
          *  世界生成期间（postProcess）只登记；区块加载后由 onChunkLoad 逐区块放置模板/箱子/女巫，
          *  全部覆盖区块加载且女巫已生成后移除。 */
         public final java.util.List<int[]> pendingHuts = new java.util.ArrayList<>();
+        /** 幸运维度：玩家<b>初次</b>进入时所在的 X 坐标（Integer.MIN_VALUE = 尚未记录）。 */
+        public int luckyDimEntryX = Integer.MIN_VALUE;
+        /** 幸运维度：玩家<b>初次</b>进入时所在的 Z 坐标。 */
+        public int luckyDimEntryZ = Integer.MIN_VALUE;
+        /** 「幸运宝珠神庙」是否已经生成过（每个存档只生成一座）。 */
+        public boolean orbTemplePlaced = false;
+        /** 已选定但尚未放置的「幸运宝珠神庙」原点 [ox, oy, oz]；null = 还没选址。 */
+        public int[] orbTempleTarget = null;
+
+        /** 是否已记录过「玩家初次进入幸运维度」的坐标。 */
+        public boolean hasLuckyDimEntry() {
+            return this.luckyDimEntryX != Integer.MIN_VALUE;
+        }
 
         public static SharedCounts load(CompoundTag tag, HolderLookup.Provider registries) {
             SharedCounts c = new SharedCounts();
@@ -577,6 +604,15 @@ public class ModMain {
             int[] huts = tag.getIntArray("pending_huts");
             for (int i = 0; i + 3 < huts.length; i += 4) {
                 c.pendingHuts.add(new int[]{huts[i], huts[i + 1], huts[i + 2], huts[i + 3]});
+            }
+            if (tag.contains("lucky_dim_entry_x")) {
+                c.luckyDimEntryX = tag.getInt("lucky_dim_entry_x");
+                c.luckyDimEntryZ = tag.getInt("lucky_dim_entry_z");
+            }
+            c.orbTemplePlaced = tag.getBoolean("orb_temple_placed");
+            int[] orbTarget = tag.getIntArray("orb_temple_target");
+            if (orbTarget.length >= 3) {
+                c.orbTempleTarget = new int[]{orbTarget[0], orbTarget[1], orbTarget[2]};
             }
             return c;
         }
@@ -602,6 +638,14 @@ public class ModMain {
                 huts[j * 4 + 3] = h[3];
             }
             tag.putIntArray("pending_huts", huts);
+            if (this.hasLuckyDimEntry()) {
+                tag.putInt("lucky_dim_entry_x", this.luckyDimEntryX);
+                tag.putInt("lucky_dim_entry_z", this.luckyDimEntryZ);
+            }
+            tag.putBoolean("orb_temple_placed", this.orbTemplePlaced);
+            if (this.orbTempleTarget != null) {
+                tag.putIntArray("orb_temple_target", this.orbTempleTarget);
+            }
             return tag;
         }
     }
@@ -770,6 +814,16 @@ public class ModMain {
 
     // 持有 Omega 游戏图标 / Omega 权杖的玩家：授予飞行、夜视、免疫除虚空外伤害的特性
     private static final Set<UUID> OMEGA_POWER_PLAYERS = new HashSet<>();
+
+    /**
+     * 由<b>翅膀</b>授予飞行能力的玩家（UUID）。
+     *
+     * <p>与上面几个飞行来源一样：<b>只记录"这次飞行是我们给的"</b>，撤销时也只撤销我们自己给的这一次。
+     * 早先的实现是每刻把 {@code mayfly} 直接写成"创造/旁观/穿翅膀"的结果 —— 于是任何<b>别的</b>
+     * 飞行来源（命令方块权杖、Omega、青金石权杖…）刚授予的飞行会在同一刻被我们抹掉，
+     * 表现就是"只能飞很短一下然后掉下来"。
+     */
+    private static final Set<UUID> WINGS_FLIGHT_PLAYERS = new HashSet<>();
 
     private static final Map<UUID, Integer> LAPIS_GRABBED_ENTITIES = new ConcurrentHashMap<>();
     private static final Map<UUID, Integer> LAPIS_GRAB_XP_TIMERS = new ConcurrentHashMap<>();
@@ -1026,6 +1080,25 @@ public class ModMain {
         MOSS_CONVERSION.put(Blocks.STONE_BRICK_STAIRS, Blocks.MOSSY_STONE_BRICK_STAIRS);
         MOSS_CONVERSION.put(Blocks.STONE_BRICK_WALL, Blocks.MOSSY_STONE_BRICK_WALL);
     }
+    /**
+     * 权杖变体 → 对应方块物品。
+     * <p>幸运方块是本模组的方块，其 DeferredHolder 在 {@link ModMain} 静态初始化阶段还取不到值
+     * （注册表尚未填充完成，直接 .get() 会抛 ExceptionInInitializerError），所以这类变体在运行时解析。
+     */
+    private static Item staffBlockTypeToItem(String blockType) {
+        if ("lucky_block".equals(blockType)) {
+            return cn.autoforged.joes_addons_for_abmc.block.ModBlocks.LUCKY_BLOCK.get().asItem();
+        }
+        return STAFF_BLOCKTYPE_REVERSE.get(blockType);
+    }
+
+    /** 方块物品 → 权杖变体（同上，模组方块在运行时解析）。 */
+    private static String itemToStaffBlockType(Item item) {
+        if (item == cn.autoforged.joes_addons_for_abmc.block.ModBlocks.LUCKY_BLOCK.get().asItem()) {
+            return "lucky_block";
+        }
+        return STAFF_BLOCKTYPE_WHITELIST.getOrDefault(item, null);
+    }
     private static final Map<Item, String> STAFF_BLOCKTYPE_WHITELIST = Map.ofEntries(
         Map.entry(net.minecraft.world.item.Items.AIR, "empty"),
         Map.entry(net.minecraft.world.item.Items.GOLD_BLOCK, "gold_block"),
@@ -1125,6 +1198,8 @@ public class ModMain {
         ModBlocks.register(modEventBus);
         ModBlockEntities.register(modEventBus);
         ModItems.ITEMS.register(modEventBus);
+        // 护甲材质（1.21.1 里 ArmorMaterial 是注册表）：工作台帽子用的 0 防御 + 皮革贴图材质
+        cn.autoforged.joes_addons_for_abmc.item.ModArmorMaterials.ARMOR_MATERIALS.register(modEventBus);
         ModEntities.ENTITIES.register(modEventBus);
         ModDataComponents.DATA_COMPONENTS.register(modEventBus);
         RECIPE_SERIALIZERS.register(modEventBus);
@@ -1135,7 +1210,13 @@ public class ModMain {
         ModDamageTypes.DAMAGE_TYPES.register(modEventBus);
         ModCreativeTab.CREATIVE_MODE_TABS.register(modEventBus);
         cn.autoforged.joes_addons_for_abmc.worldgen.ModPoiTypes.POI_TYPES.register(modEventBus);
+        // 「幸运之庙」自然生成：结构类型 + 结构片段类型（JSON 见 data/joes_addons_for_abmc/worldgen/）
+        cn.autoforged.joes_addons_for_abmc.worldgen.ModStructures.STRUCTURE_TYPES.register(modEventBus);
+        cn.autoforged.joes_addons_for_abmc.worldgen.ModStructures.PIECE_TYPES.register(modEventBus);
         cn.autoforged.joes_addons_for_abmc.loot.ModLootFunctions.LOOT_FUNCTIONS.register(modEventBus);
+        // 黑暗分身：「这是黑暗分身」标记走 NeoForge 数据附件（Entity 继承 AttachmentHolder，
+        // 所以原版与其它 mod 的生物一视同仁；sync 由 NeoForge 自动下发，无需自定义网络包）
+        cn.autoforged.joes_addons_for_abmc.entity.DarkCloneAttachments.ATTACHMENT_TYPES.register(modEventBus);
 
         modContainer.registerConfig(Type.COMMON, ModConfig.SPEC);
 
@@ -1150,6 +1231,8 @@ public class ModMain {
         NeoForge.EVENT_BUS.addListener(ModMain::onLivingIncomingDamage);
         NeoForge.EVENT_BUS.addListener(ModMain::onLivingDamagePre);
         NeoForge.EVENT_BUS.addListener(ModMain::onCobwebPullFall);
+        NeoForge.EVENT_BUS.addListener(ModMain::onLuckyKnightFall);
+        NeoForge.EVENT_BUS.addListener(ModMain::onOrbLaunchedFall);
         NeoForge.EVENT_BUS.addListener(ModMain::onPlayerLogout);
         NeoForge.EVENT_BUS.addListener(ModMain::onPlayerClone);
         NeoForge.EVENT_BUS.addListener(ModMain::onPlayerLogin);
@@ -1177,6 +1260,8 @@ public class ModMain {
         NeoForge.EVENT_BUS.addListener(ModMain::onEntityTickPost);
         NeoForge.EVENT_BUS.addListener(ModMain::onTransmutedRightClickGuard);
         NeoForge.EVENT_BUS.addListener(ModMain::onTransmutedRightClickBlock);
+        // 调试棒（原版 debug stick）右击幸运方块 → 替换成幸运传送门
+        NeoForge.EVENT_BUS.addListener(ModMain::onDebugStickRightClickLuckyBlock);
         NeoForge.EVENT_BUS.addListener(ModMain::onMorphProjectileRightClick);
         NeoForge.EVENT_BUS.addListener(ModMain::onMorphEntityInteract);
         NeoForge.EVENT_BUS.addListener(ModMain::onMorphEntityInteractSpecific);
@@ -1207,8 +1292,40 @@ public class ModMain {
         NeoForge.EVENT_BUS.addListener(ModMain::onExplosionDetonate);
         NeoForge.EVENT_BUS.addListener(ModMain::onRegisterCommands);
         NeoForge.EVENT_BUS.addListener(ModMain::onLivingChangeTarget);
+        // 幸运维度：和平共处 AI（索敌闸在上面那个 onLivingChangeTarget 里，行为层的 Goal 拆除走这里）
+        NeoForge.EVENT_BUS.addListener(cn.autoforged.joes_addons_for_abmc.entity.LuckyDimensionMobs::onLivingChangeTarget);
+        NeoForge.EVENT_BUS.addListener(cn.autoforged.joes_addons_for_abmc.entity.LuckyDimensionMobs::onEntityJoinLevel);
+        // 幸运维度：水生生物不受缺水伤害（干燥 / 溺水两种）
+        NeoForge.EVENT_BUS.addListener(cn.autoforged.joes_addons_for_abmc.entity.LuckyDimensionMobs::onLivingIncomingDamage);
+        // 苦力蜂：被任意非友好方攻击（含创造玩家，其攻击可能不经过 hurt()）即锁定并反击
+        NeoForge.EVENT_BUS.addListener(ModMain::onBeeperAttacked);
+        // BeeBoss：屏蔽原版「毒刺脱落后自毙」，让近战形态能持续作战
+        NeoForge.EVENT_BUS.addListener(ModMain::onBeeBossStingDeath);
         NeoForge.EVENT_BUS.addListener(ModMain::onTradeWithVillager);
         NeoForge.EVENT_BUS.addListener(ModMain::onStartTracking);
+        // 黑暗分身召唤链第1步：首次双手同时持有 Minecraft Game Icon → 主手改名 Positive Game Icon、
+        // 副手改名 Negative Game Icon，每存档仅一次。注意必须用 PlayerTickEvent：服务端玩家不走
+        // Entity#tick()（走 ServerPlayer#doTick()），EntityTickEvent 收不到玩家。
+        NeoForge.EVENT_BUS.addListener(cn.autoforged.joes_addons_for_abmc.entity.DarkCloneEvents::onPlayerTick);
+        // 黑暗分身召唤链第2步：持有黑草方块左键黑暗分身 → 原地黑色粒子 + 直接删除该实体（不是杀死）
+        NeoForge.EVENT_BUS.addListener(cn.autoforged.joes_addons_for_abmc.entity.DarkCloneEvents::onAttackEntity);
+        // 黑暗分身：读档 / 区块重载 / 跨维度后重新接管索敌（AI goal 不随存档保存）
+        NeoForge.EVENT_BUS.addListener(cn.autoforged.joes_addons_for_abmc.entity.DarkCloneEvents::onEntityJoinLevel);
+        // 黑暗分身：Owner 打人 / 被打时，把对手排进其名下分身的最高优先级目标
+        NeoForge.EVENT_BUS.addListener(cn.autoforged.joes_addons_for_abmc.entity.DarkCloneEvents::onOwnerCombat);
+        // 黑暗分身：目标变更收口 —— Mob#setTarget 是所有目标的唯一写入口（含 IronGolem#doPush
+        // 这类绕过选目标 goal 的直接调用），挂这里一次覆盖全部
+        NeoForge.EVENT_BUS.addListener(cn.autoforged.joes_addons_for_abmc.entity.DarkCloneEvents::onLivingChangeTarget);
+        // 黑暗分身：伤害收口 —— 兜住脑记忆类生物、凋灵侧头、接触伤害等一切「不经过 setTarget」的攻击方式，
+        // 并统一执行「不伤害 Owner」这条规则
+        NeoForge.EVENT_BUS.addListener(cn.autoforged.joes_addons_for_abmc.entity.DarkCloneEvents::onDarkCloneDamageGuard);
+        // 黑暗分身：效果收口 —— 不给 Owner / 友方分身 / 创造旁观玩家上负面效果
+        // （监守者的黑暗与远古守卫者的挖掘疲劳都走 MobEffectUtil.addEffectToPlayersAround，施加者会一路下传）
+        NeoForge.EVENT_BUS.addListener(cn.autoforged.joes_addons_for_abmc.entity.DarkCloneEvents::onDarkCloneEffectGuard);
+        // 黑暗分身：死亡不掉落任何物品
+        NeoForge.EVENT_BUS.addListener(cn.autoforged.joes_addons_for_abmc.entity.DarkCloneEvents::onLivingDrops);
+        // 黑暗分身：死亡不掉落任何经验
+        NeoForge.EVENT_BUS.addListener(cn.autoforged.joes_addons_for_abmc.entity.DarkCloneEvents::onLivingExperienceDrop);
         NeoForge.EVENT_BUS.addListener(ModMain::onPlayerClone);
         // 游戏模式切换：切到创造/旁观默认解锁变形药水，切回生存/冒险恢复基线值
         NeoForge.EVENT_BUS.addListener(ModMain::onPlayerChangeGameMode);
@@ -1254,6 +1371,33 @@ public class ModMain {
         // 附魔千纸鹤（Mob）：登记属性，最大生命 10
         event.put(ModEntities.ENCHANTED_ORIGAMI.get(),
             cn.autoforged.joes_addons_for_abmc.entity.EnchantedOrigamiEntity.createAttributes().build());
+        // 苦力蜂（Beeper）：复用蜜蜂属性，暂无 AI
+        event.put(ModEntities.BEEPER.get(),
+            net.minecraft.world.entity.animal.Bee.createAttributes().build());
+        // 幸运方块选择器：登记属性（最大生命 20 / 飞行速度 0.4），AI 暂未实装
+        event.put(ModEntities.LUCKY_SELECTOR.get(),
+            cn.autoforged.joes_addons_for_abmc.entity.LuckySelectorEntity.createAttributes().build());
+        // 幸运核心（Orb of Luck）：动物类实体，生命 300、免疫摔落，
+        // AI 暂未实装（不受重力/不移动，见 OrbOfLuckEntity 类注释）
+        event.put(ModEntities.ORB_OF_LUCK.get(),
+            cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity.createAttributes().build());
+        // 附体召唤物：爆裂猫 / 爆裂僵尸（原版生物的派生类，属性直接复用原版的）
+        event.put(ModEntities.ORB_EXPLOSIVE_CAT.get(),
+            net.minecraft.world.entity.animal.Cat.createAttributes().build());
+        event.put(ModEntities.ORB_EXPLOSIVE_ZOMBIE.get(),
+            net.minecraft.world.entity.monster.Zombie.createAttributes().build());
+        // 同上：爆裂史莱姆 / 爆裂骷髅（换皮的猫/僵尸，用户指定）
+        event.put(ModEntities.ORB_EXPLOSIVE_SLIME.get(),
+            net.minecraft.world.entity.monster.Monster.createMonsterAttributes().build());
+        event.put(ModEntities.ORB_EXPLOSIVE_SKELETON.get(),
+            net.minecraft.world.entity.monster.Skeleton.createAttributes().build());
+        // 6.5.5 的两只自定猪（金粒猪 / 烟花猪）：都是原版猪的派生类，属性直接复用原版猪的。
+        // 不登记的话启动时控制台会刷 "Entity joes_addons_for_abmc:xxx has no attributes"，
+        // 而且这只生物会没有任何属性（最大生命/移速等全缺），生成后行为不正常。
+        event.put(ModEntities.GOLD_NUGGET_PIG.get(),
+            net.minecraft.world.entity.animal.Pig.createAttributes().build());
+        event.put(ModEntities.FIREWORK_PIG.get(),
+            net.minecraft.world.entity.animal.Pig.createAttributes().build());
     }
 
     private static void registerPayloads(RegisterPayloadHandlersEvent event) {
@@ -1275,10 +1419,62 @@ public class ModMain {
             StaffBlockTypePayload.STREAM_CODEC,
             (payload, context) -> handleStaffBlockTypeSwap(context.player())
         );
+        // 幸运选择器的旁观操控：客户端每刻上报"看向哪儿 + 按了哪些方向键"（只在旁观选择器时发）。
+        // 服务端在 SelectorPilot.accept 里核对该玩家确实正在旁观那只选择器、且在幸运维度。
+        registrar.playToServer(
+            cn.autoforged.joes_addons_for_abmc.network.SelectorPilotPayload.TYPE,
+            cn.autoforged.joes_addons_for_abmc.network.SelectorPilotPayload.STREAM_CODEC,
+            (payload, context) -> cn.autoforged.joes_addons_for_abmc.entity.SelectorPilot
+                .accept(context.player(), payload)
+        );
+        // 幸运选择器的旁观操控·右键：报上"准星指着谁"，由服务端决定 seek 还是 send
+        registrar.playToServer(
+            cn.autoforged.joes_addons_for_abmc.network.SelectorPilotUsePayload.TYPE,
+            cn.autoforged.joes_addons_for_abmc.network.SelectorPilotUsePayload.STREAM_CODEC,
+            (payload, context) -> cn.autoforged.joes_addons_for_abmc.entity.SelectorPilot
+                .handleUse(context.player(), payload)
+        );
+        // 支援送：服务端把"可以送到谁"的名单发下去，客户端弹下拉列表（需求 6.5.21）
+        registrar.playToClient(
+            cn.autoforged.joes_addons_for_abmc.network.PilotSendListPayload.TYPE,
+            cn.autoforged.joes_addons_for_abmc.network.PilotSendListPayload.STREAM_CODEC,
+            (payload, context) -> context.enqueueWork(() ->
+                cn.autoforged.joes_addons_for_abmc.client.SelectorPilotClient
+                    .openSendUi(payload.selectorId(), payload.entries()))
+        );
+        // 支援送：客户端在下拉列表里按空格确认了目标 → 这时才真正执行 send
+        registrar.playToServer(
+            cn.autoforged.joes_addons_for_abmc.network.PilotSendConfirmPayload.TYPE,
+            cn.autoforged.joes_addons_for_abmc.network.PilotSendConfirmPayload.STREAM_CODEC,
+            (payload, context) -> cn.autoforged.joes_addons_for_abmc.entity.SelectorPilot
+                .handleConfirm(context.player(), payload)
+        );
+        // 工作台帽子：戴着帽子且主手为空时按下右键 → 服务端自行判定三种情况并触发"合成"事件
+        registrar.playToServer(
+            cn.autoforged.joes_addons_for_abmc.network.CraftingHatUsePayload.TYPE,
+            cn.autoforged.joes_addons_for_abmc.network.CraftingHatUsePayload.STREAM_CODEC,
+            (payload, context) ->
+                cn.autoforged.joes_addons_for_abmc.item.CraftingTableHatItem.handleUseRequest(context.player())
+        );
+        // 工作台帽子：松开右键 → 取消还在飞行中的合成事件（已取出的材料掉在触发点）
+        registrar.playToServer(
+            cn.autoforged.joes_addons_for_abmc.network.CraftingHatCancelPayload.TYPE,
+            cn.autoforged.joes_addons_for_abmc.network.CraftingHatCancelPayload.STREAM_CODEC,
+            (payload, context) ->
+                cn.autoforged.joes_addons_for_abmc.item.CraftingTableHatItem.handleCancelRequest(context.player())
+        );
         registrar.playToServer(
             GameIconCraftPayload.TYPE,
             GameIconCraftPayload.STREAM_CODEC,
             (payload, context) -> handleGameIconCraft(context.player())
+        );
+        // 黑暗分身·记录：客户端按下左键 → 服务端自行做 256 格射线并记录
+        // （包体为空，距离/姿态/射线全部由服务端重算）
+        registrar.playToServer(
+            cn.autoforged.joes_addons_for_abmc.network.DarkCloneRecordPayload.TYPE,
+            cn.autoforged.joes_addons_for_abmc.network.DarkCloneRecordPayload.STREAM_CODEC,
+            (payload, context) ->
+                cn.autoforged.joes_addons_for_abmc.entity.DarkCloneEvents.onLeftClickRequest(context.player())
         );
         registrar.playToClient(
             OmegaDismantlePayload.TYPE,
@@ -1357,6 +1553,18 @@ public class ModMain {
             TntDetonatePayload.TYPE,
             TntDetonatePayload.STREAM_CODEC,
             (payload, context) -> handleTntStaffDetonate(context.player())
+        );
+        // 蜂巢权杖：左键释放全部蜜蜂（服务端 128 格预判目标）
+        registrar.playToServer(
+            cn.autoforged.joes_addons_for_abmc.network.BeeStaffAttackPayload.TYPE,
+            cn.autoforged.joes_addons_for_abmc.network.BeeStaffAttackPayload.STREAM_CODEC,
+            (payload, context) -> handleBeeStaffAttack(context.player())
+        );
+        // 蜂巢权杖：左Alt 逐只释放友善蜜蜂
+        registrar.playToServer(
+            cn.autoforged.joes_addons_for_abmc.network.BeeStaffReleaseOnePayload.TYPE,
+            cn.autoforged.joes_addons_for_abmc.network.BeeStaffReleaseOnePayload.STREAM_CODEC,
+            (payload, context) -> handleBeeStaffReleaseOne(context.player())
         );
         registrar.playToServer(
             CobwebDisconnectPayload.TYPE,
@@ -1470,6 +1678,13 @@ public class ModMain {
             cn.autoforged.joes_addons_for_abmc.network.ChainCancelPayload.STREAM_CODEC,
             (payload, context) -> ModMain.cancelChainGrab(context.player())
         );
+        // 附体空壳·铁抓钩：把"这条链挂在哪两个实体之间"发给附近玩家（收链时两个 id 都是 -1）
+        registrar.playToClient(
+            cn.autoforged.joes_addons_for_abmc.network.OrbHookChainPayload.TYPE,
+            cn.autoforged.joes_addons_for_abmc.network.OrbHookChainPayload.STREAM_CODEC,
+            (payload, context) -> cn.autoforged.joes_addons_for_abmc.client.OrbHookChainClient
+                .update(payload.shellId(), payload.targetId())
+        );
         // ===== C 脚本网络层 =====
         registrar.playToServer(
             ScriptGraphPayload.TYPE,
@@ -1529,6 +1744,16 @@ public class ModMain {
             cn.autoforged.joes_addons_for_abmc.network.OmegaShaderPayload.STREAM_CODEC,
             (payload, context) -> cn.autoforged.joes_addons_for_abmc.client.OmegaShaderRenderer.activate()
         );
+        // 守卫者光波（附体远程攻击）：服务端算完判定后把"一条激光"发给附近玩家照着画。
+        // 判定完全在服务端（OrbGuardianLaser#fire），客户端只画线、不做任何判定。
+        registrar.playToClient(
+            cn.autoforged.joes_addons_for_abmc.network.GuardianLaserPayload.TYPE,
+            cn.autoforged.joes_addons_for_abmc.network.GuardianLaserPayload.STREAM_CODEC,
+            (payload, context) -> cn.autoforged.joes_addons_for_abmc.client.GuardianLaserClient.activate(
+                payload.startX(), payload.startY(), payload.startZ(),
+                payload.endX(), payload.endY(), payload.endZ(),
+                payload.color(), payload.ticks())
+        );
         // 变形生物弹射物：客户端→服务端
         registrar.playToServer(
             cn.autoforged.joes_addons_for_abmc.network.MorphProjectilePayload.TYPE,
@@ -1539,7 +1764,7 @@ public class ModMain {
 
     // 是否已因完成全部原版成就而赠送过权杖
     private static final String ALL_VANILLA_ACHIEVEMENTS_REWARDED_TAG = "jafa_all_vanilla_rewarded";
-    // 是否已因完成全部成就（原版 + 所有模组）而赠送过 minecraft game icon
+    // 是否已因完成除本 mod 外的全部成就（原版 + 其它模组）而赠送过 minecraft game icon
     private static final String ALL_ACHIEVEMENTS_REWARDED_TAG = "jafa_all_achievements_rewarded";
     // 是否已按“开局赠送权杖”配置赠送过初始权杖（仅首次进入世界赠送一次）
     private static final String STAFF_GIVEN_ON_START_TAG = "jafa_staff_given_on_start";
@@ -1569,6 +1794,14 @@ public class ModMain {
     private static final String TRANSMUTATION_REKILL_TAG = "jafa_transmutation_rekill";
     /** 变形壳实体标记：生物/玩家被变形成其它生物后的壳，死亡时只掉落原生物物品、不掉落壳本身掉落物。 */
     private static final String TRANSMUTATION_SHELL_TAG = "jafa_transmutation_shell";
+    // 生物壳的变形数据：LIVING_SHELLS 只是内存表，退出存档就没了。下面这几项写在实体持久化数据里，
+    // 重新加载时由 reconstructMobShell 把内存表重建回来（玩家空壳走 PlayerShellEntity 自己的 NBT）。
+    // 缺了它们，重进存档后对生物壳丢变形解药就无法复原原生生物。
+    private static final String SHELL_ORIGIN_NBT_TAG = "jafa_shell_origin";
+    private static final String SHELL_ORIGIN_PLAYER_TAG = "jafa_shell_player";
+    private static final String SHELL_ORIGIN_KILLER_TAG = "jafa_shell_killer";
+    private static final String SHELL_DEADLINE_TAG = "jafa_shell_deadline";
+    private static final String SHELL_ORIGINAL_MAX_HEALTH_TAG = "jafa_shell_original_max_health";
     // 滞留变形药水生成的效果云上记录的变形目标类型（直接写进实体的 PersistentData，避免依赖
     // 易受时序影响的 TRANSMUTATION_POTION_ITEM_TYPES 内存表，确保“被状态效果云影响到也能变形”）。
     private static final String CLOUD_ITEM_TYPE_TAG = "jafa_cloud_item_type";
@@ -1588,6 +1821,23 @@ public class ModMain {
     private static final String MULTISHOT_DONE_TAG = "jafa_multishot_done";
     /** 多重射击：副本相对原弹的水平散布半宽（弧度）。 */
     private static final double MULTISHOT_HALF_SPREAD = 0.5;
+    /**
+     * 多重射击<b>分裂副本</b>标记：只有副本才打这个标记，落地 2 秒后消失。
+     * <p><b>本体不打</b>（用户指定）：射手自己那一发照旧按它原本的规则存在 —— 箭/三叉戟照原版时长、
+     * 闪烁西瓜刀照样插在地上等回收。
+     */
+    private static final String MULTISHOT_VOLLEY_TAG = "jafa_multishot_volley";
+    /** 多重射击分裂副本"落地后已经静止了几刻"的计数器（NBT 持久化，随实体存亡，无需额外清理）。 */
+    private static final String MULTISHOT_IDLE_TAG = "jafa_multishot_idle";
+    /**
+     * 多重射击<b>分裂副本</b>落地后还能存在多久（刻）：40 刻 = <b>2 秒</b>。
+     * <p>用户指定：多重射击分裂出来的副本里，凡是命中后还能留在世界里的弹射物（箭/三叉戟/闪烁西瓜刀/
+     * 暮色寒冰箭/天境毒镖……），落地后 2 秒即消失，而不是按各自原版的 1 分钟、西瓜刀的 5 分钟那样躺着。
+     * <p>本体不受影响（见 {@link #MULTISHOT_VOLLEY_TAG}）。
+     */
+    private static final int MULTISHOT_LANDED_LIFETIME_TICKS = 40;
+    /** 判定"已经停下（= 落地/插住）"的单刻位移阈值（格²）：小于它就当这一发没动。 */
+    private static final double MULTISHOT_IDLE_MOVE_EPSILON = 1.0E-6;
     /** 附魔生物·激流：水中/雨中移动速度属性修改器 id。 */
     private static final ResourceLocation RIPTIDE_MODIFIER_ID =
         ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "enchant_riptide");
@@ -2300,20 +2550,32 @@ public class ModMain {
         final double apexAccel;
         /** 起始初速度（拉到瞬间给一个不从 0 起步的速度，指向目标）。 */
         final Vec3 initialVelocity;
+        /** 这条"绳"在客户端的视觉类型：true = 铁链（铁抓钩），false = 蛛丝（蜘蛛网权杖）。
+         *  拉扯物理完全相同，只有渲染用的贴图/结束包不同。 */
+        final boolean chainVisual;
         /** 累积速度（在“无阻力”空间中累加加速度；每刻直接写入玩家速度，避免被每刻空气阻力
          *  反复衰减导致加速完成后速度自行降回低速）。 */
         Vec3 vel;
         int elapsed;
         /** 连续被方块阻挡的刻度数：超过 100（5 秒）仍未脱困则断开；期间快速前移或脱困则重置。 */
         int blockedTicks;
-        CobwebPullState(Vec3 target, int rampTicks, double apexAccel, Vec3 initialVelocity) {
+        CobwebPullState(Vec3 target, int rampTicks, double apexAccel, Vec3 initialVelocity,
+                        boolean chainVisual) {
             this.target = target;
             this.rampTicks = rampTicks;
             this.apexAccel = apexAccel;
             this.initialVelocity = initialVelocity;
+            this.chainVisual = chainVisual;
             // 抗阻挡判定在首帧（elapsed==1 赋值前）就会读取 vel.length()，必须在此预先初始化以避免 NPE。
             this.vel = initialVelocity;
         }
+    }
+
+    /** 拉扯结束：按这条"绳"的视觉类型清除客户端渲染（铁链 / 蛛丝）。 */
+    private static void sendPullStop(ServerPlayer player, boolean chainVisual) {
+        player.connection.send(chainVisual
+            ? new cn.autoforged.joes_addons_for_abmc.network.ChainGrabStopPayload()
+            : new CobwebPullStopPayload());
     }
 
     // ==================== 地狱疣可食用 ====================
@@ -2479,7 +2741,7 @@ public class ModMain {
 
     /**
      * 当玩家完成一项成就时触发。若此时玩家已点亮全部原版成就，则赠送一把权杖（仅一次）；
-     * 若已点亮全部成就（原版 + 所有模组，配方类除外），则赠送一个 minecraft game icon（仅一次）。
+     * 若已点亮除本 mod 外的全部成就（原版 + 其它模组，配方类除外），则赠送一个 minecraft game icon（仅一次）。
      */
     private static void onAdvancementEarn(AdvancementEvent.AdvancementEarnEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer serverPlayer)) return;
@@ -2526,7 +2788,7 @@ public class ModMain {
     }
 
     /**
-     * 检查玩家是否已点亮全部成就（原版 + 所有模组，配方类除外）；若已点亮且尚未赠送过，
+     * 检查玩家是否已点亮除本 mod 外的全部成就（原版 + 其它模组，配方类除外）；若已点亮且尚未赠送过，
      * 则赠送一个 minecraft game icon（仅一次）。
      */
     private static void checkAndRewardAllAchievements(ServerPlayer serverPlayer) {
@@ -2546,12 +2808,15 @@ public class ModMain {
     }
 
     /**
-     * 判断玩家是否已点亮全部成就（原版 + 所有模组，配方类除外）：
-     * 遍历服务端加载的全部成就，任一未完成即视为未达成。
+     * 判断玩家是否已点亮除本 mod 外的全部成就（原版 + 其它模组，配方类除外）：
+     * 遍历服务端加载的全部成就，任一未完成即视为未达成。本 mod（{@link #MODID}）自己的成就
+     * 不在判定范围内，玩家无须完成它们即可获得奖励。
      */
     private static boolean hasAllAchievements(ServerPlayer serverPlayer) {
         PlayerAdvancements advancements = serverPlayer.getAdvancements();
         for (AdvancementHolder holder : serverPlayer.server.getAdvancements().getAllAdvancements()) {
+            // 本 mod 自己的成就不参与判定
+            if (MODID.equals(holder.id().getNamespace())) continue;
             // 配方成就（recipe book 解锁）不显示在成就界面，需排除
             if (holder.id().getPath().startsWith("recipes/")) continue;
             AdvancementProgress progress = advancements.getOrStartProgress(holder);
@@ -2599,6 +2864,22 @@ public class ModMain {
     /** 命令方块权杖：抓取模式中玩家头顶常驻的指令 Text Display（玩家 UUID → TextDisplay）。 */
     private static final java.util.Map<java.util.UUID, net.minecraft.world.entity.Display.TextDisplay> COMMAND_STAFF_GRAB_DISPLAYS =
         new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * <b>这只实体现在正被"命令方块权杖·抓取模式"每刻拉拽吗</b>
+     * （用户指定：抓取的传送要<b>压过</b>传送药水的传送门）。
+     *
+     * <p>两个传送撞在一起时就是来回打架：抓取每刻把它 {@code tp} 到玩家前方 6 格，
+     * 而传送药水的入口门只要碰到它就把它搬去出口 —— 站在自己门口抓东西时，
+     * 目标会在两处之间疯狂闪烁（女巫 Boss 这种又大又慢的目标最明显，用户实测反馈）。
+     * 被抓取的实体本来就<b>每刻被拽到玩家跟前</b>、根本不需要门来"运"，
+     * 所以这里让传送门直接跳过它（见 {@code PotionPortalEntity#tick}）。
+     */
+    public static boolean isCommandStaffGrabbed(net.minecraft.world.entity.Entity entity) {
+        return entity != null
+            && !COMMAND_STAFF_GRAB_TARGETS.isEmpty()
+            && COMMAND_STAFF_GRAB_TARGETS.containsValue(entity.getUUID());
+    }
 
     /** 命令方块权杖：护盾模式中玩家头顶常驻的指令 Text Display（玩家 UUID → TextDisplay）。 */
     private static final java.util.Map<java.util.UUID, net.minecraft.world.entity.Display.TextDisplay> COMMAND_STAFF_SHIELD_DISPLAYS =
@@ -3601,6 +3882,9 @@ public class ModMain {
 
         // 以红石粒子渲染整条折线射线（从发射者眼位起完整渲染，各视角一致）
         spawnRedstoneBeamParticles(level, sp, r.points);
+
+        // 成就「天选附体！」：红石块权杖的激光真正射出（充能 > 0）即算“初次使用红石块权杖”
+        awardAdvancement(sp, LASER_EYE_ADV);
 
         // 命中掉落物：每 10~30 刻按“方块破坏概率的两倍”尝试摧毁（无掉落）。
         // 掉落物不阻挡激光，因此不影响下方对生物/方块的命中处理。
@@ -4862,10 +5146,16 @@ public class ModMain {
         COBWEB_PULLING.remove(uuid);
         COBWEB_PULL_END_TIME.remove(uuid);
         blockingPlayers.remove(uuid);
+        // 合成事件兜底：帽子的作业把材料掉在原地；权杖把已吸收的物品原地喷出（绝不吞物品）
+        cn.autoforged.joes_addons_for_abmc.craftinghat.CraftingHatCrafting.discard(uuid);
+        cn.autoforged.joes_addons_for_abmc.craftingstaff.CraftingStaffCrafting.discard(uuid);
+        // 幸运传送门：清掉该玩家的"站够 100 刻"计时，避免静态表随退档玩家累积
+        cn.autoforged.joes_addons_for_abmc.block.LuckyPortalBlock.removePortalTimer(uuid);
         barrierShiftSuppress.remove(uuid);
         LAPIS_FLIGHT_PLAYERS.remove(uuid);
         COMMAND_FLIGHT_PLAYERS.remove(uuid);
         HEROBRINE_FLIGHT_PLAYERS.remove(uuid);
+        WINGS_FLIGHT_PLAYERS.remove(uuid);
         LAPIS_GRABBED_ENTITIES.remove(uuid);
         LAPIS_GRAB_XP_TIMERS.remove(uuid);
         BELL_STAFF_IMMUNITY.remove(uuid);
@@ -4977,13 +5267,279 @@ public class ModMain {
 
     /** 授予玩家 staff_obtained 进度（解锁手册「权杖大全」分类）。 */
     private static void grantGuideAdvancement(ServerPlayer sp) {
-        AdvancementHolder adv = getStaffObtainedAdvancement(sp);
+        awardAdvancement(sp, GUIDE_STAFF_OBTAINED_ADV);
+    }
+
+    /** 直接授予某项成就的全部条件（幂等：已完成则跳过；成就未加载/被数据包移除则忽略）。
+     *  公开给物品/实体等其它类使用：{@code ModMain.awardAdvancement(serverPlayer, ModMain.XXX_ADV)}。 */
+    public static void awardAdvancement(ServerPlayer sp, ResourceLocation advId) {
+        AdvancementHolder adv = sp.server.getAdvancements().get(advId);
         if (adv == null) return;
         PlayerAdvancements pa = sp.getAdvancements();
         if (pa.getOrStartProgress(adv).isDone()) return;
         for (String key : adv.value().criteria().keySet()) {
             pa.award(adv, key);
         }
+    }
+
+    /*
+     * 【模组成就约定】模组成就分为 **3 个标签页**，每页各自有一棵以“根成就”为起点的树；
+     * {@code parent} 只决定“归属哪一页 + 画不画连线”，不构成解锁前置——成就是否点亮只看它自己的 criteria。
+     * 一个标签页的名字与背景都来自该页**根成就**的 display，所以三页的页名就是三个根成就的标题。
+     * 其中「AVM的维度」「AVM的生物」两页的根成就只是**页头**：hidden + impossible、永不授予，
+     * 因此在页内不可见（原版对“hidden 且未完成”的节点什么都不画），只负责给页起名与定背景；
+     * 详见 {@code AdvancementWidgetLineMixin} 的类注释。三页的树：
+     * <pre>
+     * ── 页 1「权杖」（根 staff，背景 stone）──────────────────────────
+     * staff（获得权杖）
+     * ├─ 天选附体！(laser_eye)   蜘蛛侠！(spiderman)
+     * ├─ 黄巾军(gold_staff)  啥玩意这么重？(anvil_staff)
+     * │    没有回头路了……(omega_staff)  以虚无碎磐石(barrier_staff)
+     * ├─ 吃我一锤！(take_this)  蓝手指(blue_thumb)
+     * ├─ 烧炼变得方便了！(easier_to_smelt)  当头一棒(right_on_the_head)
+     * └─ 位移(movement) → 还回来吃饭吗(dad_bought_milk)
+     *
+     * ── 页 2「AVM的维度」（根 avm_dimensions，背景末地石）────────────
+     * avm_dimensions（页头，不可见）
+     * └─ 更多维度(more_dimensions)          ← 独立簇：客户端不画它与页头之间的连线
+     *    ├─ 爱乐之境(la_la_land)  Creeper？(creeper_dimension)
+     *    └─ 幸运之源(source_of_luck)  虚无(the_void)
+     *
+     * ── 页 3「AVM的生物」（根 avm_mobs，背景沙石）──────────────────
+     * avm_mobs（页头，不可见）
+     * ├─ 让你惹Techno！(witch_boss_defeated) ← 独立簇（同上）
+     * ├─ 愤怒的小鸟(angry_birds)             ← 独立簇（同上）
+     * │  ├─ 封印！(origami_sealed) → 给我好好地骚扰他们去！(origami_released)
+     * │  └─ 废物再利用 (origami_recycled)
+     * └─ 贪婪的代价(greed)                   ← 独立簇（同上）
+     *    ├─ 知错就改(get_rid_of_greed) → 见证奇迹(witness_the_impossible，隐藏+挑战)
+     *    └─ 轮到我不吃这套了(not_today)
+     * </pre>
+     * 注：{@code staff_obtained} 是没有 display 的第二个根，只用于解锁帕秋莉手册，不会建页。
+     * “独立簇”（不画与父节点之间的连线、整簇右移 14px）由
+     * {@code AdvancementWidgetLineMixin#LINELESS_ADVANCEMENTS} 维护。
+     */
+    /**
+     * 成就「让你惹Techno！」（击败女巫Boss）的 id。
+     * 数据上它挂在「AVM的生物」页的**页头**（{@code avm_mobs}，一个不可见的 hidden 根）之下——
+     * **parent 只为让它出现在这一页**，并不构成解锁前置（成就是否点亮只看它自己的 criteria）；
+     * 它由本模组在女巫Boss被击败时经 {@link #grantWitchBossDefeatAdvancement} 直接授予，
+     * 客户端再由 {@code AdvancementWidgetLineMixin} 抹掉它与父节点之间的连线，
+     * 使它与同页的「愤怒的小鸟」簇互不相关。
+     */
+    private static final ResourceLocation WITCH_BOSS_DEFEATED_ADV =
+        ResourceLocation.fromNamespaceAndPath(MODID, "witch_boss_defeated");
+
+    /**
+     * 附魔千纸鹤系列成就的 id。它们都挂在「AVM的生物」页下（见各自的 advancement JSON：
+     * 愤怒的小鸟 → 封印！ → 给我好好地骚扰他们去！，废物再利用 与 封印！ 同属 愤怒的小鸟），
+     * 触发条件同样为 minecraft:impossible，由代码在对应交互处授予：
+     * <ul>
+     *   <li>「愤怒的小鸟」：在 {@code EnchantedOrigamiEntity#updateAttack} 里，千纸鹤攻击玩家时授予
+     *       （不能只看伤害事件——远程模式打中的是"点燃"或"爆炸"，火焰后续伤害的来源实体并非千纸鹤）；</li>
+     *   <li>「封印！」：在 {@link #onOrigamiBottleInteract} 里，玻璃瓶收容成功时授予；</li>
+     *   <li>「废物再利用」：在 {@link #onOrigamiBookInteract} 里，用书回收成功时授予；</li>
+     *   <li>「给我好好地骚扰他们去！」：瓶子放生成功时授予，入口见
+     *       {@link cn.autoforged.joes_addons_for_abmc.item.OrigamiBottleItem#useOn}。</li>
+     * </ul>
+     */
+    public static final ResourceLocation ANGRY_BIRDS_ADV =
+        ResourceLocation.fromNamespaceAndPath(MODID, "angry_birds");
+    private static final ResourceLocation ORIGAMI_SEALED_ADV =
+        ResourceLocation.fromNamespaceAndPath(MODID, "origami_sealed");
+    private static final ResourceLocation ORIGAMI_RECYCLED_ADV =
+        ResourceLocation.fromNamespaceAndPath(MODID, "origami_recycled");
+    public static final ResourceLocation ORIGAMI_RELEASED_ADV =
+        ResourceLocation.fromNamespaceAndPath(MODID, "origami_released");
+
+    /**
+     * 权杖招式类成就的 id（同样只挂在「权杖」页下，由代码在对应行为处授予）：
+     * <ul>
+     *   <li>「天选附体！」：红石块权杖的激光真正射出时授予，见 {@link #executeRedstoneStaffTick}；</li>
+     *   <li>「蜘蛛侠！」：蛛网权杖对准**方块**且成功射出蛛丝（进入拉扯）时授予，见 {@link #startCobwebPull}。</li>
+     * </ul>
+     * 其余「获得××权杖」类成就（金块/铁砧/Omega/屏障）由 advancement JSON 里的
+     * minecraft:inventory_changed + blocktype 组件条件直接判定，无需代码。
+     */
+    private static final ResourceLocation LASER_EYE_ADV =
+        ResourceLocation.fromNamespaceAndPath(MODID, "laser_eye");
+    private static final ResourceLocation SPIDERMAN_ADV =
+        ResourceLocation.fromNamespaceAndPath(MODID, "spiderman");
+
+    /**
+     * 「权杖招式」第二组成就的 id（同样只挂在「权杖」页下，由代码在对应行为处授予；
+     * 其中「还回来吃饭吗」的 parent 是「位移」，即“位移的附属”）：
+     * <ul>
+     *   <li>「吃我一锤！」：玩家用**下界合金块权杖**近战命中任何实体时授予（不看击飞是否被目标免疫），
+     *       见 {@link #onAttackEntity}；</li>
+     *   <li>「位移」：黑曜石权杖右键且**选区里真的拔起了方块**（抛射体已生成）时授予，
+     *       见 {@link #executeObsidianStaffAbility}；</li>
+     *   <li>「还回来吃饭吗」：基岩权杖右键且**选区里真的拔起了方块**时授予，
+     *       见 {@link #executeBedrockStaffAbility}；</li>
+     *   <li>「蓝手指」：骨块权杖右键且**至少催熟了一个目标**（水下与地面两条分支各自判定）时授予，
+     *       见 {@link #executeBoneStaffAbility}；</li>
+     *   <li>「烧炼变得方便了！」：熔炉权杖**真的烧炼出了东西**（地面掉落物被转化为烧炼产物），
+     *       或对着一台**装有待烧炼物品**的熔炉/高炉/烟熏炉使用时授予，
+     *       见 {@link #executeFurnaceStaffAbility} 与 {@link #handleFurnaceBlockInteraction}；</li>
+     *   <li>「当头一棒」：玩家用**鸣钟权杖**近战命中任何实体时授予（不看目标是否还在眩晕免疫期内），
+     *       见 {@link #onAttackEntity}。</li>
+     * </ul>
+     */
+    private static final ResourceLocation TAKE_THIS_ADV =
+        ResourceLocation.fromNamespaceAndPath(MODID, "take_this");
+    private static final ResourceLocation MOVEMENT_ADV =
+        ResourceLocation.fromNamespaceAndPath(MODID, "movement");
+    private static final ResourceLocation DAD_BOUGHT_MILK_ADV =
+        ResourceLocation.fromNamespaceAndPath(MODID, "dad_bought_milk");
+    private static final ResourceLocation BLUE_THUMB_ADV =
+        ResourceLocation.fromNamespaceAndPath(MODID, "blue_thumb");
+    private static final ResourceLocation EASIER_TO_SMELT_ADV =
+        ResourceLocation.fromNamespaceAndPath(MODID, "easier_to_smelt");
+    private static final ResourceLocation RIGHT_ON_THE_HEAD_ADV =
+        ResourceLocation.fromNamespaceAndPath(MODID, "right_on_the_head");
+
+    /**
+     * 幸运核心（附体）系列成就的 id。它们挂在「AVM的生物」页下，是本页的**第二个独立簇**
+     * （簇根「贪婪的代价」不画与页头之间的连线，由 {@code AdvancementWidgetLineMixin} 维护）：
+     * <ul>
+     *   <li>「贪婪的代价」(greed)：被幸运核心附体——倒计时到点、核心开始附体的那一刻授予，
+     *       见 {@link cn.autoforged.joes_addons_for_abmc.item.OrbOfLuckEvents#triggerPossession}；</li>
+     *   <li>「知错就改」(get_rid_of_greed)：击败**附体母体**（被核心附体真玩家时产生的那具 boss 空壳）。
+     *       判定放在 {@link #onLivingDeath}：只有母体走 {@code PlayerShellEntity.die()}
+     *       （附体超时/切创造/核心自己血量归零都是 {@code discard()} 的正常收场，不会触发）；
+     *       刷怪蛋放出的、被同化产生的空壳没有 {@code possessedOrbUuid}，同样不算；</li>
+     *   <li>「见证奇迹」(witness_the_impossible)：「知错就改」的子节点，隐藏 + 挑战进度。
+     *       击杀了末影龙/凋灵的那一击出自附体这一侧时，位于**出手那具空壳** 50 格以内的在线玩家
+     *       点亮**对应那一只**的条件，见 {@link #onLivingDeath}；不限空壳类型
+     *       （母体 / 被同化 / 刷怪蛋放出的都算）。
+     *       <b>末影龙与凋灵各要一次</b>（advancement JSON 里是两个条件、两组 requirements），
+     *       所以这里是按 boss 种类走 {@link #awardCriterion} 单条件授予 ——
+     *       用"一次打勾全部条件"的 {@link #awardAdvancement} 会让打死任意一只就整条完成；</li>
+     *   <li>「轮到我不吃这套了」(not_today)：「贪婪的代价」的子节点。手里拿着重锤时被空壳丢出的
+     *       缓降药水砸中即授予，见 {@link cn.autoforged.joes_addons_for_abmc.entity.OrbSlowFallingPotion#onHit}。</li>
+     * </ul>
+     */
+    public static final ResourceLocation GREED_ADV =
+        ResourceLocation.fromNamespaceAndPath(MODID, "greed");
+    private static final ResourceLocation GET_RID_OF_GREED_ADV =
+        ResourceLocation.fromNamespaceAndPath(MODID, "get_rid_of_greed");
+    private static final ResourceLocation WITNESS_THE_IMPOSSIBLE_ADV =
+        ResourceLocation.fromNamespaceAndPath(MODID, "witness_the_impossible");
+    public static final ResourceLocation NOT_TODAY_ADV =
+        ResourceLocation.fromNamespaceAndPath(MODID, "not_today");
+
+    /** 记录一名“参与过女巫Boss战斗”的玩家（去重；已满 {@link #WITCH_BOSS_FIGHTERS_MAX} 人则不再记录）。 */
+    private static void recordWitchBossFighter(@Nullable Witch witch, @Nullable UUID playerUuid) {
+        if (witch == null || playerUuid == null) return;
+        CompoundTag data = witch.getPersistentData();
+        net.minecraft.nbt.ListTag fighters =
+            data.getList(WITCH_BOSS_FIGHTERS_TAG, net.minecraft.nbt.Tag.TAG_STRING);
+        String id = playerUuid.toString();
+        for (int i = 0; i < fighters.size(); i++) {
+            if (id.equals(fighters.getString(i))) return; // 已在名单中
+        }
+        if (fighters.size() >= WITCH_BOSS_FIGHTERS_MAX) return;
+        fighters.add(net.minecraft.nbt.StringTag.valueOf(id));
+        data.put(WITCH_BOSS_FIGHTERS_TAG, fighters);
+    }
+
+    /**
+     * 女巫Boss被击败时，向所有参战玩家（外加打出最后一击的击杀者）授予成就「让你惹Techno！」。
+     * 只发给在线玩家：离线玩家既收不到提示，其成就数据也不在服务端加载。
+     */
+    private static void grantWitchBossDefeatAdvancement(ServerLevel level, LivingEntity witch,
+            @Nullable Entity directKiller) {
+        if (level == null || level.getServer() == null) return;
+        Set<UUID> fighters = new java.util.LinkedHashSet<>();
+        net.minecraft.nbt.ListTag list =
+            witch.getPersistentData().getList(WITCH_BOSS_FIGHTERS_TAG, net.minecraft.nbt.Tag.TAG_STRING);
+        for (int i = 0; i < list.size(); i++) {
+            try {
+                fighters.add(UUID.fromString(list.getString(i)));
+            } catch (IllegalArgumentException ignored) {
+                // 名单里的非法 UUID 直接跳过
+            }
+        }
+        if (directKiller instanceof Player killer) {
+            fighters.add(killer.getUUID());
+        }
+        for (UUID id : fighters) {
+            ServerPlayer sp = level.getServer().getPlayerList().getPlayer(id);
+            if (sp != null) awardAdvancement(sp, WITCH_BOSS_DEFEATED_ADV);
+        }
+    }
+
+    /** 成就「见证奇迹」的见证半径（格）：与"位于幸运核心附体的玩家空壳 50 格以内"同一口径。 */
+    private static final double WITNESS_RANGE = 50.0;
+
+    /**
+     * 这一击该记在哪个玩家头上：优先伤害来源的直接归属（近战就是本人，弓箭/药水/火焰是射手或点火者），
+     * 退回复原口径的"最后伤害来源"归属（{@link net.minecraft.world.entity.LivingEntity#getKillCredit()}，
+     * 覆盖宠物/召唤物代打的情形）。
+     */
+    @Nullable
+    private static ServerPlayer killCreditPlayer(LivingEntity dead, DamageSource source) {
+        if (source.getEntity() instanceof ServerPlayer sp) return sp;
+        if (dead.getKillCredit() instanceof ServerPlayer sp) return sp;
+        return null;
+    }
+
+    /**
+     * 顺着"动手的实体"找它名下那具玩家空壳：空壳本体直接就是；召唤物（己方凋灵、Bob、骷髅马骑士……）
+     * 则顺着召唤标记找到那颗核心，再取核心名下那具壳（与 {@code OrbAdversaryRelations} 同一套口径）。
+     * 不是"由幸运核心支撑的空壳"这一侧时返回 null。
+     */
+    @Nullable
+    private static PlayerShellEntity possessionShellOf(@Nullable Entity attacker) {
+        if (attacker instanceof PlayerShellEntity shell) {
+            return shell.isOrbAttached() ? shell : null;
+        }
+        if (attacker == null || attacker.level().getServer() == null) return null;
+        UUID orbUuid = cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.orbOf(attacker);
+        if (orbUuid == null) return null;
+        for (ServerLevel lvl : attacker.level().getServer().getAllLevels()) {
+            if (!(lvl.getEntity(orbUuid)
+                instanceof cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity orb)) {
+                continue;
+            }
+            UUID vesselUuid = orb.getVesselUuid();
+            if (vesselUuid != null && lvl.getEntity(vesselUuid) instanceof PlayerShellEntity shell) {
+                return shell;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 成就「见证奇迹」：boss（末影龙/凋灵）被附体这一侧打死时，给"出手那具空壳 50 格以内"的在线玩家
+     * 授予它对应的<b>那一个</b>条件。
+     * <p>
+     * 这个成就<b>两个条件都要满足</b>（末影龙一次 + 凋灵一次，见 advancement JSON 的 requirements），
+     * 所以这里必须按 boss 种类<b>单条件授予</b>，不能像别的成就那样"一次把全部条件打勾" ——
+     * 否则打死任意一只就整条完成了（实测反馈：只打凋灵也算完成）。
+     * <p>
+     * 只发给在线玩家（离线玩家既收不到提示，进度也不在服务端加载）。
+     */
+    private static void grantWitnessTheImpossible(ServerLevel level, LivingEntity boss, DamageSource source) {
+        PlayerShellEntity shell = possessionShellOf(source.getEntity());
+        if (shell == null) return;   // 这一击不是附体这一侧打的
+        String criterion = boss instanceof EnderDragon
+            ? "witness_dragon_kill" : "witness_wither_kill";
+        for (ServerPlayer sp : level.getPlayers(p -> p.distanceTo(shell) <= WITNESS_RANGE)) {
+            awardCriterion(sp, WITNESS_THE_IMPOSSIBLE_ADV, criterion);
+        }
+    }
+
+    /**
+     * 只授予某项成就的<b>一个</b>条件（幂等：已点亮的条件重复调用无副作用）。
+     * <p>
+     * 与 {@link #awardAdvancement} 的区别：那个是"把全部条件一次打勾"（适用于只有一个条件的成就），
+     * 本方法是给"多个条件都要满足"的成就用的 —— 例如「见证奇迹」的末影龙/凋灵各一次。
+     */
+    public static void awardCriterion(ServerPlayer sp, ResourceLocation advId, String criterion) {
+        AdvancementHolder adv = sp.server.getAdvancements().get(advId);
+        if (adv == null || !adv.value().criteria().containsKey(criterion)) return;
+        sp.getAdvancements().award(adv, criterion);
     }
 
     /** 撤销玩家 staff_obtained 进度（重新锁定手册「权杖大全」分类）。 */
@@ -5210,8 +5766,215 @@ public class ModMain {
         }
     }
 
+    /** 幸运骷髅骑士：骷髅马与骑在它背上的骷髅都免疫摔落伤害
+     *  （LivingFallEvent 是摔落伤害的根事件，直接取消即可）。 */
+    private static void onLuckyKnightFall(net.neoforged.neoforge.event.entity.living.LivingFallEvent event) {
+        if (cn.autoforged.joes_addons_for_abmc.block.LuckySkeletonKnightEvent.isFallImmune(event.getEntity())) {
+            event.setCanceled(true);
+        }
+    }
+
+    /** 幸运核心 INITIAL 阶段"发射"出去的生物：落地前免疫摔落伤害
+     *  （同样是取消 LivingFallEvent；落地那一刻 {@code OrbInitialLaunch} 会摘掉标记）。 */
+    private static void onOrbLaunchedFall(net.neoforged.neoforge.event.entity.living.LivingFallEvent event) {
+        if (cn.autoforged.joes_addons_for_abmc.entity.OrbInitialLaunch.isFallImmune(event.getEntity())) {
+            event.setCanceled(true);
+        }
+    }
+
+    /** 这一击是不是"己方凋灵"打出来的：凋灵本体（爆发）或它吐出的凋灵之首。 */
+    private static boolean isSummonedWitherAttack(net.minecraft.world.damagesource.DamageSource source) {
+        net.minecraft.world.entity.Entity direct = source.getDirectEntity();
+        if (direct instanceof net.minecraft.world.entity.boss.wither.WitherBoss wither) {
+            return cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.isSummon(wither);
+        }
+        if (direct instanceof net.minecraft.world.entity.projectile.WitherSkull skull) {
+            return cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.isSummon(skull.getOwner());
+        }
+        return false;
+    }
+
+    /**
+     * 末影龙特攻：把"附体这一侧"打出的伤害换成<b>爆炸伤害</b>。
+     * <p>
+     * 末影龙只吃"攻击者是玩家"或"伤害类型属于 {@code #minecraft:always_hurts_ender_dragons}"的伤害，
+     * 而那个标签的内容就是 {@code #minecraft:is_explosion} —— 空壳不是玩家，所以它的箭矢/近战
+     * 原本对末影龙一点伤害都不结算。换成爆炸伤害后就能正常打伤了（箭矢也算爆炸伤害）。
+     * <p>
+     * 已经是爆炸伤害、或者根本不是附体这一侧打出的，原样返回。
+     * 调用点是 {@code EnderDragonMixin}（挂在 {@code EnderDragon#hurt(EnderDragonPart, …)} 上）——
+     * 那里是末影龙所有伤害的唯一入口，也是那道"只吃玩家/爆炸"的门槛之前。
+     */
+    public static net.minecraft.world.damagesource.DamageSource possessionDamageForEnderDragon(
+            net.minecraft.world.damagesource.DamageSource source) {
+        Entity attacker = source.getEntity();
+        if (attacker == null
+            || source.is(net.minecraft.tags.DamageTypeTags.IS_EXPLOSION)
+            || !isPossessionAttack(attacker)) {
+            return source;
+        }
+        return attacker.damageSources().explosion(attacker, attacker);
+    }
+
+    /** 这个实体是不是"附体这一侧"的：被附体的玩家空壳、幸运核心本体，以及它们的召唤物。 */
+    private static boolean isPossessionAttack(@Nullable Entity attacker) {
+        return attacker instanceof cn.autoforged.joes_addons_for_abmc.entity.PlayerShellEntity
+            || attacker instanceof cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity
+            || cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.isSummon(attacker);
+    }
+
+    /**
+     * 把"某具空壳（或某颗核心）名下召唤物留下的<b>变形产物</b>"全部作废。
+     *
+     * <h2>为什么需要它</h2>
+     * 召唤物被变形药水变形后，世界里留下的是<b>另一具实体</b>（物品 / 下落方块 / 放置的方块 /
+     * 生物壳 / 玩家空壳），它身上<b>没有</b>召唤标记 —— 只在下面这几张变形数据表的
+     * {@code entityNbt} 里留着"我原本是谁"（那份 NBT 里带着 {@code jafa_orb_summon} 标记）。
+     * 所以空壳消失时，必须挨张表把属于它的条目挑出来：产物就地销毁（无掉落），
+     * 并且给数据打上"注定销毁"标记 —— 之后到点不复原、<b>变形解药也无效</b>
+     * （见 {@link #respawnTransmutedEntity}、{@link #revertLivingShell} 开头的判空返回）。
+     *
+     * <p>产物没加载（区块卸载）时碰不到：条目原样留着（已带标记），
+     * 各 tick 循环一旦发现实体/方块回到加载状态就会当场收掉它（见各循环开头的标记判断）。
+     *
+     * @param shellUuid 消失的空壳 UUID；{@code null} 表示"这颗核心的全部召唤物"
+     * @param orbUuid   核心 UUID；{@code null} 表示只按空壳匹配
+     */
+    public static void destroyMorphedSummonProducts(@Nullable UUID shellUuid, @Nullable UUID orbUuid) {
+        if (shellUuid == null && orbUuid == null) {
+            return;
+        }
+        for (TransmutationData data : ITEM_TRANSMUTATIONS.values()) {
+            if (cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons
+                    .nbtIsSummonOf(data.entityNbt(), shellUuid, orbUuid)) {
+                cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons
+                    .markNbtOrphaned(data.entityNbt());
+            }
+        }
+        for (TransmutationData data : FALLING_TRANSMUTATIONS.values()) {
+            if (cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons
+                    .nbtIsSummonOf(data.entityNbt(), shellUuid, orbUuid)) {
+                cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons
+                    .markNbtOrphaned(data.entityNbt());
+            }
+        }
+        for (TransmutationData data : TNT_TRANSMUTATIONS.values()) {
+            if (cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons
+                    .nbtIsSummonOf(data.entityNbt(), shellUuid, orbUuid)) {
+                cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons
+                    .markNbtOrphaned(data.entityNbt());
+            }
+        }
+        for (LivingShellData data : LIVING_SHELLS.values()) {
+            if (cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons
+                    .nbtIsSummonOf(data.entityNbt(), shellUuid, orbUuid)) {
+                cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons
+                    .markNbtOrphaned(data.entityNbt());
+            }
+        }
+        for (Map<BlockPos, java.util.List<TransmutationData>> dimMap : BLOCK_TRANSMUTATIONS.values()) {
+            for (java.util.List<TransmutationData> list : dimMap.values()) {
+                for (TransmutationData data : list) {
+                    if (cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons
+                            .nbtIsSummonOf(data.entityNbt(), shellUuid, orbUuid)) {
+                        cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons
+                            .markNbtOrphaned(data.entityNbt());
+                    }
+                }
+            }
+        }
+    }
+
+    /** 正在被"变形药水"换成产物的实体 UUID（见 {@link #markMorphing}）。 */
+    private static final java.util.Set<UUID> MORPHING_ENTITIES = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * 标记"这个实体马上要被变形药水换掉（{@code discard} → 生成产物）"。
+     * <p>
+     * 附体主空壳消失时要清掉它名下的一切召唤物，但<b>变形不算消失</b> ——
+     * 壳体只是换成了物品/方块/生物壳，马上还要变回来，召唤物必须原样留着。
+     * 这条标记就是那个"例外"的唯一判据（见 {@code PlayerShellEntity#remove}）。
+     */
+    public static void markMorphing(Entity entity) {
+        if (entity != null) {
+            MORPHING_ENTITIES.add(entity.getUUID());
+        }
+    }
+
+    /**
+     * 变形前给"附体/同化的空壳"打一次"这是变形，不是没了"的标记。
+     * <p>
+     * 只有空壳需要：它的移除要区分"真没了"（清场召唤物）与"只是换了形态"。
+     * 别的实体不进这张表 —— 标记只有 {@code PlayerShellEntity#remove} 会取用，
+     * 给它们打标记就只会白攒内存。
+     */
+    private static void markShellMorphingIfNeeded(LivingEntity entity) {
+        if (entity instanceof PlayerShellEntity) {
+            markMorphing(entity);
+        }
+    }
+
+    /** 取用一次"正在变形"标记（读到就清掉，避免 UUID 在集合里越积越多）。 */
+    public static boolean consumeMorphing(Entity entity) {
+        return entity != null && MORPHING_ENTITIES.remove(entity.getUUID());
+    }
+
+    /**
+     * 复原出来的实体如果是"附体主空壳"（幸运核心附体真玩家时产生的那具 boss 身体），
+     * 让它重新回到核心名下。
+     * <p>
+     * 为什么要专门接一下：复原是"照 NBT 重新 new 一个实体"，<b>UUID 会变</b>，
+     * 核心记的 {@code vesselUuid} 当场失效；不重认的话核心会以为身体丢了、再补一具新的，
+     * 于是场上同时出现两具 boss 身体。
+     */
+    private static void relinkVesselAfterRebuild(ServerLevel level, @Nullable Entity rebuilt) {
+        if (rebuilt instanceof PlayerShellEntity shell && shell.isPossessionVessel()
+            && level.getEntity(shell.getPossessedOrb())
+                instanceof cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity orb) {
+            orb.onVesselReverted(shell);
+        }
+    }
+
+    /**
+     * 变形复原时的统一补做：重建出来的实体如果带着"附体召唤物"标记，
+     * 就把它的共享索敌改造（{@link cn.autoforged.joes_addons_for_abmc.entity.OrbSummonTargetGoal}）
+     * 就地重装。
+     *
+     * <p>为什么每条复原路径都要调：那套改造是命令式注册到 {@code targetSelector} 上的、<b>不进存档</b>，
+     * 而复原一律是"照 NBT 重新 new 一个实体"（{@code EntityType.create} → 构造函数重新 registerGoals），
+     * 于是原版那套"见谁打谁"回来了、共享索敌丢了。这种实体只要挨过空壳自己一发范围伤害，
+     * 原版 {@code HurtByTargetGoal} 就会把它锁死成"打那具空壳"。
+     *
+     * <p>补做的路径必须<b>覆盖所有会让实体活下来的复原入口</b>：
+     * <ul>
+     *   <li>{@link #respawnTransmutedEntity}：物品/方块形态复原（变形物品到期、解药、被摧毁）；</li>
+     *   <li>{@link #revertLivingShell}：<b>生物↔生物</b>形态复原（{@code mob_shell:} 一条）。
+     *       之前只补了前者，而「变形成生物」的药水走的正是这里 —— 这就是
+     *       "召唤物被变形后解除变形又开始打空壳"漏网的根因。</li>
+     * </ul>
+     */
+    private static void repairRebuiltPossessionSummon(@Nullable Entity rebuilt) {
+        if (rebuilt == null) {
+            return;
+        }
+        if (cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.isSummon(rebuilt)) {
+            cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.ensureSharedTarget(rebuilt);
+        }
+        // 骷髅马骑士：复原出来的骑手/坐骑要重新归位（骑乘关系不在 NBT 里，见 OrbSkeletonKnightFlight）
+        cn.autoforged.joes_addons_for_abmc.entity.OrbSkeletonKnightFlight.restoreMountAfterRevert(rebuilt);
+    }
+
     private static void onLivingIncomingDamage(LivingIncomingDamageEvent event) {
         LivingEntity target = event.getEntity();
+
+        // 友伤兜底：己方凋灵的攻击（副头乱射的凋灵之首、半血那一下爆发）绝不结算到我们这一侧
+        // —— 幸运核心、被附体的玩家空壳、以及一切附体召唤物。
+        // 副头目标已经由 OrbAllyWitherControl 锁定住了，这里是"万一还是被糊到"的保险。
+        if (cn.autoforged.joes_addons_for_abmc.entity.OrbAllyWitherControl.isAllySide(target)
+            && isSummonedWitherAttack(event.getSource())) {
+            event.setCanceled(true);
+            return;
+        }
 
         // 女巫Boss 在水中被攻击时强制索敌：
         // 原版 HurtByTargetGoal 依赖视线（hasLineOfSight 使用 Fluid.NONE，纯水本不遮挡光线），
@@ -5230,6 +5993,18 @@ public class ModMain {
                 }
                 if (threat) witch.setTarget(attackerLe);
             }
+        }
+
+        // --- 泰坦诊断（只读，debug 模式）：泰坦的 hurt() 有四道门槛会让攻击"看起来毫无效果"，
+        //     单看结果分不出是哪一道。这里在伤害进入时把关键状态打出来，便于定位。
+        //     注意本 mod 不给泰坦加任何伤害拦截，所以这里的输出只反映它自己的规则。 ---
+        if (ModConfig.DEBUG_MODE.get() && isTitansModEntity(event.getEntity())
+            && event.getEntity() instanceof LivingEntity titanDiag) {
+            LOGGER.info("[transmute][TITAN-HURT-ATTEMPT] uuid={} 来源={} 伤害={} 攻击者={} "
+                + "自己isInvulnerable={} 血量={} 濒死={}",
+                titanDiag.getUUID(), event.getSource().getMsgId(), event.getAmount(),
+                event.getSource().getEntity(), titanDiag.isInvulnerable(), titanDiag.getHealth(),
+                titanDiag.isDeadOrDying());
         }
 
         // --- 变形玩家伤害过滤：物品/方块/壳/生物形态仅允许对应来源的伤害，其余免疫
@@ -5263,6 +6038,15 @@ public class ModMain {
                         if (!isBlockFormDamageAllowed(transmutedPlayer.level(),
                             transmutedPlayer.blockPosition(), info.itemType(), tSource)) {
                             event.setCanceled(true);
+                        }
+                    }
+                    case MOB -> {
+                        // 生物（动物）形态：那是一具按该生物换算过血量、有血有肉的躯体，伤害照常生效。
+                        // 之前没有这一支，MOB 落进 default 被"完全免疫"，导致女巫砸变形药水/剧毒都不掉血。
+                        // 这里顺带接上生物形态的特殊受击机制（末影人免疫弹射物并传送、烈焰人吃雪球等）——
+                        // 该方法原先在下面 5624 行被 !TRANSMUTED_ENTITIES 挡住、实际是死代码。
+                        if (transmutedPlayer instanceof ServerPlayer morphSp) {
+                            applyMorphIncomingDamage(morphSp, event);
                         }
                     }
                     default -> event.setCanceled(true); // 玩家空壳/生物壳：完全免疫
@@ -5573,8 +6357,11 @@ public class ModMain {
         if (source.is(net.minecraft.tags.DamageTypeTags.IS_PROJECTILE)) epf += projProt;
         if (epf > 0) {
             int capped = Math.min(20, epf);
-            float reduce = event.getAmount() * capped / 25.0F;
-            event.setAmount(Math.max(0.0F, event.getAmount() - reduce));
+            // 用"乘 (1 - 比例)"而不是"先算减量再相减"：/kill 造成的伤害是 Float.MAX_VALUE，
+            // 而 amount * capped 会直接<b>溢出成 Infinity</b>（MAX_VALUE × 16 ≈ 5.4e39 > Float.MAX），
+            // 于是 amount - Infinity = -Infinity → 被 Math.max(0, …) 夹成 0，
+            // 等于"带保护附魔效果的实体对 /kill 完全免伤"（玩家空壳就是这么免疫掉 /kill 的）。
+            event.setAmount(event.getAmount() * (1.0F - capped / 25.0F));
         }
 
         // --- 摔落缓冲：减轻摔落伤害（等级越高减得越多，最大 80%）---
@@ -5776,6 +6563,31 @@ public class ModMain {
     }
 
     /**
+     * 变形药水命中实体的调试输出（仅在 {@code debug.debug_mode} 开启时生效）：
+     * 向投掷者在聊天框输出"命中了&lt;该实体的 UUID&gt;"。
+     * <p>
+     * 这是"从投掷物命中这一步开始排查变形药水为什么没生效"的第一环：只要瓶子命中了实体就会输出，
+     * 因此它<b>不</b>关心后续是否真的变形成功。若这里没有输出，说明命中那一刻根本没有
+     * {@code EntityHitResult}（药水先落地/被方块挡下/命中点落在 part entity 上），
+     * 与状态效果那一侧的免疫问题无关。
+     * <p>
+     * 输出对象是投掷者（{@code shooter}）；若投掷者不是玩家（女巫Boss、发射器等）则回退给
+     * 该维度内的所有玩家，避免关键信息无处可看。这里刻意不用 {@code getOwner()}：在
+     * {@code ProjectileImpactEvent} 里 {@code shooter} 已经是解析过的投掷者，比 owner 更可靠。
+     */
+    private static void debugTransmutationPotionHit(ServerLevel level, LivingEntity shooter, Entity victim) {
+        if (!ModConfig.DEBUG_MODE.get()) return;
+        Component msg = Component.literal("命中了" + victim.getUUID());
+        if (shooter instanceof ServerPlayer sp) {
+            sp.sendSystemMessage(msg);
+        } else {
+            for (ServerPlayer p : level.players()) {
+                p.sendSystemMessage(msg);
+            }
+        }
+    }
+
+    /**
      * 附魔生物·远程类效果：
      * 多重射击（发射瞬间按等级分裂额外弹射物，1 级共 3 支），火矢（点燃目标/爆炸弹射物必带火焰爆炸），
      * 穿透（命中后有概率保持原速度与角度继续前进）。
@@ -5878,6 +6690,60 @@ public class ModMain {
 
         if (ray.getType() != HitResult.Type.ENTITY) return;
         Entity victim = ((EntityHitResult) ray).getEntity();
+
+        // 调试：变形药水命中了**任意实体**就输出其 UUID（在"非生物/自己命中自己"的早退之前判断，
+        // 否则这部分命中会被漏掉；输出不改变任何变形行为）。见 debugTransmutationPotionHit。
+        ThrownPotion hitTransmutationPotion = null;
+        if (proj instanceof ThrownPotion hitPotion && isTransmutationPotion(hitPotion.getItem())) {
+            hitTransmutationPotion = hitPotion;
+            debugTransmutationPotionHit(serverLevel, shooter, victim);
+        }
+
+        // ===== 变形药水·通用直接变形路径（不经状态效果） =====
+        // 背景：原来的变形入口只有一个 —— TRANSMUTATION 状态效果被写入时的 MobEffectEvent.Added。
+        // 那条链有两个天生缺口：
+        //   1) 只有 LivingEntity 能吃到效果，命中"部件实体（part entity）"时本体什么都不会发生；
+        //   2) canBeAffected / addEffect 被子类重写的生物（泰坦类大型 Boss 常见）会直接拒绝写入，
+        //      于是 Added 永不触发，变形静默失败。
+        // 这里把"命中即变形"做成与效果无关的通用路径：投掷物命中实体的那一刻就直接取目标、执行
+        // performTransmutation，不再依赖效果被接受。
+        //
+        // 为什么放在"非生物 / 命中自己"的早退之前：
+        //   - 命中部件实体时 victim 不是 LivingEntity，早退之后就没机会解析本体了，
+        //     所以这里用 {@link #resolveTransmutationTarget} 反射拿 getMaster()/getOwner()/getParent()；
+        //   - 自砸（女巫Boss自己丢的药水命中自己、以及玩家对自己砸药水）也必须能变形，
+        //     而下面那行早退恰好会把 livingVictim == shooter 挡掉。
+        //
+        // 与原有效果路径的关系（两条路并存，互不冲突）：
+        //   - 本路径在 ProjectileImpactEvent 里跑，早于原版 ThrownPotion 的溅射（doSplash）；
+        //   - performTransmutation 成功后会 discard 掉原实体，届时溅射即便再给"已变形的本体"写一次
+        //     效果，去重判定也会把第二次变形拦掉，因此不会重复变形；
+        //   - 变形失败（免疫 / 取不到目标）时本路径什么都不做，紧接着溅射照旧，原效果路径仍是兜底。
+        //
+        // 黑名单见 {@link #isDirectTransmutationBlacklisted}：本路径绕过了状态效果，因此必须显式
+        // 复刻效果路径原本的全部免疫判定（玩家、凋灵/末影龙、核心、女巫奖励免疫、已变形中、女巫阶段1…）。
+        //
+        // 未取到固定目标（ITEM_TYPE 为空）时不接管：那种药水在效果路径里会随机取一个目标，
+        // 若在这里也接管，就等于把"随机变形"也搬到命中时刻，且会与效果路径给出的随机结果打架。
+        // 药水本身仍是原版喷溅，瞬间伤害/治疗等效果照常生效。
+        if (hitTransmutationPotion != null) {
+            LivingEntity directTarget = resolveTransmutationTarget(victim);
+            // 目标必须在变形前就取好：目标可能正是投掷者自己（女巫Boss自砸 / 玩家自砸），
+            // 而 findTransmutationItemType 会读投掷物来取目标，一旦先变形就无法再取到。
+            String directItemType = directTarget != null
+                ? findTransmutationItemType(serverLevel, directTarget) : null;
+            if (directTarget != null
+                && directTarget.isAlive()
+                && directItemType != null
+                && !isDirectTransmutationBlacklisted(directTarget, directItemType)) {
+                UUID directKiller = shooter instanceof Player shooterPlayer
+                    ? shooterPlayer.getUUID()
+                    : findTransmutationKiller(serverLevel, directTarget);
+                int directTicks = 2000; // 与变形药水默认时长一致（TRANSMUTATION = 2000 tick）
+                performTransmutation(serverLevel, directTarget, directItemType, directTicks, directKiller);
+            }
+        }
+
         if (!(victim instanceof LivingEntity livingVictim) || livingVictim == shooter) return;
 
         // 火矢：点燃目标（爆炸性弹射物的“火焰爆炸”在发射时即已标记，见 onEntityJoinLevel）
@@ -5906,6 +6772,8 @@ public class ModMain {
     //  · 变形药水三形态均重命名为“变形为§krandom”
     //  · 传送药水：移除直饮+滞留型；留下的喷溅型命名为“随机传送药水”
     private static void onBuildCreativeTab(net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent event) {
+        // 注意：本模组的刷怪蛋一律放在<b>自己的</b>页签里（见 ModCreativeTab），
+        // 不塞进原版的刷怪蛋页签。
         if (event.getTabKey() != net.minecraft.world.item.CreativeModeTabs.FOOD_AND_DRINKS) return;
         java.util.List<ItemStack> all = new java.util.ArrayList<>();
         for (ItemStack s : event.getParentEntries()) all.add(s);
@@ -6001,6 +6869,9 @@ public class ModMain {
      * 多重射击：射出的弹射物沿水平方向均匀分裂出额外 2×level 支（总支数 = 2×level+1，
      * level1 即 3 支，符合弩中箭的分裂次数，随等级递增每级 +2 支）。
      * 分裂用于任意弹射物（箭/雪球/火球等）；副本以 COPY 标记避免再次分裂。
+     * <p>副本会打上 {@link #MULTISHOT_VOLLEY_TAG}：这些分裂出来的弹射物落地后<b>只留 2 秒</b>
+     * （见 {@link #tickMultishotVolleyProjectile}），不会按各自的 1 分钟 / 西瓜刀的 5 分钟躺在世界里。
+     * <b>本体不打这个标记</b>（用户指定）：射手自己那一发照旧按原本规则存在、也能正常回收。
      */
     /**
      * 多重射击等级：优先取射手身上的“魔咒状态效果”，否则取射手手持武器（弓/弩）上的多重射击魔咒。
@@ -6026,6 +6897,24 @@ public class ModMain {
         // 即副本次数 = 2×level，总支数 = 2×level+1（level1=3、level2=5、level3=7……）。
         int extras = 2 * multishotLevel; // 额外分裂支数（不含本体）
         Vec3 v = proj.getDeltaMovement();
+        // <b>本体的存档</b>：给"用 EntityType.create 建出来的副本"补上各 Mod 自己写进 NBT 的关键状态。
+        // 循环外只取一次（本体不会因为分裂而改变）。
+        //
+        // <h2>为什么必须搬这一份存档</h2>
+        // {@code EntityType#create} 只走"无参构造函数"，凡是<b>只有在带参构造函数里才赋值</b>的字段
+        // 到了副本上就全是 null。暮色森林的链锤（{@code twilightforest:chain_block}）正是这样：
+        // 它的武器物品存在自己 NBT 的 {@code BlockAndChainStack} 里（见其 {@code addAdditionalSaveData}），
+        // 而副本那个字段是 null —— 于是副本一命中就崩：
+        // {@code Cannot invoke "ItemStack.hurtAndBreak(...)" because "this.stack" is null}
+        // （实测崩溃报告 crash-2026-10-07_01.19.57-server.txt：
+        // 玩家/空壳带多重射击效果丢链锤时必现）。搬完存档，副本就有和本体一样的武器物品了。
+        CompoundTag prototype = null;
+        if (!(proj instanceof FireworkRocketEntity)) {
+            prototype = new CompoundTag();
+            proj.save(prototype);
+            // 乘客不搬：副本是弹射物，搬过来只会凭空多出实体（也免得递归复制）
+            prototype.remove("Passengers");
+        }
         for (int i = 0; i < extras; i++) {
             Projectile copy;
             if (proj instanceof FireworkRocketEntity) {
@@ -6034,10 +6923,25 @@ public class ModMain {
                     proj.getX(), proj.getY(), proj.getZ(), true);
             } else {
                 copy = (Projectile) proj.getType().create(level);
+                if (copy != null && prototype != null) {
+                    copy.load(prototype);
+                    // 存档里带着本体 UUID：必须换一个新的，否则同一维度里会同时存在两具同 UUID 的实体
+                    copy.setUUID(UUID.randomUUID());
+                }
             }
             if (copy == null) continue;
             copy.setOwner(shooter);
             copy.setPos(proj.getX(), proj.getY(), proj.getZ());
+            // <b>附体空壳射出的"多余投掷物"不许被捡起</b>（用户指定）：箭/三叉戟也会被多重射击
+            // 分裂成 3~7 份，落地后要是还能捡，就等于白送（创造模式下尤其明显 —— 存档搬过来的
+            // pickup 常常是 CREATIVE_ONLY/ALLOWED，见 {@code AbstractArrow#readAdditionalSaveData}）。
+            // 只对"射手是玩家空壳"这么做：真人玩家的多重射击照原版，多余箭矢仍可回收。
+            // {@code AbstractArrow#pickup} 是公开字段；三叉戟那条"忠诚回手时主人能捡"的例外
+            // （{@code ThrownTrident#tryPickup} 的第二段）要求 {@code ownedBy(玩家)}，
+            // 而副本的主人是一具空壳生物，所以那条例外也不会漏。
+            if (shooter instanceof PlayerShellEntity && copy instanceof AbstractArrow arrow) {
+                arrow.pickup = AbstractArrow.Pickup.DISALLOWED;
+            }
             // 女巫丢出的分裂药水：副本默认只是无效果的水瓶，改为随机效果 + 随机时长的药水
             // （效果可来自原版或其它 Mod，但一定不是变形药水）。
             if (proj instanceof ThrownPotion && copy instanceof ThrownPotion potionCopy) {
@@ -6049,7 +6953,56 @@ public class ModMain {
             copy.setDeltaMovement(rotateScaledVelocity(v, (float) angle));
             copy.hasImpulse = true;
             copy.getPersistentData().putBoolean(MULTISHOT_COPY_TAG, true);
+            // 只有分裂副本打"齐射"标记 → 落地 2 秒后消失（见 tickMultishotVolleyProjectile）；
+            // 本体不打，照旧按它原本的规则存在（用户指定：本体不能提前消失）。
+            copy.getPersistentData().putBoolean(MULTISHOT_VOLLEY_TAG, true);
             level.addFreshEntity(copy);
+        }
+    }
+
+    /**
+     * <b>多重射击分裂副本：落地后只留 2 秒</b>（用户指定）。本体不受影响。
+     *
+     * <h2>为什么用"连续静止"而不是按实体类型判断</h2>
+     * 需要覆盖的弹射物五花八门：原版箭/药水箭、三叉戟、本模组的闪烁西瓜刀、暮色森林的寒冰箭、
+     * 天境的毒镖/金镖、链锤……以后还可能多出别的 Mod 的弹射物。<b>逐个枚举类型必然漏</b>，
+     * 所以这里不看类型，只看两件事：
+     * <ol>
+     *   <li>{@link #MULTISHOT_VOLLEY_TAG} —— 这发是<b>多重射击分裂出来的副本</b>
+     *       （只有副本打这个标记，见 {@link #spawnMultishotCopies}；本体不打，照旧按原版时长存在）；</li>
+     *   <li>"这一发已经不动了" —— 用<b>本刻位移</b>判断（{@code getX() - xOld} 等；
+     *       服务端/客户端都在 {@code Entity#tick()} 前调 {@code setOldPosAndRot()}，
+     *       所以这里是"本刻走了多远"）。连续 {@link #MULTISHOT_LANDED_LIFETIME_TICKS} 刻都
+     *       不动才判定为落地/插住。</li>
+     * </ol>
+     * 于是：箭插地、三叉戟插地、西瓜刀钉住、毒镖落地……全都是"原地不动"，一视同仁；
+     * 而飞行中的弹射物哪怕在抛物线顶点（那一两刻的竖直速度恰好为 0，但水平方向仍在动）
+     * 也攒不满连续 40 刻，不会被误判。插住的弹射物若因为脚下方块被挖掉而重新掉落
+     * （原版箭的 {@code shouldFall()}），位移一恢复计数就清零，也不会被提前删掉。
+     *
+     * <p>计数器写在实体自己的持久化数据（{@link #MULTISHOT_IDLE_TAG}）里：随实体存亡自动回收，
+     * 不需要维护旁路表，区块卸载/读档后也还能接着数。
+     */
+    private static void tickMultishotVolleyProjectile(Projectile proj) {
+        CompoundTag data = proj.getPersistentData();
+        if (!data.getBoolean(MULTISHOT_VOLLEY_TAG)) return;
+
+        double dx = proj.getX() - proj.xOld;
+        double dy = proj.getY() - proj.yOld;
+        double dz = proj.getZ() - proj.zOld;
+        double movedSqr = dx * dx + dy * dy + dz * dz;
+        if (movedSqr > MULTISHOT_IDLE_MOVE_EPSILON) {
+            // 还在飞（或者在插住之后又掉了出来）：计数清零
+            if (data.getInt(MULTISHOT_IDLE_TAG) != 0) {
+                data.putInt(MULTISHOT_IDLE_TAG, 0);
+            }
+            return;
+        }
+
+        int idle = data.getInt(MULTISHOT_IDLE_TAG) + 1;
+        data.putInt(MULTISHOT_IDLE_TAG, idle);
+        if (idle >= MULTISHOT_LANDED_LIFETIME_TICKS) {
+            proj.discard();
         }
     }
 
@@ -6163,6 +7116,50 @@ public class ModMain {
         double x = v.x * cos + v.z * sin;
         double z = -v.x * sin + v.z * cos;
         return new Vec3(x, v.y, z);
+    }
+
+    /**
+     * 射手此刻有没有多重射击（优先"魔咒状态效果"，其次手持弓/弩上的多重射击魔咒）。
+     * <p>
+     * 给"要不要避让多重射击"的判断用：弹射物会被 {@link #spawnMultishotCopies} 自动分裂，
+     * 个别"一次只该出一枚"的攻击（例如天境的创始者飞锤）在自己 {@code canRun} 里据此让路。
+     */
+    public static boolean hasMultishot(LivingEntity shooter) {
+        return shooter.level() instanceof ServerLevel level && getMultishotLevel(level, shooter) > 0;
+    }
+
+    /**
+     * <b>多重射击·爆炸性实体版</b>（用户指定）：射手带着多重射击时，给出"额外还要朝哪些方向发射"。
+     *
+     * <h2>为什么单独开一个入口</h2>
+     * 弹射物（箭/雪球/链锤…）走的是 {@code EntityJoinLevelEvent} 里那条自动分裂，
+     * 但<b>爆炸性实体不是 {@code Projectile}</b>（飞行炸弹是苦力怕/猫/僵尸/史莱姆/骷髅的派生类，
+     * TNT 权杖那颗是 {@code PrimedTnt}），它们既不触发那条事件，也没法用"复制本体"的办法分裂
+     * —— 只能由<b>发射方</b>自己按同一套公式再生成几只。这个入口就是给那些发射方用的：
+     * 方向和散布与弹射物那条完全一致（同一个 {@link #MULTISHOT_HALF_SPREAD}、同一个
+     * {@link #rotateScaledVelocity}），等级判定也共用 {@link #getMultishotLevel}
+     * （优先"魔咒状态效果"，其次手持武器上的多重射击）。
+     *
+     * @param shooter   发射者（玩家或被附体空壳）
+     * @param direction 本体的发射方向（单位向量即可，速度由调用方自己给）
+     * @return 额外要发射的方向，个数 = 2×等级（总支数 = 2×level+1）；没有多重射击时返回空表
+     */
+    public static java.util.List<Vec3> multishotSpreadDirections(LivingEntity shooter, Vec3 direction) {
+        if (!(shooter.level() instanceof ServerLevel level)) {
+            return java.util.List.of();
+        }
+        int multishot = getMultishotLevel(level, shooter);
+        if (multishot <= 0) {
+            return java.util.List.of();
+        }
+        int extras = 2 * multishot;
+        java.util.List<Vec3> out = new java.util.ArrayList<>(extras);
+        for (int i = 0; i < extras; i++) {
+            // 与弹射物那条一样的均匀散布：t 从 -1 到 1，角度 = t × 半宽
+            double t = (extras == 1) ? 0.0 : (i / (double) (extras - 1) - 0.5) * 2.0;
+            out.add(rotateScaledVelocity(direction, (float) (t * MULTISHOT_HALF_SPREAD)));
+        }
+        return out;
     }
 
     /** 附魔生物·快速装填（受击后减少无敌帧）辅助；当前已在近战攻击侧处理，此处保留钩子无操作。 */
@@ -6416,6 +7413,10 @@ public class ModMain {
         //    注意在其它伤害修正(格挡/附魔减伤等)前用原始伤害量累加，与“血条1=1/3最大生命”口径一致。 ---
         if (target instanceof Witch witchTarget
                 && witchTarget.getPersistentData().getBoolean(WITCH_BOSS_TAG)) {
+            // 成就「让你惹Techno！」：任意阶段对女巫Boss造成伤害的玩家都计入参战名单
+            if (source.getEntity() instanceof Player witchFighter) {
+                recordWitchBossFighter(witchTarget, witchFighter.getUUID());
+            }
             int stage = getWitchBossStage(witchTarget); // 先记录当前阶段，防止阶段切换后溢出伤害
             if (stage == WITCH_BOSS_STAGE_ENTITY) {
                 witchBossStage1TakeDamage(witchTarget, event.getNewDamage());
@@ -6504,13 +7505,16 @@ public class ModMain {
         }
 
         // --- TOTEM EFFECT: check if victim holds our item ---
+        // 闪烁西瓜刀在"这一击会致死"时顶替不死图腾（见 applyTotemEffect）。
+        // 但<b>消耗谁</b>要挑：如果玩家身上（副手优先，其次其它栏位）还有真正的不死图腾，
+        // 就先吃掉那个图腾、把刀留着；只有实在没有图腾了，才轮到刀自己去顶这一下。
         if (target instanceof Player player) {
             float healthAfterDamage = player.getHealth() - event.getNewDamage();
             if (healthAfterDamage <= 0.0F && !source.is(net.minecraft.tags.DamageTypeTags.BYPASSES_INVULNERABILITY)) {
                 for (InteractionHand hand : InteractionHand.values()) {
                     ItemStack held = player.getItemInHand(hand);
                     if (held.getItem() instanceof GlisteringMelonKnifeItem) {
-                        applyTotemEffect(player, held);
+                        applyTotemEffect(player, totemToSpendFirst(player, held));
                         event.setNewDamage(0);
                         return;
                     }
@@ -6519,7 +7523,7 @@ public class ModMain {
                     if (slot.getType() != EquipmentSlot.Type.HUMANOID_ARMOR) continue;
                     ItemStack equipped = player.getItemBySlot(slot);
                     if (equipped.getItem() instanceof GlisteringMelonKnifeItem) {
-                        applyTotemEffect(player, equipped);
+                        applyTotemEffect(player, totemToSpendFirst(player, equipped));
                         event.setNewDamage(0);
                         return;
                     }
@@ -6590,11 +7594,17 @@ public class ModMain {
             }
         }
 
-        // --- CUSTOM ENCHANTMENT DAMAGE: attacker uses our item ---
-        if (attacker instanceof LivingEntity livingAttacker) {
+        // --- 闪烁西瓜刀：仅对亡灵改算伤害（先按亡灵杀手等级线性追加，再进 ×20 乘区） ---
+        // 必须排除"飞行中的西瓜刀"：投掷物在 ThrownGlisteringMelonKnife#onHitEntity 里已经用
+        // computeKnifeDamage 按同一套公式算完伤害了，这里若再乘一次亡灵乘区就成了 ×400。
+        // 投掷路径的 directEntity 是刀本体、causingEntity 才是投掷者，所以只判 causingEntity
+        // 会把"手里还握着刀的人"也算进来（玩家丢完刀手里通常已经空了，所以一直没暴露；
+        // 附体空壳是"掏一把新的丢出去"，不挡就会双算）。
+        if (attacker instanceof LivingEntity livingAttacker
+            && !(source.getDirectEntity() instanceof cn.autoforged.joes_addons_for_abmc.entity.ThrownGlisteringMelonKnife)) {
             ItemStack weapon = livingAttacker.getMainHandItem();
             if (weapon.getItem() instanceof GlisteringMelonKnifeItem && source.getEntity() == livingAttacker) {
-                applyCustomEnchantmentDamage(event, target, weapon, livingAttacker, livingAttacker.level());
+                applyKnifeDamage(event, target, weapon, livingAttacker, livingAttacker.level());
             }
         }
     }
@@ -6603,6 +7613,10 @@ public class ModMain {
         Player player = event.getEntity();
         if (player.level().isClientSide()) return;
         Entity target = event.getTarget();
+
+        // 记录"Red_Zombie 打了哪具玩家空壳"：SunnySeren 的特例规则要用（见 OrbAdversaryRelations）。
+        // 放在最前面：后面几条 return 只管"这次攻击怎么结算"，与"谁打过谁"这件事无关。
+        cn.autoforged.joes_addons_for_abmc.entity.OrbAdversaryRelations.recordPlayerAttack(player, target);
 
         // 变形状态：若攻击目标是自己变成的壳（物品/方块/生物壳/玩家空壳），
         // 取消本次攻击并重定向到视线前方真正要打的目标，避免"打到自己"且攻击不到别的目标。
@@ -6639,8 +7653,12 @@ public class ModMain {
 
         if ("netherite_block".equals(blockType)) {
             applyNetheriteKnockback(player, target);
+            // 成就「吃我一锤！」：用下界合金块权杖攻击即可，与击飞是否生效无关
+            if (player instanceof ServerPlayer sp) awardAdvancement(sp, TAKE_THIS_ADV);
         } else if ("bell".equals(blockType)) {
             applyBellStaffEffect(player, target);
+            // 成就「当头一棒」：用鸣钟权杖攻击即可（目标处于眩晕免疫期也照常授予）
+            if (player instanceof ServerPlayer sp) awardAdvancement(sp, RIGHT_ON_THE_HEAD_ADV);
         }
     }
 
@@ -6940,6 +7958,10 @@ public class ModMain {
             SoundEvents.BOTTLE_FILL, SoundSource.PLAYERS, 1.0F, 1.0F);
         // 千纸鹤消失（被收容）
         origami.discard();
+        // 成就「封印！」：玻璃瓶收容成功
+        if (player instanceof ServerPlayer sealSp) {
+            awardAdvancement(sealSp, ORIGAMI_SEALED_ADV);
+        }
     }
 
     /** 附魔台计数器：外层按维度 id（ResourceLocation），内层每个附魔台坐标 -> 剩余次数。 */
@@ -7200,6 +8222,26 @@ public class ModMain {
     /** [结构检测] 判断某方块是否属于“特殊”类（不具备碰撞箱的方块）。 */
     private static boolean isSpecialBlock(BlockState state) {
         return SPECIAL_BLOCKS.contains(state.getBlock());
+    }
+
+    /**
+     * 调试棒（原版 {@code minecraft:debug_stick}）右击<b>幸运方块</b>：把该方块替换成幸运传送门。
+     *
+     * <p>调试棒平时用来循环方块状态，所以替换后取消事件，避免它继续改状态。
+     * 只在服务端执行（客户端由方块更新同步）。
+     */
+    private static void onDebugStickRightClickLuckyBlock(
+        net.neoforged.neoforge.event.entity.player.PlayerInteractEvent.RightClickBlock event) {
+        if (event.getLevel().isClientSide()) return;
+        if (!event.getItemStack().is(net.minecraft.world.item.Items.DEBUG_STICK)) return;
+        BlockPos pos = event.getPos();
+        if (!event.getLevel().getBlockState(pos)
+            .is(cn.autoforged.joes_addons_for_abmc.block.ModBlocks.LUCKY_BLOCK.get())) {
+            return;
+        }
+        event.getLevel().setBlockAndUpdate(pos,
+            cn.autoforged.joes_addons_for_abmc.block.ModBlocks.LUCKY_PORTAL.get().defaultBlockState());
+        event.setCanceled(true);
     }
 
     /** [调试] 空手右击“检测方块”（某结构模板的锚点格）时，若其周围构成该模板描述的结构（其余格按模板要求为
@@ -7525,6 +8567,10 @@ public class ModMain {
         itemEnt.setPickUpDelay(10);
         serverLevel.addFreshEntity(itemEnt);
         origami.discard();
+        // 成就「废物再利用」：用书回收成功
+        if (player instanceof ServerPlayer recycleSp) {
+            awardAdvancement(recycleSp, ORIGAMI_RECYCLED_ADV);
+        }
         // 播放翻书音效
         player.level().playSound(null, player.getX(), player.getY(), player.getZ(),
             SoundEvents.BOOK_PAGE_TURN, SoundSource.PLAYERS, 1.0F, 1.0F);
@@ -7568,10 +8614,373 @@ public class ModMain {
         tableCounterFor(level).remove(pos);
     }
 
+    /** 找<b>最近的</b>幸运方块选择器（range 格内），找不到返回 null。 */
+    private static cn.autoforged.joes_addons_for_abmc.entity.LuckySelectorEntity findNearestLuckySelector(
+            net.minecraft.commands.CommandSourceStack source, double range) {
+        net.minecraft.server.level.ServerLevel level = source.getLevel();
+        net.minecraft.world.phys.Vec3 origin = source.getPosition();
+        cn.autoforged.joes_addons_for_abmc.entity.LuckySelectorEntity nearest = null;
+        double nearestSqr = range * range;
+        for (cn.autoforged.joes_addons_for_abmc.entity.LuckySelectorEntity selector
+                : level.getEntitiesOfClass(cn.autoforged.joes_addons_for_abmc.entity.LuckySelectorEntity.class,
+                    new net.minecraft.world.phys.AABB(origin, origin).inflate(range))) {
+            double distSqr = selector.distanceToSqr(origin);
+            if (distSqr < nearestSqr) {
+                nearestSqr = distSqr;
+                nearest = selector;
+            }
+        }
+        return nearest;
+    }
+
+    /**
+     * {@code /jafa seek} 的实现：让<b>最近的</b>幸运方块选择器（32 格内）开始抓取流程——找最近的生物、
+     * 无AI化、抬起来骑到它身上。
+     * <p>
+     * 找目标、飞过去、播动画、把生物无AI化并挂到身上，全部在选择器自己身上跑
+     * （见 {@code LuckySelectorEntity#startSeek()}），这里只负责找到那个选择器并把结果回给执行者。
+     */
+    private static int seekNearestLuckySelector(
+            com.mojang.brigadier.context.CommandContext<net.minecraft.commands.CommandSourceStack> ctx) {
+        net.minecraft.commands.CommandSourceStack source = ctx.getSource();
+        double range = 32.0D;
+        cn.autoforged.joes_addons_for_abmc.entity.LuckySelectorEntity nearest =
+            findNearestLuckySelector(source, range);
+        if (nearest == null) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal(
+                "附近 " + (int) range + " 格内没有幸运方块选择器"));
+            return 0;
+        }
+        if (!nearest.startSeek()) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal(
+                "没有可抓的目标（附近没有能抓的生物，或者它身上已经抓着东西了）"));
+            return 0;
+        }
+        double dist = Math.sqrt(nearest.distanceToSqr(source.getPosition()));
+        source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
+            "选择器已开始寻找生物（距离 " + String.format(java.util.Locale.ROOT, "%.1f", dist) + " 格）"), false);
+        return 1;
+    }
+
+    /**
+     * {@code /jafa send} 的实现：让<b>最近的</b>幸运方块选择器（32 格内）播放 send 动画，
+     * 并把它身上携带的东西送走——生物和物品走同一条时间轴（上升 → 缩小消失 → 删除），
+     * 见 {@code LuckySelectorEntity#startSend()}。
+     */
+    private static int sendNearestLuckySelector(
+            com.mojang.brigadier.context.CommandContext<net.minecraft.commands.CommandSourceStack> ctx) {
+        net.minecraft.commands.CommandSourceStack source = ctx.getSource();
+        double range = 32.0D;
+        cn.autoforged.joes_addons_for_abmc.entity.LuckySelectorEntity nearest =
+            findNearestLuckySelector(source, range);
+        if (nearest == null) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal(
+                "附近 " + (int) range + " 格内没有幸运方块选择器"));
+            return 0;
+        }
+        if (!nearest.startSend()) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal(
+                "这个选择器身上没有东西（先用 /jafa seek 抓一只生物，等它骑上来）"));
+            return 0;
+        }
+        double dist = Math.sqrt(nearest.distanceToSqr(source.getPosition()));
+        source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
+            "选择器已开始发送携带的东西（距离 " + String.format(java.util.Locale.ROOT, "%.1f", dist) + " 格）"), false);
+        return 1;
+    }
+
+    // ===== 幸运名单（/jafa roster）=====
+    //
+    // 这一组只是**临时调试入口**：正式的「元素怎么进名单」还没定（需求说之后再说），
+    // 但没有入口就根本没法验证「名单非空时开方块优先取名单」这条行为，所以先给一个
+    // 和 /jafa clearorb 一样由 debug 模式（config: debug.debug_mode）把关的通道。
+    // 正式入口定下来之后，这一组连同注册处那几行一起删掉即可，LuckyRoster 本身不用动。
+
+    /**
+     * debug 池当前内容的可读文本（{@code /jafa luckyblockresult} 的反馈用）。
+     *
+     * <p>这里读的是 <b>debug 池本体</b>（{@code LuckyEvents#debugPool()}）而不是那份物品名单：
+     * 池子才是"DEBUG_MODE 下真正会开出什么"的唯一依据。池内的"物品池物品"子事件是惰性注册的，
+     * 所以先补一次 {@code registerPoolItemEvents}（幂等，重复调用安全）再读，免得看到空池。
+     */
+    private static String luckyBlockResultText(ServerLevel level) {
+        cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.registerPoolItemEvents(level);
+        java.util.List<cn.autoforged.joes_addons_for_abmc.block.LuckyEvent> pool =
+            cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.debugPool();
+        StringBuilder text = new StringBuilder();
+        if (pool.isEmpty()) {
+            text.append("debug 池现在是空的（DEBUG_MODE 下会退回幸运名单 / 随机抽取）；"
+                + "用 /jafa luckyblockresult <物品名> 往里加物品");
+        } else {
+            text.append("debug 池：共 ").append(pool.size()).append(" 个（DEBUG_MODE 下破坏幸运方块时等概率抽一个，各 1/")
+                .append(pool.size()).append("）");
+            for (int i = 0; i < pool.size(); i++) {
+                text.append("\n  ").append(i + 1).append(". [").append(pool.get(i).id()).append("] ")
+                    .append(pool.get(i).description());
+            }
+        }
+        if (!cn.autoforged.joes_addons_for_abmc.config.ModConfig.DEBUG_MODE.get()) {
+            text.append("\n（注意：当前 debug 模式未开启，池里的东西不会被抽到）");
+        }
+        return text.toString();
+    }
+
+    /** 幸运名单命令的统一 debug 闸门。 */
+    private static boolean rosterDebugAllowed(net.minecraft.commands.CommandSourceStack source) {
+        if (!cn.autoforged.joes_addons_for_abmc.config.ModConfig.DEBUG_MODE.get()) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal(
+                "debug 模式未开启（config: debug.debug_mode）"));
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * {@code /jafa roster add <targets>}：把选中的实体<b>收进幸运名单</b>。
+     * <p>
+     * 名单的语义是「装着」这些实体，所以收进去的同时把它们从世界里取走（{@code discard}）。
+     * 只接受生物与掉落物（掉落物本身就是 {@code minecraft:item} 实体），其它类型会被拒。
+     * <p>
+     * 生物走 {@code enqueueMob}：属于幸运生物事件的生物（猫/猪/狼/僵尸……）进名单的是<b>整个事件</b>，
+     * 和选择器 AI 抓住再 send 走是同一条路（需求 1~4）。
+     */
+    private static int rosterAddEntities(
+            com.mojang.brigadier.context.CommandContext<net.minecraft.commands.CommandSourceStack> ctx,
+            java.util.Collection<? extends Entity> targets) {
+        net.minecraft.commands.CommandSourceStack source = ctx.getSource();
+        if (!rosterDebugAllowed(source)) {
+            return 0;
+        }
+        cn.autoforged.joes_addons_for_abmc.block.LuckyRoster roster =
+            cn.autoforged.joes_addons_for_abmc.block.LuckyRoster.get(source.getLevel());
+        int added = 0;
+        for (Entity entity : targets) {
+            boolean ok = entity instanceof net.minecraft.world.entity.Mob mob
+                ? roster.enqueueMob(mob)
+                : roster.enqueue(entity);
+            if (!ok) {
+                continue;
+            }
+            entity.discard();
+            added++;
+        }
+        if (added == 0) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal(
+                "没有可收的元素（只接受生物与掉落物实体）"));
+            return 0;
+        }
+        final int count = added;
+        final int size = roster.size();
+        source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
+            "已收进幸运名单 " + count + " 个元素（名单现有 " + size + " 个）"), true);
+        return count;
+    }
+
+    /**
+     * {@code /jafa roster add}（不带目标）：把<b>主手整叠物品</b>当掉落物收进名单。
+     * <p>
+     * 手里拿着的东西会被整叠收走（一叠 = 一个掉落物元素，数量一起存）。
+     */
+    private static int rosterAddHeldItem(
+            com.mojang.brigadier.context.CommandContext<net.minecraft.commands.CommandSourceStack> ctx) {
+        net.minecraft.commands.CommandSourceStack source = ctx.getSource();
+        if (!rosterDebugAllowed(source)) {
+            return 0;
+        }
+        net.minecraft.server.level.ServerPlayer player = source.getPlayer();
+        if (player == null) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal("该命令需由玩家在游戏内执行"));
+            return 0;
+        }
+        net.minecraft.world.item.ItemStack stack = player.getMainHandItem();
+        if (stack.isEmpty()) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal("主手没有物品"));
+            return 0;
+        }
+        cn.autoforged.joes_addons_for_abmc.block.LuckyRoster roster =
+            cn.autoforged.joes_addons_for_abmc.block.LuckyRoster.get(source.getLevel());
+        String description = stack.getCount() + " × " + stack.getHoverName().getString();
+        if (!roster.enqueueStack(source.getLevel(), stack)) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal("收进幸运名单失败（名单已满？）"));
+            return 0;
+        }
+        player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, net.minecraft.world.item.ItemStack.EMPTY);
+        final int size = roster.size();
+        source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
+            "已把 " + description + " 收进幸运名单（名单现有 " + size + " 个）"), true);
+        return 1;
+    }
+
+    /** {@code /jafa roster list}：列出名单大小与前若干个元素（从队首开始，也就是开的顺序）。 */
+    private static int rosterList(
+            com.mojang.brigadier.context.CommandContext<net.minecraft.commands.CommandSourceStack> ctx) {
+        net.minecraft.commands.CommandSourceStack source = ctx.getSource();
+        if (!rosterDebugAllowed(source)) {
+            return 0;
+        }
+        cn.autoforged.joes_addons_for_abmc.block.LuckyRoster roster =
+            cn.autoforged.joes_addons_for_abmc.block.LuckyRoster.get(source.getLevel());
+        int size = roster.size();
+        if (size == 0) {
+            source.sendSuccess(() -> net.minecraft.network.chat.Component.literal("幸运名单为空"), false);
+            return 1;
+        }
+        java.util.List<net.minecraft.nbt.CompoundTag> snapshot = roster.snapshot();
+        int shown = Math.min(size, ROSTER_LIST_LIMIT);
+        StringBuilder builder = new StringBuilder("幸运名单共 " + size + " 个元素（队首在前）：");
+        for (int i = 0; i < shown; i++) {
+            builder.append("\n  ").append(i + 1).append(". ")
+                .append(cn.autoforged.joes_addons_for_abmc.block.LuckyRoster.describe(snapshot.get(i)));
+        }
+        if (size > shown) {
+            builder.append("\n  ……（还有 ").append(size - shown).append(" 个）");
+        }
+        source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(builder.toString()), false);
+        return 1;
+    }
+
+    /** {@code /jafa roster clear}：清空名单。 */
+    private static int rosterClear(
+            com.mojang.brigadier.context.CommandContext<net.minecraft.commands.CommandSourceStack> ctx) {
+        net.minecraft.commands.CommandSourceStack source = ctx.getSource();
+        if (!rosterDebugAllowed(source)) {
+            return 0;
+        }
+        int removed = cn.autoforged.joes_addons_for_abmc.block.LuckyRoster
+            .get(source.getLevel()).clear();
+        source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
+            "已清空幸运名单（清掉 " + removed + " 个元素）"), true);
+        return removed > 0 ? 1 : 0;
+    }
+
+    /** {@code /jafa roster list} 最多列几个元素。 */
+    private static final int ROSTER_LIST_LIMIT = 20;
+
+    /**
+     * {@code /jafa air_potion}：给执行者一瓶<b>方块类变形药水·空气</b>（调试用，需求 6.5.22）。
+     *
+     * <h3>这瓶药水是怎么"指定变形目标"的</h3>
+     * 变形药水固定目标走的是物品上的 {@code ModDataComponents.ITEM_TYPE} 组件
+     * （投掷出去的药水实体在 {@code onEntityJoinLevel} 里把它的值抄进
+     * {@code TRANSMUTATION_POTION_ITEM_TYPES}，命中时再由
+     * {@link #findTransmutationItemType} 取出来，见那两处注释）。
+     * 所以这里只是"造一瓶带 {@code minecraft:air} 的普通变形喷溅药水"，其余流程一行都不用改。
+     *
+     * <h3>变形目标解析成方块还是物品</h3>
+     * {@link #performTransmutation} 里判据是 {@code BuiltInRegistries.BLOCK.containsKey(...)}，
+     * 而且<b>先判方块</b>——{@code minecraft:air} 恰好既是方块也是物品（空的空气物品），
+     * 所以它会走<b>方块</b>那条路 ✓（否则会变成一件"空气物品"，等于什么都没了）。
+     * 方块分支里空气另有专门处理（见那里的注释：不能走原版下落方块，否则生物会被误杀）。
+     *
+     * <h3>"若可以"</h3>
+     * 与普通变形药水完全同一套门槛：{@link #isTransmutationPotionImmune} 的免疫者、
+     * 已经在变形中的、以及女巫Boss 生物阶段（阶段1）都会被正常拒绝——
+     * 这也正是需求里"（若可以）"的意思。
+     */
+    private static int giveAirTransmutationPotion(
+            com.mojang.brigadier.context.CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        ServerPlayer player;
+        try {
+            player = source.getPlayerOrException();
+        } catch (com.mojang.brigadier.exceptions.CommandSyntaxException e) {
+            source.sendFailure(net.minecraft.network.chat.Component.literal("该命令需由玩家执行"));
+            return 0;
+        }
+        ItemStack potion = new ItemStack(net.minecraft.world.item.Items.SPLASH_POTION);
+        potion.set(net.minecraft.core.component.DataComponents.POTION_CONTENTS,
+            new net.minecraft.world.item.alchemy.PotionContents(
+                java.util.Optional.of(cn.autoforged.joes_addons_for_abmc.potion.ModPotions.TRANSMUTATION),
+                java.util.Optional.of(0xE8F6FF),   // 淡蓝：和普通变形药水的紫（0x9370DB）区分开
+                java.util.List.of()));
+        potion.set(ModDataComponents.ITEM_TYPE.get(), "minecraft:air");
+        if (!player.getInventory().add(potion)) {
+            player.drop(potion, false);
+        }
+        source.sendSuccess(() -> net.minecraft.network.chat.Component.literal(
+            "已给予 方块类变形药水·空气（溅射到的生物会变成空气方块，可用变形解药复原）"), false);
+        return 1;
+    }
+
     private static void onRegisterCommands(RegisterCommandsEvent event) {
         event.getDispatcher().register(Commands.literal("jafa")
-            .then(Commands.literal("endie")
-                .then(Commands.argument("targets", EntityArgument.entities())
+            // /jafa seek：让最近的幸运方块选择器去寻找最近的生物，把那只生物无AI化并骑到选择器身上
+            // （飞到生物上方 → stretch → retreat，并在 retreat 的 0.5~0.75 时间码把它抬到落座点）
+            .then(Commands.literal("seek")
+                .executes(ModMain::seekNearestLuckySelector))
+            // /jafa send：播放 send 动画并把身上携带的东西（生物/物品）送走
+            // （0~0.5 向上 24 像素 → 0.5~0.75 缩小消失 → 删除）
+            .then(Commands.literal("send")
+                .executes(ModMain::sendNearestLuckySelector))
+            // /jafa roster：幸运名单（临时调试入口，见 rosterAdd*/rosterList/rosterClear 上面的说明）
+            //   add [<targets>]：收实体进名单；不带目标则把主手整叠物品当掉落物收进去
+            //   list / clear
+            .then(Commands.literal("roster")
+                .then(Commands.literal("add")
+                    .then(Commands.argument("targets", EntityArgument.entities())
+                        .executes(ctx -> rosterAddEntities(ctx, EntityArgument.getEntities(ctx, "targets"))))
+                    .executes(ModMain::rosterAddHeldItem))
+                .then(Commands.literal("list")
+                    .executes(ModMain::rosterList))
+                .then(Commands.literal("clear")
+                    .executes(ModMain::rosterClear)))
+            // /jafa air_potion：给自己一瓶"方块类变形药水·空气"（调试用，需求 6.5.22）。
+            // 溅射到的生物会被变形为空气方块（那一格保持空气、生物本体消失），
+            // 到点自己复原，也可以在原地丢一瓶变形解药提前复原。
+            .then(Commands.literal("air_potion")
+                .executes(ModMain::giveAirTransmutationPotion))
+            // ===== 【已停用·临时调试】泰坦压制/存放 的最小验证指令 =====
+            // 6.7.34 用它验证过："压制 + 存放到未加载区域"确实能让血条与索敌一起消失，且能完整迁回。
+            // 现已停用（用户要求保留备用，故注释而非删除）。需要再验证时把下面的注释解开即可。
+            // 仅在 debug.debug_mode 开启时可用。
+            /*
+            .then(Commands.literal("titanstash")
+                .requires(src -> ModConfig.DEBUG_MODE.get())
+                .then(Commands.argument("pos", net.minecraft.commands.arguments.coordinates.BlockPosArgument.blockPos())
+                    .executes(ctx -> {
+                        ServerPlayer player = ctx.getSource().getPlayerOrException();
+                        BlockPos stash = net.minecraft.commands.arguments.coordinates.BlockPosArgument
+                            .getBlockPos(ctx, "pos");
+                        LivingEntity titan = null;
+                        for (LivingEntity le : player.serverLevel().getEntitiesOfClass(
+                                LivingEntity.class, player.getBoundingBox().inflate(128.0))) {
+                            if (isTitansModEntity(le)) { titan = le; break; }
+                        }
+                        if (titan == null) {
+                            ctx.getSource().sendFailure(Component.literal("附近 128 格内没有泰坦类生物"));
+                            return 0;
+                        }
+                        TransmutationData dummy = new TransmutationData(new CompoundTag(), 0,
+                            new UUID(0, 0), "", null);
+                        suppressTitanEntity(player.serverLevel(), titan, dummy);
+                        boolean ok = stashSuppressedTitan(titan.getUUID(), stash);
+                        final UUID uu = titan.getUUID();
+                        ctx.getSource().sendSuccess(() -> Component.literal(ok
+                            ? "已压制并存放到 " + stash + "（uuid=" + uu + "）；现在观察血条与索敌是否消失，再用 /jafa titanrestore 迁回"
+                            : "压制成功但存放失败（uuid=" + uu + "）"), true);
+                        return ok ? 1 : 0;
+                    })))
+            .then(Commands.literal("titanrestore")
+                .requires(src -> ModConfig.DEBUG_MODE.get())
+                .executes(ctx -> {
+                    ServerPlayer player = ctx.getSource().getPlayerOrException();
+                    java.util.List<UUID> uuids = new java.util.ArrayList<>(SUPPRESSED_ENTITIES.keySet());
+                    if (uuids.isEmpty()) {
+                        ctx.getSource().sendFailure(Component.literal("当前没有被压制的泰坦"));
+                        return 0;
+                    }
+                    int n = 0;
+                    for (UUID u : uuids) {
+                        unsuppressTitanEntity(player.serverLevel(), u);
+                        n++;
+                    }
+                    final int done = n;
+                    ctx.getSource().sendSuccess(() -> Component.literal(
+                        "已迁回并复原 " + done + " 只被压制的泰坦（请确认它们重新出现在原位置、并能被正常攻击）"), true);
+                    return n;
+                }))
+            */
+            .then(Commands.literal("endie")                .then(Commands.argument("targets", EntityArgument.entities())
                     .executes(ctx -> {
                         int count = 0;
                         for (Entity e : EntityArgument.getEntities(ctx, "targets")) {
@@ -7649,6 +9058,271 @@ public class ModMain {
                     ctx.getSource().sendSuccess(() -> Component.literal("已召唤女巫 Boss（迅捷时有 10% 概率改喝隐身药水）"), true);
                     return 1;
                 }))
+            // /jafa cleardarkpool：清空执行者自己的黑暗分身召唤池（含本轮未抽完的抽取队列）
+            .then(Commands.literal("cleardarkpool")
+                .executes(ctx -> {
+                    ServerPlayer player = ctx.getSource().getPlayerOrException();
+                    int cleared = cn.autoforged.joes_addons_for_abmc.entity.DarkCloneSavedData
+                        .get(player.serverLevel()).clearPool(player);
+                    ctx.getSource().sendSuccess(
+                        () -> Component.literal("已清空黑暗分身召唤池（移除 " + cleared + " 项）"), true);
+                    return cleared;
+                }))
+            // /jafa resetrecipe：重置工作台帽子的遍历历史 ——
+            // 清掉"本轮遍历已经合成过"的记录，下一次触发会重新从「装备」页签开始遍历。
+            .then(Commands.literal("resetrecipe")
+                .executes(ctx -> {
+                    ServerPlayer player = ctx.getSource().getPlayerOrException();
+                    int cleared = cn.autoforged.joes_addons_for_abmc.craftinghat.CraftingHatCrafting
+                        .resetTraversal(player.getUUID());
+                    ctx.getSource().sendSuccess(
+                        () -> Component.literal("已重置工作台帽子的遍历历史（清除 " + cleared
+                            + " 条记录，工具品质门槛回到最低），下次触发将从「装备」页签重新开始"), true);
+                    return cleared;
+                }))
+            // /jafa lucky：在幸运维度与主世界之间传送（都在 0 128 0）。
+            //   不在幸运维度 → 传到幸运维度 0 128 0；已在幸运维度 → 传回主世界 0 128 0。
+            // /jafa lucky event：在脚下触发一次幸运事件（调试用，验证子事件抽取）。
+            // /jafa lucky list：列出当前所有分类与其子事件（幸运物品分类会实时读取幸运物品池）。
+            .then(Commands.literal("lucky")
+                .executes(ctx -> {
+                    ServerPlayer player = ctx.getSource().getPlayerOrException();
+                    boolean inLucky = player.level().dimension().location().equals(
+                        ResourceLocation.fromNamespaceAndPath(MODID, "lucky_dimension"));
+                    ResourceKey<Level> targetKey = inLucky ? Level.OVERWORLD
+                        : ResourceKey.create(Registries.DIMENSION,
+                            ResourceLocation.fromNamespaceAndPath(MODID, "lucky_dimension"));
+                    ServerLevel target = player.server.getLevel(targetKey);
+                    if (target == null) {
+                        ctx.getSource().sendFailure(Component.literal("目标维度未加载"));
+                        return 0;
+                    }
+                    // 按要求固定落在 0 128 0（取格中心），顺手清掉坠落距离与速度，避免"传送瞬间带着旧速度"
+                    player.teleportTo(target, 0.5D, 128.0D, 0.5D, player.getYRot(), player.getXRot());
+                    player.setDeltaMovement(0.0D, 0.0D, 0.0D);
+                    player.fallDistance = 0.0F;
+                    ctx.getSource().sendSuccess(() -> Component.literal(
+                        "已传送至 " + (inLucky ? "主世界" : "幸运维度") + " 0 128 0"), true);
+                    return 1;
+                })
+                .then(Commands.literal("event")
+                    .executes(ctx -> {
+                        ServerPlayer player = ctx.getSource().getPlayerOrException();
+                        cn.autoforged.joes_addons_for_abmc.block.LuckyEvent luckyEvent =
+                            cn.autoforged.joes_addons_for_abmc.block.LuckyBlockEvents.trigger(
+                                player.serverLevel(), player.blockPosition(), player);
+                        if (luckyEvent == null) {
+                            ctx.getSource().sendFailure(Component.literal("没有可触发的幸运子事件"));
+                            return 0;
+                        }
+                        ctx.getSource().sendSuccess(() -> Component.literal(
+                            "幸运事件：" + luckyEvent.category().displayName() + " → " + luckyEvent.description()
+                                + "（id=" + luckyEvent.id() + "，权重=" + luckyEvent.weight() + "）"), true);
+                        return 1;
+                    })
+                    // /jafa lucky event <id>：指定 id 强制触发某一个子事件（调试用）。
+                    // id 写全名（joes_addons_for_abmc:entity/cats）或只写路径（entity/cats，自动补本模组命名空间）。
+                    // 6.5.5 一次加了 12 个子事件，光靠 DEBUG_MODE 的 debug 池只能"抽"，验不了指定那一个，
+                    // 所以补了这个入口（debug 池见 LuckyEvents#markDebug）。
+                    .then(Commands.argument("id", StringArgumentType.string())
+                        .suggests((ctx, builder) -> {
+                            ServerLevel level = ctx.getSource().getLevel();
+                            for (cn.autoforged.joes_addons_for_abmc.block.LuckyEventCategory category
+                                : cn.autoforged.joes_addons_for_abmc.block.LuckyEventCategory.values()) {
+                                for (cn.autoforged.joes_addons_for_abmc.block.LuckyEvent candidate
+                                    : cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.eventsOf(level, category)) {
+                                    builder.suggest(candidate.id().toString());
+                                }
+                            }
+                            return builder.buildFuture();
+                        })
+                        .executes(ctx -> {
+                            ServerPlayer player = ctx.getSource().getPlayerOrException();
+                            ServerLevel level = player.serverLevel();
+                            String raw = StringArgumentType.getString(ctx, "id").trim();
+                            ResourceLocation id = raw.indexOf(':') >= 0
+                                ? ResourceLocation.parse(raw)
+                                : cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.id(raw);
+                            cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.registerPoolItemEvents(level);
+                            cn.autoforged.joes_addons_for_abmc.block.LuckyEvent luckyEvent =
+                                cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.byId(id);
+                            if (luckyEvent == null) {
+                                ctx.getSource().sendFailure(Component.literal(
+                                    "没有这个幸运子事件：" + id + "（用 /jafa lucky list 查看全部 id）"));
+                                return 0;
+                            }
+                            luckyEvent.run(level, player.blockPosition(), player);
+                            ctx.getSource().sendSuccess(() -> Component.literal(
+                                "已触发：" + luckyEvent.category().displayName() + " → " + luckyEvent.description()
+                                    + "（id=" + luckyEvent.id() + "）"), true);
+                            return 1;
+                        })))
+                .then(Commands.literal("list")
+                    .executes(ctx -> {
+                        ServerPlayer player = ctx.getSource().getPlayerOrException();
+                        ServerLevel level = player.serverLevel();
+                        // 全局平铺：先统计全部子事件数，用于显示每个子事件的概率分母
+                        int total = 0;
+                        for (cn.autoforged.joes_addons_for_abmc.block.LuckyEventCategory category
+                            : cn.autoforged.joes_addons_for_abmc.block.LuckyEventCategory.values()) {
+                            total += cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.eventsOf(level, category).size();
+                        }
+                        final int denominator = total;
+                        for (cn.autoforged.joes_addons_for_abmc.block.LuckyEventCategory category
+                            : cn.autoforged.joes_addons_for_abmc.block.LuckyEventCategory.values()) {
+                            java.util.List<cn.autoforged.joes_addons_for_abmc.block.LuckyEvent> events =
+                                cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.eventsOf(level, category);
+                            ctx.getSource().sendSuccess(() -> Component.literal(
+                                "【" + category.displayName() + "】" + events.size() + " 个子事件"), false);
+                            for (cn.autoforged.joes_addons_for_abmc.block.LuckyEvent lucky : events) {
+                                int weight = lucky.weight();
+                                boolean isDebug =
+                                    cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.isDebugEvent(lucky);
+                                ctx.getSource().sendSuccess(() -> Component.literal(
+                                    "  - [" + lucky.id() + "] " + lucky.description() + "（权重 " + weight
+                                        + "，概率 " + weight + "/" + denominator + "）"
+                                        + (isDebug ? " 【debug 池：DEBUG_MODE 下等概率抽出】" : "")), false);
+                            }
+                        }
+                        ctx.getSource().sendSuccess(() -> Component.literal(
+                            "合计 " + denominator + " 个子事件（全局平铺，各自 " + (denominator == 0 ? "-" : "1/" + denominator) + "）"), false);
+                        // debug 池：DEBUG_MODE 打开时，破坏幸运方块 / /jafa lucky event 会从这里等概率抽一个。
+                        // 池内的"物品池物品"是惰性注册的，所以先补一次 registerPoolItemEvents（幂等）再读池子，
+                        // 免得列表看到空池。注意 getLevel() 用的是命令执行者（不一定是玩家，但一定有维度）。
+                        cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.registerPoolItemEvents(
+                            ctx.getSource().getLevel());
+                        java.util.List<cn.autoforged.joes_addons_for_abmc.block.LuckyEvent> debugPool =
+                            cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.debugPool();
+                        ctx.getSource().sendSuccess(() -> Component.literal(
+                            "debug 池：共 " + debugPool.size() + " 个（DEBUG_MODE 打开时破坏幸运方块 / /jafa lucky event"
+                                + " 会从这些里等概率抽一个"
+                                + (debugPool.isEmpty() ? "；池空时退回名单/随机" : "，各 1/" + debugPool.size()) + "）"),
+                            false);
+                        for (cn.autoforged.joes_addons_for_abmc.block.LuckyEvent lucky : debugPool) {
+                            ctx.getSource().sendSuccess(() -> Component.literal(
+                                "  · [" + lucky.id() + "] " + lucky.description()), false);
+                        }
+                        ctx.getSource().sendSuccess(() -> Component.literal(
+                            "（改这份池子：/jafa luckyblockresult <物品名> 加物品、/jafa luckyblockclear 清空；"
+                                + "只看池子可单敲 /jafa luckyblockresult）"), false);
+                        return denominator;
+                    })))
+            // /jafa luckyblockresult <物品名>：debug 模式下指定"破坏幸运方块能开出什么物品"。
+            //   每输入一次就往列表里加一件，抽的时候按下标等概率取（与权重无关），所以
+            //   "加几件就是几选一"—— 反复输入就能把想测的几件物品平均分配概率。
+            //   物品名三种写法都认：
+            //     1) 完整 id：minecraft:diamond / joes_addons_for_abmc:iron_hook；
+            //     2) 裸路径：diamond（先按本模组命名空间找，再按 minecraft 找）；
+            //     3) 游戏内名字：钻石 / 铁抓钩（唯一命中才用，多件同名会列候选让你改用 id）。
+            //   不带参数时只列出当前列表。
+            //   注意：命令加的物品不会进常规事件表（只影响 debug 抽取），要让它成为正式幸运物品
+            //   得加进幸运物品池标签；另外这份名单是内存态，重启游戏会回到代码里的默认值。
+            .then(Commands.literal("luckyblockresult")
+                .executes(ctx -> {
+                    ctx.getSource().sendSuccess(() -> Component.literal(
+                        luckyBlockResultText(ctx.getSource().getLevel())), false);
+                    return cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.debugPoolItemIds().size();
+                })
+                .then(Commands.argument("item", StringArgumentType.string())
+                    .suggests((ctx, builder) -> {
+                        String remaining = builder.getRemainingLowerCase();
+                        for (Item candidate : BuiltInRegistries.ITEM) {
+                            if (candidate == Items.AIR) continue;
+                            ResourceLocation id = BuiltInRegistries.ITEM.getKey(candidate);
+                            if (id == null) continue;
+                            String full = id.toString().toLowerCase(java.util.Locale.ROOT);
+                            String path = id.getPath().toLowerCase(java.util.Locale.ROOT);
+                            if (full.startsWith(remaining) || path.startsWith(remaining)) {
+                                builder.suggest(id.toString());
+                            }
+                            if (path.startsWith(remaining)) {
+                                builder.suggest(id.getPath());
+                            }
+                        }
+                        return builder.buildFuture();
+                    })
+                    .executes(ctx -> {
+                        // 需求：只有 debug 模式为 true 时才允许指定
+                        if (!cn.autoforged.joes_addons_for_abmc.config.ModConfig.DEBUG_MODE.get()) {
+                            ctx.getSource().sendFailure(Component.literal(
+                                "debug 模式未开启（config: debug.debug_mode），无法指定幸运方块开出的物品"));
+                            return 0;
+                        }
+                        String raw = StringArgumentType.getString(ctx, "item");
+                        cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.ItemQuery query =
+                            cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.resolveItem(raw);
+                        if (query.item() == null) {
+                            if (query.ambiguous()) {
+                                StringBuilder names = new StringBuilder();
+                                for (ResourceLocation id : query.matches()) {
+                                    if (names.length() > 0) names.append("、");
+                                    names.append(id);
+                                }
+                                ctx.getSource().sendFailure(Component.literal(
+                                    "「" + raw + "」对应多件物品：" + names + " —— 请改用物品 id 指定"));
+                            } else {
+                                ctx.getSource().sendFailure(Component.literal(
+                                    "找不到物品：" + raw + "（可写物品 id，如 diamond、minecraft:diamond、"
+                                        + MODID + ":iron_hook；也可写游戏内名字，如 钻石、铁抓钩）"));
+                            }
+                            return 0;
+                        }
+                        Item item = query.item();
+                        ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(item);
+                        boolean already = cn.autoforged.joes_addons_for_abmc.block.LuckyEvents
+                            .debugPoolItemIds().contains(itemId);
+                        cn.autoforged.joes_addons_for_abmc.block.LuckyEvent luckyEvent =
+                            cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.addDebugItem(item);
+                        if (luckyEvent == null) {
+                            ctx.getSource().sendFailure(Component.literal(
+                                "这个物品加不进 debug 抽取列表：" + itemId));
+                            return 0;
+                        }
+                        if (already) {
+                            ctx.getSource().sendSuccess(() -> Component.literal(
+                                "该物品已经在 debug 抽取列表里了：" + itemId
+                                    + "（重复输入不会提高它的概率，列表始终等概率）"), false);
+                        } else {
+                            ctx.getSource().sendSuccess(() -> Component.literal(
+                                "已加入 debug 抽取列表：" + luckyEvent.description()
+                                    + "（id=" + luckyEvent.id() + "）"), true);
+                        }
+                        ctx.getSource().sendSuccess(() -> Component.literal(
+                            luckyBlockResultText(ctx.getSource().getLevel())), false);
+                        return cn.autoforged.joes_addons_for_abmc.block.LuckyEvents
+                            .debugPoolItemIds().size();
+                    })))
+            // /jafa luckyblockclear：清空上面那份"指定物品"列表（debug 池里由物品构成的部分一起摘掉）。
+            //   清空后 debug 池若为空，DEBUG_MODE 下就退回"幸运名单 / 随机抽取"，不会开出空事件。
+            //   代码里写死的（markDebug 登记的）事件不动 —— 那些清了下次启动也会回来。
+            .then(Commands.literal("luckyblockclear")
+                .executes(ctx -> {
+                    int removed = cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.clearDebugItems();
+                    int left = cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.debugPool().size();
+                    ctx.getSource().sendSuccess(() -> Component.literal(
+                        "已清空 debug 抽取列表（移除 " + removed + " 项）"
+                            + (left == 0
+                                ? "；debug 池现在是空的，DEBUG_MODE 下会退回幸运名单 / 随机抽取"
+                                : "；debug 池里还剩 " + left + " 项代码里写死的事件")), true);
+                    return removed;
+                }))
+            // /jafa beeboss：召唤一只 BeeBoss 蜜蜂（scale 5、主手默认持蜂巢权杖，权杖内预装 20~30 只蜜蜂）
+            .then(Commands.literal("beeboss")
+                .executes(ctx -> {
+                    ServerPlayer player = ctx.getSource().getPlayerOrException();
+                    ServerLevel level = player.serverLevel();
+                    net.minecraft.world.entity.animal.Bee bee = net.minecraft.world.entity.EntityType.BEE.create(level);
+                    if (bee == null) return 0;
+                    bee.setPos(player.getX(), player.getY(), player.getZ());
+                    cn.autoforged.joes_addons_for_abmc.BeeBossData.setBeeBoss(bee, true);
+                    // 命令召唤属于「新建」：补满生命值（读档路径不会补，见 applyBeeBossDefaults 的 freshSpawn 参数）
+                    cn.autoforged.joes_addons_for_abmc.BeeBossData.applyBeeBossDefaults(bee, true);
+                    int staffBees = BeehiveStaffHelper.countBees(bee.getMainHandItem());
+                    level.addFreshEntity(bee);
+                    ctx.getSource().sendSuccess(() -> Component.literal(
+                        "已召唤 BeeBoss 蜜蜂（50 点生命、scale 5、主手持蜂巢权杖，内含 " + staffBees + " 只蜜蜂）"), true);
+                    return 1;
+                }))
             // /jafa playsound [note]：随机（或按索引）播放一个 didgeridoo 120 音中的音符，用于验证音框架
             .then(Commands.literal("playsound")
                 .executes(ctx -> {
@@ -7714,6 +9388,29 @@ public class ModMain {
             // /jafa solidify：固化玩家 64 格以内的所有觉醒方块（调试用）。
             .then(Commands.literal("solidify")
                 .executes(ctx -> solidifyAwakenedBlocks(ctx.getSource())))
+            // /jafa clearorb：debug 模式下直接移除手上的幸运核心（绕过"拿不下来"的锁定）。
+            .then(Commands.literal("clearorb")
+                .executes(ctx -> clearOrbInHand(ctx.getSource())))
+            // /jafa orbinfo：打印附近幸运核心的阶段/无敌/血量/无敌帧，用来排查"打不动"。
+            .then(Commands.literal("orbinfo")
+                .executes(ctx -> orbInfo(ctx.getSource())))
+            // /jafa luck_attack <模式>：把被附体空壳的攻击方式强制成某一种（调试用；
+            // 这是 debug 模式那套"永远重锤"的命令版，且 debug 关闭时也能用）。
+            // 不带参数 = 查询当前模式；clear / none = 取消强制。
+            .then(Commands.literal("luck_attack")
+                .executes(ctx -> showLuckAttack(ctx.getSource()))
+                .then(Commands.literal("mace").executes(ctx -> setLuckAttack(ctx.getSource(), "mace")))
+                .then(Commands.literal("lava_cage")
+                    .executes(ctx -> setLuckAttack(ctx.getSource(), "lava_cage")))
+                .then(Commands.literal("firework")
+                    .executes(ctx -> setLuckAttack(ctx.getSource(), "firework")))
+                .then(Commands.literal("fly").executes(ctx -> setLuckAttack(ctx.getSource(), "fly")))
+                .then(Commands.literal("guardian_beam")
+                    .executes(ctx -> setLuckAttack(ctx.getSource(), "guardian_beam")))
+                .then(Commands.literal("nosummons")
+                    .executes(ctx -> setLuckAttack(ctx.getSource(), "nosummons")))
+                .then(Commands.literal("clear").executes(ctx -> setLuckAttack(ctx.getSource(), "clear")))
+                .then(Commands.literal("none").executes(ctx -> setLuckAttack(ctx.getSource(), "none"))))
             // /jafa gold_hit_flash：在玩家视野中央播放一段金色命中闪光（后处理着色器测试）。
             .then(Commands.literal("gold_hit_flash")
                 .executes(ctx -> {
@@ -7732,6 +9429,226 @@ public class ModMain {
                     ctx.getSource().sendSuccess(() -> Component.literal("已触发 Omega 着色器测试"), true);
                     return 1;
                 })));
+    }
+
+    /**
+     * /jafa luck_attack（不带参数）：查询当前的"强制攻击模式"。
+     */
+    private static int showLuckAttack(CommandSourceStack source) {
+        cn.autoforged.joes_addons_for_abmc.entity.OrbPossessedAttackEvents.ForcedAttack mode =
+            cn.autoforged.joes_addons_for_abmc.entity.OrbPossessedAttackEvents.getForcedAttack();
+        source.sendSuccess(() -> Component.literal("当前强制攻击模式：" + mode.commandName()
+            + "（" + mode.description() + "）\n可选：mace / lava_cage / firework / fly / guardian_beam / nosummons / clear"), false);
+        return 1;
+    }
+
+    /**
+     * /jafa luck_attack &lt;模式&gt;：把被附体空壳的攻击方式强制成某一种（调试用）。
+     * <p>
+     * 这是原来"debug 模式永远用重锤"那套的命令版，<b>debug 关闭时也能用</b>（用户指定）：
+     * <ul>
+     *   <li>{@code mace} —— 近战一律重锤（重锤自身冷却也归零，方便连着看）；</li>
+     *   <li>{@code lava_cage} —— 只用岩浆牢笼：不再抽近战/远程，也不看目标是不是玩家；</li>
+     *   <li>{@code firework} —— 远程一律爆炸性烟花火箭；</li>
+     *   <li>{@code fly} —— 第一次远程抽签就给自己翅膀（之后自然只抽远程）；</li>
+     *   <li>{@code guardian_beam} —— 远程一律守卫者激光；</li>
+     *   <li>{@code nosummons} —— <b>不抽任何"会留下东西"的签</b>（召唤凋灵 / 召唤 Bob /
+     *       召唤骷髅马骑士 / 铁砧雨 / 岩浆牢笼，以及装了暮色时的僵尸权杖 → 忠诚僵尸），
+     *       其余照常抽签；用于调试"场上不出现召唤物"时的攻击流程；</li>
+     *   <li>{@code clear} / {@code none} —— 取消强制，回到正常抽签。</li>
+     * </ul>
+     * 模式是<b>全局</b>的（对所有被附体空壳生效）、且不落盘（重启即失效）。
+     */
+    private static int setLuckAttack(CommandSourceStack source, String name) {
+        cn.autoforged.joes_addons_for_abmc.entity.OrbPossessedAttackEvents.ForcedAttack mode =
+            cn.autoforged.joes_addons_for_abmc.entity.OrbPossessedAttackEvents.ForcedAttack.parse(name);
+        if (mode == null) {
+            source.sendFailure(Component.literal("未知模式：" + name
+                + "（可选 mace / lava_cage / firework / fly / guardian_beam / nosummons / clear）"));
+            return 0;
+        }
+        cn.autoforged.joes_addons_for_abmc.entity.OrbPossessedAttackEvents.setForcedAttack(mode);
+        ModMain.LOGGER.info("[附体] 强制攻击模式: {}（{}）by {}", mode.commandName(), mode.description(),
+            source.getTextName());
+        source.sendSuccess(() -> Component.literal("强制攻击模式 = " + mode.commandName()
+            + "（" + mode.description() + "）"), true);
+        return 1;
+    }
+
+    /**
+     * /jafa clearorb：debug 模式下直接移除执行者手上（主手 + 副手）的幸运核心。
+     * <p>
+     * 这是"核心拿不下来"那套锁定的调试出口：正常玩法里空手/换格/丢弃都被拦着，
+     * 只有 debug 模式（config: {@code debug.debug_mode}）下这条命令才生效。
+     */
+    private static int clearOrbInHand(CommandSourceStack source) {
+        if (!(source.getEntity() instanceof ServerPlayer sp)) {
+            source.sendFailure(Component.literal("该命令需由玩家在游戏内执行"));
+            return 0;
+        }
+        if (!cn.autoforged.joes_addons_for_abmc.config.ModConfig.DEBUG_MODE.get()) {
+            source.sendFailure(Component.literal("debug 模式未开启（config: debug.debug_mode）"));
+            return 0;
+        }
+        int removed = 0;
+        for (net.minecraft.world.InteractionHand hand : net.minecraft.world.InteractionHand.values()) {
+            ItemStack stack = sp.getItemInHand(hand);
+            if (stack.is(cn.autoforged.joes_addons_for_abmc.item.ModItems.ORB_OF_LUCK.get())) {
+                removed += stack.getCount();
+                sp.setItemInHand(hand, ItemStack.EMPTY);
+            }
+        }
+        if (removed <= 0) {
+            source.sendFailure(Component.literal("手上没有幸运核心"));
+            return 0;
+        }
+        final int count = removed;
+        source.sendSuccess(() -> Component.literal("已移除手上的幸运核心 ×" + count), true);
+        return 1;
+    }
+
+    /**
+     * /jafa orbinfo：打印 32 格内每个幸运核心的阶段、无敌标记、无敌帧、血量、可命中性。
+     * <p>
+     * 排查"/damage 打不动"用：<b>无敌=false</b> 说明不是无敌，而是撞上了原版的受击冷却
+     * （{@code LivingEntity.hurt}：{@code invulnerableTime > 10} 且新伤害 ≤ 上次伤害时直接返回 false，
+     * 命令会把这种情况报成"invulnerable"，很误导）——这时看 {@code 无敌帧} 是否 > 0 即可确认，
+     * 隔 1 秒再打、或者每次用更大的数值就能穿透。
+     * <p>
+     * {@code 骑乘} 是 POSSESSING 阶段的调试信息：附体时核心会骑在自己生成的那具"玩家"身体上
+     * （核心自己不渲染，光球是身体画的），这里应该显示 {@code id=<那具空壳的实体 id>} 且
+     * 距离随空壳移动保持不变；显示"无"就说明它掉队了（见 {@code OrbOfLuckEntity.followVessel}）。
+     * <p>
+     * {@code 抽签} 是附体空壳当前抽到的攻击事件（{@code ArrowEvent} / {@code MeleeEvent}）：
+     * 抽签结果本身看不见（"抽到近战却够不着"这一种什么都不发生），所以直接显示出来。
+     * <p>
+     * {@code 走位} 是附体空壳此刻的走位状态（环绕 / 直冲 / 僵直 / 架势），见
+     * {@link #orbVesselKiteState}。
+     */
+    private static int orbInfo(CommandSourceStack source) {
+        if (!(source.getEntity() instanceof ServerPlayer sp)) {
+            source.sendFailure(Component.literal("该命令需由玩家在游戏内执行"));
+            return 0;
+        }
+        java.util.List<cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity> orbs =
+            sp.serverLevel().getEntitiesOfClass(
+                cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity.class,
+                sp.getBoundingBox().inflate(32.0));
+        if (orbs.isEmpty()) {
+            source.sendFailure(Component.literal("32 格内没有幸运核心"));
+            return 0;
+        }
+        for (cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity orb : orbs) {
+            String line = "[核心 id=" + orb.getId() + "] 阶段=" + orb.getOrbState()
+                + " 无敌=" + orb.isInvulnerable()
+                + " 无敌帧=" + orb.invulnerableTime
+                + " " + orb.getHealth() + "/" + orb.getMaxHealth()
+                + " 可命中=" + orb.isPickable()
+                + " 对generic免疫=" + orb.isInvulnerableTo(sp.damageSources().generic())
+                + " 附体玩家=" + (orb.getPossessorUuid() == null ? "无" : orb.getPossessorUuid().toString().substring(0, 8))
+                + " 骑乘=" + (orb.getVehicle() == null ? "无" : ("id=" + orb.getVehicle().getId()))
+                + " 抽签=" + orbDrawnEventName(orb)
+                + " 走位=" + orbVesselKiteState(orb)
+                + " 饥饿=" + orbVesselFood(orb)
+                + " 倒计时=" + orbPossessionCountdown(orb)
+                + " 索敌冷却=" + orbTargetCooldown(orb)
+                + " 目标数=" + orb.getPossessionSeenTargetCount()
+                + " 致命打击额度=" + orb.getVesselFatalHits()
+                + " 距离=" + String.format("%.1f", Math.sqrt(orb.distanceToSqr(sp)));
+            source.sendSuccess(() -> Component.literal(line), false);
+        }
+        return 1;
+    }
+
+    /**
+     * /jafa orbinfo 的辅助：<b>索敌冷却</b>还剩多久（mm:ss）。
+     * <p>
+     * 冷却是"<b>手上没有活的目标</b>满这么久就解除附体"的那条计时（正常 3 分钟，debug 模式 10 秒），
+     * 到点后核心回到拾取点、<b>不发奖励</b>。
+     * 只要空壳还有活的目标，它就一直被顶回满值（见 {@code OrbOfLuckEntity#onPossessionTargetHeld}），
+     * 所以这里显示的是"它丢掉最后一个目标之后还剩多久"，正常打着架时应该一直停在满值。
+     * 不在附体阶段时显示"无"。
+     */
+    private static String orbTargetCooldown(cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity orb) {
+        long ticksLeft = orb.getTargetCooldownTicksLeft();
+        if (ticksLeft < 0L) {
+            return "无";
+        }
+        long seconds = ticksLeft / 20L;
+        return String.format("%d:%02d", seconds / 60L, seconds % 60L);
+    }
+
+    /**
+     * /jafa orbinfo 的辅助：附体倒计时剩余时间（mm:ss）。
+     * <p>
+     * 倒计时以游戏刻计算（基础 20 分钟，每发现一个新索敌目标 +1 分钟），
+     * 不在附体阶段时显示"无"。想快速验证可以用 {@code /tick sprint 24000} 之类把游戏刻快进。
+     */
+    private static String orbPossessionCountdown(cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity orb) {
+        long ticksLeft = orb.getPossessionTicksLeft();
+        if (ticksLeft < 0L) {
+            return "无";
+        }
+        long seconds = ticksLeft / 20L;
+        return String.format("%d:%02d", seconds / 60L, seconds % 60L);
+    }
+
+    /**
+     * /jafa orbinfo 的辅助：附体空壳当前抽到的是哪个攻击事件（{@code ArrowEvent}/{@code MeleeEvent}）。
+     * <p>
+     * 抽签结果本身看不见（箭和拳头看得见，但两个窗口之间在打什么主意看不见），所以直接显示：
+     * {@code MeleeEvent} = 本次抽到近战签（抽签那一刻目标就在 3 格内），若迟迟没挨拳，
+     * 说明目标已经跑出 3 格、或者拳头还在 1 秒冷却里。够不着的近战签会被当场重抽，
+     * 所以远距离时这里基本只会看到 {@code ArrowEvent}。
+     * <p>
+     * 天境那几张签会额外带一个中文名（{@code 重力晶剑(AetherSwordEvent)}）：
+     * 三把天境剑共用一个事件类，光看类名分不出手里是哪把。
+     */
+    private static String orbDrawnEventName(cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity orb) {
+        if (orb.getVehicle() instanceof cn.autoforged.joes_addons_for_abmc.entity.PlayerShellEntity shell) {
+            cn.autoforged.joes_addons_for_abmc.entity.OrbPossessedAttackEvents.PossessedAttackEvent drawn =
+                shell.getPossessionDrawnEvent();
+            if (drawn != null) {
+                String simple = drawn.getClass().getSimpleName();
+                // 天境没装时连 labelOf 都不能问（那会把 AetherCompat 加载起来）——先过 OptionalMods 那道门
+                if (cn.autoforged.joes_addons_for_abmc.entity.OptionalMods.isAetherLoaded()) {
+                    String label = cn.autoforged.joes_addons_for_abmc.entity.AetherCompat.labelOf(drawn);
+                    if (label != null) {
+                        return label + "(" + simple + ")";
+                    }
+                }
+                return simple;
+            }
+        }
+        return "无";
+    }
+
+    /**
+     * /jafa orbinfo 的辅助：附体空壳"此刻在怎么走"。
+     * <p>
+     * 光看画面很难分辨"站着不动"和"在环绕走位"，所以把 {@code OrbPossessionKiteGoal} 的内部状态
+     * 直接念出来：{@code 环绕-后退-顺时针} = 正在骷髅式走位；
+     * {@code 直冲(视线 n/20)} = 还没攒够 1 秒视线，正在朝目标走直线（n 是已积累的刻数）；
+     * {@code 收招僵直} / {@code 近战架势} = 暂停走位的两种状态。
+     */
+    private static String orbVesselKiteState(cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity orb) {
+        if (orb.getVehicle() instanceof cn.autoforged.joes_addons_for_abmc.entity.PlayerShellEntity shell) {
+            return shell.describePossessionKiteState();
+        }
+        return "无";
+    }
+
+    /**
+     * /jafa orbinfo 的辅助：附体空壳的饥饿 / 饱和度（它自己模拟玩家那套进食与自然回复）。
+     * <p>
+     * 格式 {@code 饥饿/饱和度}，例如 {@code 17/9.6}：饥饿满 20 且饱和度 &gt; 0 时走"饱和回复"
+     * （快），饥饿 ≥ 18 时走普通回复（慢）；两者都要靠吃东西续上。
+     */
+    private static String orbVesselFood(cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity orb) {
+        if (orb.getVehicle() instanceof cn.autoforged.joes_addons_for_abmc.entity.PlayerShellEntity shell) {
+            return shell.getShellFoodLevel() + "/" + String.format("%.1f", shell.getShellSaturation());
+        }
+        return "无";
     }
 
     /** /jafa solidify：把玩家 64 格以内的所有“觉醒的方块”直接固化回方块（调试用）。 */
@@ -7887,12 +9804,12 @@ public class ModMain {
             GEN_WITCH_HUT_COUNT.set(0);
             return true; // debug：仅第一座必中
         }
-        // 普通路径：1% 概率，连续 200 座保底
-        if (GEN_WITCH_HUT_COUNT.get() >= 200) {
+        // 普通路径：1/10 概率，连续 20 座保底
+        if (GEN_WITCH_HUT_COUNT.get() >= WITCH_BOSS_PITY_HUTS) {
             GEN_WITCH_HUT_COUNT.set(0);
             return true;
         }
-        boolean hit = random.nextInt(100) < 1;
+        boolean hit = random.nextInt(WITCH_BOSS_CHANCE_DENOMINATOR) < 1;
         if (hit) {
             GEN_WITCH_HUT_COUNT.set(0);
         } else {
@@ -8395,6 +10312,40 @@ public class ModMain {
         }
     }
 
+    /**
+     * 致命一击要拿物品去顶（{@link #applyTotemEffect}）时，决定<b>消耗哪一个</b>：
+     * 优先消耗玩家身上真正的不死图腾，找不到才用那把闪烁西瓜刀（传入的 {@code knife}）。
+     *
+     * <p>查找顺序按用户的要求：<b>副手优先</b>，其次是整个背包
+     * （{@code Inventory#getContainerSize()} 覆盖主手/快捷栏/主背包/盔甲栏/副手 ——
+     * 也就是"副手或者其它栏位"）。
+     *
+     * <p>注意原版只认<b>手上</b>的图腾，其它栏位里的图腾它是不管的；这里是为了配合西瓜刀
+     * 的"顶命"机制才顺带把这些图腾也算进来 —— 且只在"本来就要消耗刀"的前提下才会走到，
+     * 不会额外给没带刀的人多出一层保命。
+     */
+    private static ItemStack totemToSpendFirst(Player player, ItemStack knife) {
+        // 1) 副手优先
+        ItemStack offhand = player.getOffhandItem();
+        if (isTotemOfUndying(offhand)) {
+            return offhand;
+        }
+        // 2) 其余所有栏位（含主手、快捷栏、主背包、盔甲栏；副手也在其中，已查过）
+        net.minecraft.world.entity.player.Inventory inventory = player.getInventory();
+        for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            if (isTotemOfUndying(stack)) {
+                return stack;
+            }
+        }
+        // 3) 没有图腾：刀自己去顶
+        return knife;
+    }
+
+    private static boolean isTotemOfUndying(ItemStack stack) {
+        return !stack.isEmpty() && stack.is(Items.TOTEM_OF_UNDYING);
+    }
+
     private static void applyTotemEffect(Player player, ItemStack stack) {
         player.setHealth(1.0F);
         player.removeEffectsCuredBy(net.neoforged.neoforge.common.EffectCures.PROTECTED_BY_TOTEM);
@@ -8557,7 +10508,7 @@ public class ModMain {
             StaffItem.setBlockDamage(stack, 0);
             saveBlockDurability(stack, blockType, 0);
 
-            Item blockItem = STAFF_BLOCKTYPE_REVERSE.get(blockType);
+            Item blockItem = staffBlockTypeToItem(blockType);
             if (blockItem == null && "omega".equals(blockType)) {
                 blockItem = ModItems.OMEGA_GAME_ICON.get();
             }
@@ -8581,38 +10532,75 @@ public class ModMain {
         }
     }
 
-    private static void applyCustomEnchantmentDamage(LivingDamageEvent.Pre event, LivingEntity target,
-                                                      ItemStack weapon, LivingEntity attacker, Level level) {
-        float attackStrength = attacker instanceof Player player
-            ? player.getAttackStrengthScale(0.5F) : 1.0F;
-        float scaledBase = 20.0F * (0.2F + attackStrength * attackStrength * 0.8F);
+    /**
+     * 闪烁西瓜刀·近战伤害修正。
+     * <p><b>只处理「命中亡灵」这一条规则</b>，其余目标一律不改动，因此锋利魔咒、暴击、力量效果、
+     * 其它模组的修正都完全按原版走（锋利即原版增伤逻辑）。
+     * <p>亡灵规则：<b>先线性追加，再进 ×20 乘区</b>，即
+     * {@code (白板 + 白板 × 0.2 × 亡灵杀手等级) × 20} —— 也就是
+     * {@code 白板 × (1 + 0.2 × 亡灵杀手等级) × 20}（等价于 白板 × (20 + 4 × 等级)）。
+     * 所以单看 1 级亡灵杀手，相对白板就是 白板 × 20 × 20% = 10×20×0.2 = 40 点额外伤害。
+     * 原版亡灵杀手自带的 {@code 2.5 × 等级} 固定加成被这条规则取代，不重复计算。
+     * <p>原版近战公式为 {@code 白板 × 蓄力 × 暴击 + 附魔加成 × 蓄力}，所以
+     * 「白板 × 蓄力 × 暴击」可以直接由 {@code 原伤害 − 附魔加成 × 蓄力} 反推，无需自己判断暴击；
+     * 而 {@link LivingDamageEvent.Pre#getNewDamage()} 此时已扣过护甲/抗性，按比例换算即可保留这些减伤。
+     */
+    private static void applyKnifeDamage(LivingDamageEvent.Pre event, LivingEntity target,
+                                         ItemStack weapon, LivingEntity attacker, Level level) {
+        // 非亡灵：保持原版结算，什么都不做
+        if (!target.getType().is(EntityTypeTags.SENSITIVE_TO_SMITE)) return;
+
         float originalTotal = event.getOriginalDamage();
+        if (originalTotal <= 0.0F) return;
+        float attackStrength = attacker instanceof Player player ? player.getAttackStrengthScale(0.5F) : 1.0F;
+        if (attackStrength <= 0.0F) return;
+
+        ItemEnchantments enchants = weapon.getEnchantments();
+        int smiteLevel = getSmiteLevel(enchants, level);
+        int sharpnessLevel = getSharpnessLevel(enchants, level);
+        // 原版附魔加成（未乘蓄力）：锋利 = 0.5×等级+0.5；亡灵杀手 = 2.5×等级（对亡灵生效）
+        float sharpnessBonus = sharpnessLevel > 0 ? 0.5F * sharpnessLevel + 0.5F : 0.0F;
+        float smiteBonus = 2.5F * smiteLevel;
+        float baseCritDamage = Math.max(0.0F, originalTotal - (sharpnessBonus + smiteBonus) * attackStrength);
+
+        // 亡灵伤害 = 白板(含蓄力与暴击) × (1 + 0.2×亡灵杀手等级) × 20 + 锋利加成（仍按原版，不参与乘区）
+        float undeadTotal = baseCritDamage * undeadMultiplier(smiteLevel) + sharpnessBonus * attackStrength;
+        event.setNewDamage(event.getNewDamage() * undeadTotal / originalTotal);
+    }
+
+    /** 亡灵乘区：先算线性追加（每级亡灵杀手 +20% 白板），再乘以 20。 */
+    private static float undeadMultiplier(int smiteLevel) {
+        return (1.0F + 0.2F * smiteLevel) * 20.0F;
+    }
+
+    /**
+     * 闪烁西瓜刀的伤害计算（近战与投掷共用同一套公式）。
+     * <p>白板 {@link GlisteringMelonKnifeItem#BASE_ATTACK_DAMAGE}（10，同下界合金斧）：
+     * 普通目标 = 白板 × 蓄力 + 原版附魔加成 × 蓄力；
+     * 亡灵目标 = 白板 × 蓄力 × (1 + 0.2 × 亡灵杀手等级) × 20 + 锋利加成 × 蓄力。
+     *
+     * @param target 受击目标；为 null（非生物）时按普通目标计算
+     * @param charge 蓄力系数（满蓄力 1.0；投掷武器按满蓄力处理）
+     * @param crit   是否暴击（投掷武器为 false）
+     */
+    public static float computeKnifeDamage(ItemStack weapon, @Nullable LivingEntity target,
+                                           float charge, boolean crit, Level level) {
+        float damage = GlisteringMelonKnifeItem.BASE_ATTACK_DAMAGE * (0.2F + charge * charge * 0.8F);
+        if (crit) damage *= 1.5F;
 
         ItemEnchantments enchants = weapon.getEnchantments();
         int sharpnessLevel = getSharpnessLevel(enchants, level);
-        int smiteLevel = getSmiteLevel(enchants, level);
+        float sharpnessBonus = sharpnessLevel > 0 ? (0.5F * sharpnessLevel + 0.5F) * charge : 0.0F;
 
-        float vanillaEnchantExtra = originalTotal - scaledBase;
-        float customEnchantExtra = 0;
-
-        if (sharpnessLevel > 0 && !(smiteLevel > 0 && target.getType().is(EntityTypeTags.SENSITIVE_TO_SMITE))) {
-            float vanillaSharpness = (0.5F * sharpnessLevel + 0.5F) * attackStrength;
-            vanillaEnchantExtra -= vanillaSharpness;
-            customEnchantExtra += vanillaSharpness * 2;
+        if (target != null && target.getType().is(EntityTypeTags.SENSITIVE_TO_SMITE)) {
+            return damage * undeadMultiplier(getSmiteLevel(enchants, level)) + sharpnessBonus;
         }
 
-        if (smiteLevel > 0 && target.getType().is(EntityTypeTags.SENSITIVE_TO_SMITE)) {
-            float smiteDamage = scaledBase * smiteLevel * 5;
-            if (originalTotal > 0) {
-                event.setNewDamage(event.getNewDamage() * smiteDamage / originalTotal);
-            }
-            return;
-        }
-
-        float customTotal = scaledBase + vanillaEnchantExtra + customEnchantExtra;
-        if (originalTotal > 0 && customTotal > 0) {
-            event.setNewDamage(event.getNewDamage() * customTotal / originalTotal);
-        }
+        int baneLevel = getBaneOfArthropodsLevel(enchants, level);
+        float baneBonus = baneLevel > 0 && target != null
+            && target.getType().is(EntityTypeTags.SENSITIVE_TO_BANE_OF_ARTHROPODS)
+            ? 2.5F * baneLevel * charge : 0.0F;
+        return damage + sharpnessBonus + baneBonus;
     }
 
     private static int getSharpnessLevel(ItemEnchantments enchants, Level level) {
@@ -8622,6 +10610,12 @@ public class ModMain {
 
     private static int getSmiteLevel(ItemEnchantments enchants, Level level) {
         var holder = level.registryAccess().registryOrThrow(Registries.ENCHANTMENT).getHolderOrThrow(Enchantments.SMITE);
+        return enchants.getLevel(holder);
+    }
+
+    private static int getBaneOfArthropodsLevel(ItemEnchantments enchants, Level level) {
+        var holder = level.registryAccess().registryOrThrow(Registries.ENCHANTMENT)
+            .getHolderOrThrow(Enchantments.BANE_OF_ARTHROPODS);
         return enchants.getLevel(holder);
     }
 
@@ -8680,7 +10674,7 @@ public class ModMain {
         Item offItem = offStack.getItem();
 
         String currentBlockType = staffStack.getOrDefault(ModDataComponents.BLOCKTYPE.get(), "empty");
-        String offBlockType = STAFF_BLOCKTYPE_WHITELIST.getOrDefault(offItem, null);
+        String offBlockType = itemToStaffBlockType(offItem);
 
         if (offBlockType == null && offItem == ModItems.OMEGA_GAME_ICON.get()) {
             offBlockType = "omega";
@@ -8720,12 +10714,17 @@ public class ModMain {
             int savedDmg = getSavedBlockDurability(staffStack, offBlockType);
             StaffItem.setBlockDamage(staffStack, savedDmg);
             staffStack.set(ModDataComponents.BLOCKTYPE.get(), offBlockType);
+            // 蜂巢：装上去时把蜂巢物品里的蜜蜂数据并入权杖，保留数量
+            if ("bee_nest".equals(offBlockType) && offStack.is(net.minecraft.world.item.Items.BEE_NEST)) {
+                staffStack.set(net.minecraft.core.component.DataComponents.BEES,
+                    offStack.getOrDefault(net.minecraft.core.component.DataComponents.BEES, List.of()));
+            }
             offStack.shrink(1);
         } else if ("empty".equals(offBlockType)) {
             int currentBlockDmg = StaffItem.getBlockDamage(staffStack);
             saveBlockDurability(staffStack, currentBlockType, currentBlockDmg);
             StaffItem.setBlockDamage(staffStack, 0);
-            Item returnItem = STAFF_BLOCKTYPE_REVERSE.get(currentBlockType);
+            Item returnItem = staffBlockTypeToItem(currentBlockType);
             if (returnItem == null && "omega".equals(currentBlockType)) {
                 returnItem = ModItems.OMEGA_GAME_ICON.get();
             }
@@ -8734,14 +10733,21 @@ public class ModMain {
             }
             staffStack.set(ModDataComponents.BLOCKTYPE.get(), "empty");
             if (returnItem != null && returnItem != Items.AIR) {
-                player.setItemInHand(offHand, new ItemStack(returnItem));
+                ItemStack returned = new ItemStack(returnItem);
+                // 蜂巢：拿下来时把权杖里的蜜蜂数据转移回返还的蜂巢物品，并清空权杖残留
+                if ("bee_nest".equals(currentBlockType)) {
+                    returned.set(net.minecraft.core.component.DataComponents.BEES,
+                        staffStack.getOrDefault(net.minecraft.core.component.DataComponents.BEES, List.of()));
+                    staffStack.set(net.minecraft.core.component.DataComponents.BEES, List.of());
+                }
+                player.setItemInHand(offHand, returned);
             }
         } else {
             int currentBlockDmg = StaffItem.getBlockDamage(staffStack);
             saveBlockDurability(staffStack, currentBlockType, currentBlockDmg);
             int savedDmg = getSavedBlockDurability(staffStack, offBlockType);
             StaffItem.setBlockDamage(staffStack, savedDmg);
-            Item returnItem = STAFF_BLOCKTYPE_REVERSE.get(currentBlockType);
+            Item returnItem = staffBlockTypeToItem(currentBlockType);
             if (returnItem == null && "omega".equals(currentBlockType)) {
                 returnItem = ModItems.OMEGA_GAME_ICON.get();
             }
@@ -8749,11 +10755,23 @@ public class ModMain {
                 returnItem = ModItems.GAME_ICON.get();
             }
             staffStack.set(ModDataComponents.BLOCKTYPE.get(), offBlockType);
+            // 蜂巢：装上去时把蜂巢物品里的蜜蜂并入权杖（shrink 前读取）
+            if ("bee_nest".equals(offBlockType) && offStack.is(net.minecraft.world.item.Items.BEE_NEST)) {
+                staffStack.set(net.minecraft.core.component.DataComponents.BEES,
+                    offStack.getOrDefault(net.minecraft.core.component.DataComponents.BEES, List.of()));
+            }
             offStack.shrink(1);
             if (returnItem != null && returnItem != Items.AIR) {
+                ItemStack dropped = new ItemStack(returnItem);
+                // 蜂巢：换下时把权杖蜜蜂转移给返还/掉落的蜂巢物品，并清空权杖残留
+                if ("bee_nest".equals(currentBlockType)) {
+                    dropped.set(net.minecraft.core.component.DataComponents.BEES,
+                        staffStack.getOrDefault(net.minecraft.core.component.DataComponents.BEES, List.of()));
+                    staffStack.set(net.minecraft.core.component.DataComponents.BEES, List.of());
+                }
                 ItemEntity drop = new ItemEntity(player.level(),
                     player.getX(), player.getY() + 0.5, player.getZ(),
-                    new ItemStack(returnItem));
+                    dropped);
                 drop.setPickUpDelay(10);
                 player.level().addFreshEntity(drop);
             }
@@ -9490,8 +11508,8 @@ public class ModMain {
      * 逻辑：
      * 1. 判断本女巫是否在女巫小屋结构内（用 SWAMP_HUT 结构 piece 判定）；
      * 2. 若在，则按共享保底计数决定是否把它变异为女巫 Boss：
-     *    - 已累计 200 座小屋未出现（witchHutCount >= 200）→ 本座必出 Boss，计数清零；
-     *    - 否则 1% 概率变 Boss，命中则清零，未命中则计数 +1。
+     *    - 已累计 {@link #WITCH_BOSS_PITY_HUTS} 座小屋未出现（witchHutCount >= 20）→ 本座必出 Boss，计数清零；
+     *    - 否则 1/10 概率变 Boss，命中则清零，未命中则计数 +1。
      * 每次只判定一次（命中后写入标签，避免反复触发）。
      */
     private static void handleWitchHutBossSpawn(ServerLevel level, Witch witch) {
@@ -9503,10 +11521,10 @@ public class ModMain {
         SharedCounts counts = getSharedCounts(level);
         boolean boss;
         if (counts.witchHutCount >= WITCH_BOSS_PITY_HUTS) {
-            // 保底：第 201 座必出
+            // 保底：第 21 座必出
             boss = true;
         } else {
-            boss = witch.getRandom().nextInt(100) < 1; // 1%
+            boss = witch.getRandom().nextInt(WITCH_BOSS_CHANCE_DENOMINATOR) < 1; // 1/10
         }
 
         if (boss) {
@@ -11448,6 +13466,8 @@ public class ModMain {
             }
         }
         if (chosen != null) {
+            // 成就「让你惹Techno！」：阶段2 用变形解药参与战斗的玩家计入参战名单
+            recordWitchBossFighter(chosen, player.getUUID());
             witchBossStage2AntidoteSuccess(chosen);
         }
     }
@@ -11484,6 +13504,8 @@ public class ModMain {
             }
         }
         if (chosen != null) {
+            // 成就「让你惹Techno！」：阶段2 用动物变形参与战斗的玩家计入参战名单
+            recordWitchBossFighter(chosen, player.getUUID());
             witchBossStage2AnimalMorphSuccess(chosen);
         }
     }
@@ -11656,10 +13678,11 @@ public class ModMain {
             int stage = getWitchBossStage(w);
             ServerBossEvent ev = WITCH_BOSS_EVENTS.computeIfAbsent(u,
                 k -> new ServerBossEvent(
-                    net.minecraft.network.chat.Component.literal(witchBossStageName(stage)),
+                    net.minecraft.network.chat.Component.literal(WITCH_BOSS_BAR_NAME),
                     witchBossBarColor(stage),
                     net.minecraft.world.BossEvent.BossBarOverlay.PROGRESS));
-            ev.setName(net.minecraft.network.chat.Component.literal(witchBossStageName(stage)));
+            // 名字固定为「女巫」；这里保留每刻 setName 只是为了万一以后又需要按阶段改名
+            ev.setName(net.minecraft.network.chat.Component.literal(WITCH_BOSS_BAR_NAME));
             ev.setColor(witchBossBarColor(stage));
             // 阶段1：血条随“累计伤害池”递减（受击伤害 + 成功解除自身变形-1/6）
             float progress = 1.0F;
@@ -11749,7 +13772,11 @@ public class ModMain {
         net.minecraft.nbt.ListTag records = data.getList(WITCH_BOSS_DAMAGE_RECORDS_TAG, net.minecraft.nbt.Tag.TAG_COMPOUND);
         CompoundTag rec = new CompoundTag();
         rec.putBoolean("isViolent", isViolent);
-        if (sourcePlayer != null) rec.putUUID("sourcePlayer", sourcePlayer);
+        if (sourcePlayer != null) {
+            rec.putUUID("sourcePlayer", sourcePlayer);
+            // 成就「让你惹Techno！」：阶段3 用策略手段（变形/解药/摧毁自变形形态）参与的玩家同样计入参战名单
+            recordWitchBossFighter(witch, sourcePlayer);
+        }
         rec.putString("sourceType", sourceType == null ? "unknown" : sourceType);
         records.add(rec);
         while (records.size() > WITCH_BOSS_DAMAGE_RECORDS_MAX) {
@@ -11775,6 +13802,10 @@ public class ModMain {
             boolean violentDefeat, @Nullable Entity directKiller) {
         CompoundTag data = witch.getPersistentData();
         net.minecraft.nbt.ListTag records = data.getList(WITCH_BOSS_DAMAGE_RECORDS_TAG, net.minecraft.nbt.Tag.TAG_COMPOUND);
+
+        // 成就「让你惹Techno！」：只要女巫Boss被击败（本体被击杀，或三阶段血条被扣光），
+        // 所有参与过战斗的玩家都点亮成就——与下方“击败奖励”的发放条件无关（奖励仍需直接击杀或贡献达标）。
+        grantWitchBossDefeatAdvancement(level, witch, directKiller);
 
         // 本体被玩家直接击杀 → 该玩家获奖
         if (directKiller instanceof Player p) {
@@ -12056,11 +14087,27 @@ public class ModMain {
         Entity entity = event.getEntity();
         if (entity.level().isClientSide()) return;
 
+        // 多重射击分裂副本：落地（连续不再移动）2 秒后消失 —— 箭/三叉戟/闪烁西瓜刀/寒冰箭/毒镖……
+        // 一律按"本刻没动"来判断，不枚举类型（见 tickMultishotVolleyProjectile）。本体不受影响。
+        if (entity instanceof Projectile volleyProjectile) {
+            tickMultishotVolleyProjectile(volleyProjectile);
+        }
+
         // 女巫 Boss：每刻检测是否首次察觉到玩家（创造/旁观不计入），命中则打标记（仅一次）。
         // 同时加速喝药：原版 uses usingTime 每刻 -1（药水使用时长，如 32 刻喝光），这里额外 -2
         // 叠加为 -3/刻 → 喝药时间缩短至 1/3（丢药间隔由 RangedAttackGoalMixin 单独提速）。
         if (entity instanceof Witch witch) {
-            if (witch.getPersistentData().getBoolean(WITCH_BOSS_TAG)) {
+            // <b>血量扣光进入死亡动画后（原版 20 刻）不再跑任何女巫Boss行为</b>（用户反馈）：
+            // 这段逻辑挂在 EntityTickEvent.Post 上，而死亡动画期间实体照样在 tick
+            // （{@code LivingEntity#tickDeath} 只是把 deathTime 数到 20），
+            // 所以挖掘方块、对物品掏打火石、丢药水这些都会继续做 ——
+            // 表现就是"已经倒在地上的女巫还在挖方块、还在给物品点打火石"。
+            // 判据用 getHealth() <= 0（{@code LivingEntity#isDeadOrDying}，LivingEntity.java:1134）：
+            // 女巫Boss那三条血条是假的（阶段1/2/3 各记在 persistentData 里，见 witchBossStage1Capacity 等），
+            // 本体这 260 点真血只有被暴力打死时才会归零，而那条路的收场
+            // （Boss条移除 + 击败奖励 + 成就）已经由 LivingDeathEvent 里的 onLivingDeath 发过，
+            // 所以这里整段停手不会漏掉任何结算，反而避免"尸体还在推进血条阶段/被 discard"。
+            if (witch.getPersistentData().getBoolean(WITCH_BOSS_TAG) && !witch.isDeadOrDying()) {
                 // 不对创造/观战玩家持续索敌：创造玩家不构成反应目标，避免本能地追击/瞄准
                 if (witch.getTarget() instanceof Player hostile && !isWitchBossThreat(hostile)) {
                     witch.setTarget(null);
@@ -12217,13 +14264,100 @@ public class ModMain {
         ScriptNetworking.onServerStop();
     }
 
+    /**
+     * 可选 mod（暮色/天境）联动"最后一次兜底"的记录表：同一家只报一次，别每刻刷屏。
+     * <p>
+     * 用并发集合：{@code onServerTickPre} 跑在服务端线程，理论上只有一个线程，
+     * 但这里没必要省这点开销。
+     */
+    private static final java.util.Set<String> COMPAT_FAILURE_LOGGED =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * 可选 mod 联动的异常兜底：那一家的 {@code *Compat} 类加载/链接失败（对方版本与本模组编译目标对不上、
+     * 缺类缺方法）时只记一行日志，<b>不把服务端带崩</b>。
+     * <p>
+     * 它挡的是 {@link LinkageError}（{@code NoClassDefFoundError} / {@code NoSuchMethodError} /
+     * {@code VerifyError} 这一族）。"那个 mod 压根没装"不该走到这里 —— 调用点已经先用
+     * {@code OptionalMods} 那道门挡掉了。
+     */
+    private static void logCompatFailureOnce(String modName, LinkageError error) {
+        if (COMPAT_FAILURE_LOGGED.add(modName)) {
+            LOGGER.warn("[联动] {} 联动不可用（所装版本与本模组的编译目标对不上）：{} —— 后续同类错误不再重复打印",
+                modName, error);
+        }
+    }
+
     private static void onServerTickPre(ServerTickEvent.Pre event) {
+        // 变形系统所有倒计时的"本刻该不该走"判定，每服务端刻只算一次（放在最前面，
+        // 让同一刻内后面的 tickMorphRemaining / handleTransmutationTick 都读到同一个结果）
+        updateTransmutationTickState(event.getServer());
+
         LuckyPortalBlock.clearProcessedThisTick();
+        // 旁观者的传送门兜底：他们 noPhysics，走不到 Block#entityInside（见该方法注释）
+        LuckyPortalBlock.tickSpectatorsOnPortal(event.getServer());
+
+        // 幸运猫事件：上一个游戏刻由玩家破坏幸运方块刷出的猫，在此刻立即驯服给该玩家
+        cn.autoforged.joes_addons_for_abmc.block.LuckyCatsEvent.tick();
+        // 幸运落石事件：红石块之后的 TNT 连发排程（每 10 刻一个，共 5 个）
+        cn.autoforged.joes_addons_for_abmc.block.LuckyFallingVolleyEvent.tick();
+        // 幸运水井：检测丢入水源的金粒并延迟结算
+        cn.autoforged.joes_addons_for_abmc.block.LuckyWellEvent.tick();
+        // 幸运骷髅骑士：驱动骷髅马像蝙蝠一样乱飞（不落地、免疫摔落伤害）
+        cn.autoforged.joes_addons_for_abmc.block.LuckySkeletonKnightEvent.tick();
+        // wart on a stick：头盔栏里挂着地狱疣的生物，每秒刷新一次缓慢/失明/挖掘疲劳
+        cn.autoforged.joes_addons_for_abmc.item.WartOnAStickItem.tickHeadWarts(event.getServer());
+        // 翅膀：穿在胸甲栏时授予 mayfly；生存/冒险模式飞行中每 3 秒扣 1 点耐久
+        handleWingsTick(event.getServer());
+        // 附体召唤的骷髅马骑士：同样是飞行驱动，但目标是"冲共享目标"而不是随机漫游
+        cn.autoforged.joes_addons_for_abmc.entity.OrbSkeletonKnightFlight.tick(event.getServer());
+        // 幸运核心 INITIAL 阶段发射出去的生物：落地就撤销摔落免疫
+        cn.autoforged.joes_addons_for_abmc.entity.OrbInitialLaunch.tickLaunched();
+        // 附体远程攻击"铁砧雨"：每 4 刻在目标头顶砸下一颗
+        cn.autoforged.joes_addons_for_abmc.entity.OrbAnvilRain.tick();
+        // 附体远程攻击的"连发"（箭 3~5 支 / 三叉戟 3~5 只，间隔 1~2 刻）
+        cn.autoforged.joes_addons_for_abmc.entity.OrbBurstShots.tick();
+        // 附体近战攻击"铁抓钩"：每刻把被钩住的玩家往空壳那边拽（拉到位/被方块挡住就收链）
+        cn.autoforged.joes_addons_for_abmc.entity.OrbHookPull.tick(event.getServer());
+        // 幸运方块"支援生物"的索敌自愈：goal 是命令式注册、不进存档，读档/区块重载后会丢，
+        // 丢了它就会回到原版那套"见谁打谁"（包括去打它本该帮忙的那位玩家）
+        cn.autoforged.joes_addons_for_abmc.entity.SupportMobControl.tick(event.getServer());
+        // 己方凋灵的副头目标锁定（必须早于它自己的 AI，所以放在 ServerTickEvent.Pre 里）
+        cn.autoforged.joes_addons_for_abmc.entity.OrbAllyWitherControl.tick(event.getServer());
+        // 召唤物的"共享索敌"自愈：goal 是命令式注册、不进存档，读档/区块重载/被变形解除后会丢，
+        // 丢了它们就会去打最近的活体（通常是那具附体空壳）。每 0.5 秒兜底确认一次。
+        cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.tickSummonGoals(event.getServer());
+        // 被"没有核心的空壳"（刷怪蛋放出来的那一具）同化的玩家：他们不在任何核心的同化名单里，
+        // 所以上面那条按核心维护的路径永远看不到他们 —— 这里按玩家自己的记录兜住（保持旁观/切回创造即解除）
+        cn.autoforged.joes_addons_for_abmc.entity.OrbAssimilation.tickCorelessAssimilations(event.getServer());
+        // "红僵尸关系"表（SunnySeren 特例用）：换存档清表 + 清过期条目
+        cn.autoforged.joes_addons_for_abmc.entity.OrbAdversaryRelations.tick(event.getServer());
+        // 暮色森林联动：米诺陶战斧的冲刺驱动（没装暮色时内部列表恒空，只是个空转）
+        // 注意先问 OptionalMods 再碰 TwilightForestCompat：那个 mod 卸载后，光加载联动类就会抛
+        // NoClassDefFoundError（天境那边实测崩过，详见 OptionalMods 的类注释）
+        if (cn.autoforged.joes_addons_for_abmc.entity.OptionalMods.isTwilightForestLoaded()) {
+            try {
+                cn.autoforged.joes_addons_for_abmc.entity.TwilightForestCompat.tick();
+            } catch (LinkageError e) {
+                // 联动类与所装的暮色版本对不上（缺类/缺方法）：这一条链废掉就行，别把服务端带崩
+                logCompatFailureOnce("暮色森林", e);
+            }
+        }
+        // 天境联动：境云权杖那套"左键"的驱动（没装天境时内部列表恒空，只是个空转）
+        if (cn.autoforged.joes_addons_for_abmc.entity.OptionalMods.isAetherLoaded()) {
+            try {
+                cn.autoforged.joes_addons_for_abmc.entity.AetherCompat.tick();
+            } catch (LinkageError e) {
+                logCompatFailureOnce("天境", e);
+            }
+        }
 
         // 世界生成 worker 线程的女巫小屋决策结果同步到主线程持久化
         syncGenStateToSharedCounts(event.getServer().overworld());
         // 待放置女巫Boss小屋：覆盖区块全部加载后一次性完整放置
         tickPendingHuts(event.getServer().overworld());
+        // 幸运宝珠神庙：玩家初次进入幸运维度时选址并一次性放置（每个存档只生成一座）
+        cn.autoforged.joes_addons_for_abmc.worldgen.OrbOfLuckTemple.tick(event.getServer());
 
         // 女巫Boss血条（原版 ServerBossEvent 机制）每刻更新
         updateWitchBossBar(event.getServer());
@@ -12255,6 +14389,9 @@ public class ModMain {
 
         // 命令方块权杖：抓取模式每刻拉拽目标生物
         runCommandStaffGrabTick(event.getServer());
+
+        // "附近玩家在蹲起（T-bag）"的观测表：附体空壳跟着一起蹲要用（见 CrouchMimic）
+        cn.autoforged.joes_addons_for_abmc.entity.CrouchMimic.tick(event.getServer());
 
         // 命令方块权杖：护盾模式每刻反弹弹射物 + 维持头顶指令文本
         runCommandStaffShieldTick(event.getServer());
@@ -12469,13 +14606,19 @@ public class ModMain {
 
         handleTransmutationTick(event);
 
-        // 每 200 刻（约 10 秒）检查一次在线玩家是否已完成全部原版成就，用于兜底触发
-        // （例如通过 /advancement grant 命令授予成就时，成就事件可能不会被触发）。
+        // 每 200 刻（约 10 秒）检查一次在线玩家是否已完成全部原版成就 / 除本 mod 外的全部成就，
+        // 用于兜底触发（例如通过 /advancement grant 命令授予成就时，成就事件可能不会被触发）。
         if (event.getServer().getTickCount() % 200 == 0) {
             for (ServerPlayer player : event.getServer().getPlayerList().getPlayers()) {
                 checkAndRewardAllVanillaAchievements(player);
+                checkAndRewardAllAchievements(player);
             }
         }
+
+        // 工作台帽子的合成事件：推进所有进行中的作业（展示实体飞行 / 到达产出）
+        cn.autoforged.joes_addons_for_abmc.craftinghat.CraftingHatCrafting.tick();
+        // 工作台权杖的合成事件：吸收掉落物 → 每 2 刻合成一件 → 喷发（不可中断）
+        cn.autoforged.joes_addons_for_abmc.craftingstaff.CraftingStaffCrafting.tick();
     }
 
     /**
@@ -12571,10 +14714,15 @@ public class ModMain {
     }
 
     /**
-     * Note Block Universe：敌对生物变为中立生物。
-     *
-     * 通过拦截 LivingChangeTargetEvent，在该维度内禁止敌对生物获得攻击目标，从而表现为中立
-     * （不会主动攻击玩家）。
+     * 目标锁定的统一闸门。目前做三件事：
+     * <ol>
+     *   <li>变形中的玩家：任何生物都不得锁定（见下）；</li>
+     *   <li><b>附体召唤物不得锁"我们这一侧"</b>：自己的盟友空壳、幸运核心、别的召唤物。
+     *       这条与"共享索敌 goal 有没有丢失"无关 —— 只要漏掉任何一条"变形复原"路径，
+     *       召唤物就会带着原版 {@code HurtByTargetGoal} 复活，挨过空壳自己一发范围伤害后
+     *       就会反过来死咬空壳。判定见 {@code OrbPossessionSummons#forbidsTargeting}；</li>
+     *   <li>音符方块宇宙：禁止一切目标锁定（原逻辑，见下）。</li>
+     * </ol>
      */
     private static void onLivingChangeTarget(net.neoforged.neoforge.event.entity.living.LivingChangeTargetEvent event) {
         net.minecraft.world.entity.LivingEntity mob = event.getEntity();
@@ -12585,12 +14733,59 @@ public class ModMain {
             event.setNewAboutToBeSetTarget(null);
             return;
         }
+        // 索敌硬闸（只在服务端判定/记日志：客户端同样会走 Mob#setTarget）。
+        // 改成"没有目标"而不是取消事件：取消只是"不改动"，会把旧目标（十有八九就是那具空壳）留在身上。
+        if (!mob.level().isClientSide()) {
+            net.minecraft.world.entity.LivingEntity newTarget = event.getNewAboutToBeSetTarget();
+            if (newTarget != null
+                && cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons
+                    .forbidsTargeting(mob, newTarget)) {
+                event.setNewAboutToBeSetTarget(null);
+                cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons
+                    .logBlockedTarget(mob, newTarget);
+                return;
+            }
+            // 幸运方块"支援生物"：绝不锁"被幸运核心索敌的玩家"（用户指定）——
+            // 那位是它在帮忙的人，不是敌人。它自己的目标由 SupportOrbTargetGoal 专门维护。
+            if (newTarget != null
+                && cn.autoforged.joes_addons_for_abmc.entity.SupportMobControl
+                    .forbidsTargeting(mob, newTarget)) {
+                event.setNewAboutToBeSetTarget(null);
+                cn.autoforged.joes_addons_for_abmc.entity.SupportMobControl
+                    .logBlockedTarget(mob, newTarget);
+                return;
+            }
+        }
         if (mob.level().dimension() != cn.autoforged.joes_addons_for_abmc.worldgen.ModDimensions.NOTE_DIM_LEVEL) {
             return;
         }
         // 音符方块宇宙：所有生物都不锁定攻击目标（包括怪物与生物间的捕食关系，
         // 如狼攻击羊、豹猫攻击鸡、北极熊攻击狐狸），使该维度保持和平共处。
         event.setNewAboutToBeSetTarget(null);
+    }
+
+    /**
+     * 「和平共处」AI 的<b>行为层</b>调整：把各种"躲避/逃跑"类 Goal 拆掉，并另外处理三个特例
+     * （村民感知亡灵、铁傀儡主动打怪、苦力怕躲猫）。配合 {@link #onLivingChangeTarget} 里那条
+     * "本维度谁都不许锁定目标"，才是完整效果——因为躲避类行为根本不经过索敌，光清目标拦不住。
+     *
+     * <p>这一段与 {@code onEntityJoinLevel} 里音符盒维度分支的那段是同一套逻辑：那边是内联写法，
+     * 这里抽成方法给幸运维度复用（幸运维度见
+     * {@link cn.autoforged.joes_addons_for_abmc.entity.LuckyDimensionMobs#onMobJoinLevel}）。
+     * <b>将来改一边记得改另一边。</b>
+     */
+    public static void applyPeacefulCoexistenceAi(Entity entity) {
+        if (entity instanceof Villager villager) {
+            removeVillagerHostilesSensor(villager);
+        } else if (entity instanceof IronGolem golem) {
+            golem.targetSelector.removeAllGoals(ModMain::isMonsterTargetingGoal);
+        } else if (entity instanceof Creeper creeper) {
+            creeper.goalSelector.removeAllGoals(ModMain::isCatOrOcelotAvoidGoal);
+        }
+        if (entity instanceof PathfinderMob pathfinderMob) {
+            pathfinderMob.goalSelector.removeAllGoals(goal ->
+                shouldRemoveAvoidGoal(pathfinderMob, goal) || isTraderDrinkingGoal(pathfinderMob, goal));
+        }
     }
 
     // 音符方块宇宙：移除村民对亡灵生物的威胁感知（VillagerHostilesSensor），
@@ -12715,6 +14910,666 @@ public class ModMain {
         return mob instanceof WanderingTrader && goal instanceof UseItemGoal<?>;
     }
 
+    // ==================== 变形倒计时：以游戏刻的流逝为准 ====================
+
+    /** 上一个已处理的服务端刻序号（让 {@link #updateTransmutationTickState} 每服务端刻只算一次）。 */
+    private static long lastTransmutationStateTick = Long.MIN_VALUE;
+
+    /** 上一次看到的游戏时间（世界游戏刻），用来判断游戏刻有没有真的往前走过。 */
+    private static long lastTransmutationGameTime = Long.MIN_VALUE;
+
+    /** 本服务端刻是否推进了游戏刻（见 {@link #updateTransmutationTickState}）。 */
+    private static boolean transmutationGameTickRunning = true;
+
+    /**
+     * 刷新"本服务端刻游戏刻有没有流逝"，供变形系统的所有倒计时读取。
+     * <p>
+     * <b>修的是远古 bug</b>：{@code ServerTickEvent.Pre} 在 {@code /tick freeze} 期间<b>照样触发</b>
+     * （服务端 tick 循环并不停止，被冻结的只是游戏内容），而变形系统的倒计时全都是
+     * "每服务端刻减一"，于是时间冻结时被变形的生物照样到点变回原形 —— 倒计时无视游戏刻的流逝。
+     * <p>
+     * 改用"游戏刻有没有真的往前走"来判断，判据和原版一致：{@code ServerLevel#tickTime()}
+     * （唯一推进 {@code gameTime} 的地方）本身就只在 {@code tickRateManager().runsNormally()} 为真时执行
+     * （见 ServerLevel.tick，第 362-364 行）。各种情形因此自动正确：
+     * <ul>
+     *   <li>{@code /tick freeze}：游戏时间不再前进 → {@link #transmutationTickStep()} 返回 0，倒计时停住；</li>
+     *   <li>{@code /tick step N}：每一步都推进 1 游戏刻 → 正好倒数 N 刻；</li>
+     *   <li>{@code /tick rate 5}（降速）：游戏刻照常前进、只是每秒的游戏刻变少 → 每游戏刻照减一；</li>
+     *   <li>{@code /tick sprint}（加速）：游戏刻跑得更快 → 倒计时同步变快。</li>
+     * </ul>
+     */
+    private static void updateTransmutationTickState(net.minecraft.server.MinecraftServer server) {
+        long serverTick = server.getTickCount();
+        if (serverTick == lastTransmutationStateTick) {
+            return; // 同一服务端刻内被重复调用：以第一次的判定为准
+        }
+        lastTransmutationStateTick = serverTick;
+        ServerLevel overworld = server.overworld();
+        long gameTime = overworld == null ? Long.MIN_VALUE : overworld.getGameTime();
+        transmutationGameTickRunning = gameTime != lastTransmutationGameTime;
+        lastTransmutationGameTime = gameTime;
+    }
+
+    /** 变形倒计时本刻该减多少：游戏刻在流逝就是 1，被 {@code /tick freeze} 冻住就是 0。 */
+    private static int transmutationTickStep() {
+        return transmutationGameTickRunning ? 1 : 0;
+    }
+
+    /** discard 探针的复查延迟（刻）：给"下一 tick 才补一只"的守卫逻辑留出足够窗口。 */
+    private static final int DISCARD_PROBE_DELAY_TICKS = 20;
+    /** discard 探针的计数半径（格）：16 格足够覆盖"原地重生"。 */
+    private static final int DISCARD_PROBE_RADIUS = 16;
+
+    /**
+     * 变形时"把原实体从世界里拿掉"的所用手段（仅在 {@code debug.debug_mode} 开启时轮换使用）。
+     * <p>
+     * 为什么需要轮换：实测 {@code thetitansneo:zombie_titan} 对 {@code discard()} 完全免疫 ——
+     * 同一只实体（同一 id/UUID）被连续 discard 11 次仍留在世界里、并被反复变形。所以要挨个试
+     * 别的移除手段，看它到底拦在哪一层。每命中一次换下一种，日志里带手段名，便于对照。
+     * <p>
+     * 各手段（按"遮挡层：入口 → 底层"排列）：
+     * <ol>
+     *   <li>{@code discard}：基线。{@code discard()} 内部是 {@code setRemoved(DISCARDED)}。
+     *       注意 {@code Entity.setRemoved} 是 <b>final</b>、{@code remove(RemovalReason)} 才是虚方法，
+     *       所以对方若要拦截，拦的是 {@code remove(...)}。</li>
+     *   <li>{@code setRemoved-KILLED}：同一套机制换 {@code RemovalReason.KILLED}。用来判断
+     *       "它拦的是 discard 这个入口，还是拦了移除本身"。</li>
+     *   <li>{@code chunkcache-removeEntity}：{@code ServerLevel#getChunkSource().removeEntity(entity)}，
+     *       从客户端跟踪表（{@code ChunkMap#entityMap}）里摘掉。
+     *       <b>注意这是"半移除"</b>：它既不给实体打移除标记、也不从关卡实体表注销，
+     *       单独使用会造出"客户端看不见、服务端却还在 tick 并攻击玩家"的幽灵实体
+     *       （详见 {@link #removeForTransmutation} 的兜底说明）。此处仅作诊断对照。</li>
+     *   <li>{@code chunkcache+setRemoved}：底层摘表 + 补一次 {@code setRemoved}，把两套登记都清掉，
+     *       用于判断"只摘客户端表"是否就是重生/幽灵的成因。</li>
+     *   <li>{@code setHealth0}：把生命直接置 0（<b>不等于移除</b>，同样靠兜底收场）。
+     *       测试它是否拦在"伤害/死亡判定"这一层。</li>
+     *   <li>{@code kill}：原版 {@code kill()}（= {@code setHealth(0)} + 伤害源 {@code genericKill}）。</li>
+     *   <li>{@code forgetChunk}：对实体所在区块 {@code forgetChunk}（加卸载并从实体表移除）后
+     *       再 {@code getChunk} 强制重载。模拟"退出重进存档"那条路径——实测重进存档后泰坦一切正常，
+     *       所以这条路能反映出"是不是只有区块重载才真的把它清掉"。</li>
+     * </ol>
+     * 刻意<b>不</b>做跨维度传送：{@code changeDimension} 要自己构造 {@code DimensionTransition}，
+     * 为一个诊断项引入这种易碎代码不划算。
+     */
+    private static final String[] TRANSMUTATION_REMOVAL_METHODS = {
+        "discard",
+        "setRemoved-KILLED",
+        "chunkcache-removeEntity",
+        "chunkcache+setRemoved",
+        "setHealth0",
+        "kill",
+        "forgetChunk",
+    };
+
+    /** 移除手段轮换下标（每命中一次前进一格）。 */
+    private static final java.util.concurrent.atomic.AtomicInteger REMOVAL_METHOD_CURSOR =
+        new java.util.concurrent.atomic.AtomicInteger(0);
+
+    // ==================== 不可移除实体的"压制式形态替换" ====================
+    // 背景：TheTitansNeo 的 EntityTitan 把 remove(RemovalReason) 覆写成空方法、还在 tick() 里
+    // 主动把 removalReason 清成 null，活着的时候任何外力都移不掉它（详见 removeForTransmutation）。
+    // 对这类实体，"移除原实体 → 生成产物"这套模型天然不成立：硬套只会留下
+    // "看不见却仍在 tick 并攻击玩家"的幽灵，并被它自己的死亡/灵魂逻辑复制出第二只。
+    //
+    // 因此对它们改用另一套形态学：<b>本体留在原地、但被压制</b>（关 AI、隐身、部件一并隐藏、
+    // 装备清空、包围盒塌缩去碰撞），并把本体<b>存放到世界的有效加载范围之外</b>，
+    // 视觉上由变形产物顶替。这套做法不依赖移除，因而天然绕开它全部的自卫逻辑
+    // （addEffect 恒 false、isInvulnerable、hurt 的 1000 上限与伤害类型黑名单、setTarget 不清空）。
+    //
+    // 为什么必须"存放到加载范围之外"：血条与索敌都不看隐身/碰撞。
+    //   · 血条是 TheTitansBossBarEvent 在客户端遍历玩家附近实体自绘的（只要实体还在可见范围就画）；
+    //   · 索敌用的是 LivingEntity#canBeSeenAsEnemy() = !isInvulnerable() && canBeSeenByAnyone()，
+    //     而 canBeSeenByAnyone() = !isSpectator() && isAlive() —— 1.21 里根本不看 isInvisible()。
+    // 唯一能让两者同时消失的办法，就是让实体离开"附近"。
+    //
+    // 压制时【不】动 invulnerable：它的 canBeHurtByPlayer() = !isInvulnerable()，
+    // 一旦设成无敌，连玩家都打不动它，与"摧毁产物造成致命伤害"的目标冲突。
+
+    /**
+     * 被压制实体的原始状态，用于复原。
+     * <p>
+     * <b>必须持有实体对象的直接引用</b>（{@code ref}）：一旦把它存放到加载范围之外，
+     * 它就从"可见实体表"里被移出，而 {@code LevelEntityGetterAdapter#get(UUID)} <b>只查那张表</b>
+     * —— 也就是说 {@code level.getEntity(uuid)} 会对存放中的实体返回 null。
+     * 只靠 UUID 找它 = 永久找不到 = 永远无法还原。
+     * <p>
+     * {@code stashPos} 记录存放坐标，供诊断与"是否已迁回"判断；{@code pos} 是原坐标，迁回时用。
+     */
+    private record SuppressedEntity(UUID uuid, Entity ref, boolean origNoAi, boolean origInvisible,
+            ResourceLocation dim, BlockPos pos, @Nullable BlockPos stashPos) {}
+
+    /** 被压制的实体：UUID -> 原始状态。 */
+    private static final Map<UUID, SuppressedEntity> SUPPRESSED_ENTITIES = new ConcurrentHashMap<>();
+
+    /** 泰坦 mod 的实例类名 / 包名：只有这个 mod 的实体才走压制路径。 */
+    private static final String TITANS_ROOT_CLASS = "net.byAqua3.thetitansneo.entity.titan.EntityTitan";
+    private static final String TITANS_PACKAGE_PREFIX = "net.byAqua3.thetitansneo.";
+
+    /**
+     * 这个实体是否属于"活着就移不掉"的泰坦 mod。
+     * <p>
+     * 判据按<b>类名/包名</b>而不是按实体 id：泰坦种很多（僵尸/骷髅/凋灵斯拉/末影巨像…），
+     * 但它们的共同点是都继承 {@code EntityTitan}，且都覆写了 remove()。这样写不必逐个列举 id，
+     * 也不会误伤别的 mod。用类名字符串而非 Class 引用，是为了不把泰坦 mod 变成编译期依赖。
+     */
+    private static boolean isTitansModEntity(Entity entity) {
+        for (Class<?> c = entity.getClass(); c != null; c = c.getSuperclass()) {
+            String n = c.getName();
+            if (TITANS_ROOT_CLASS.equals(n) || n.startsWith(TITANS_PACKAGE_PREFIX)) return true;
+            if (n.startsWith("net.minecraft.")) break;   // 走到原版基类就停
+        }
+        return false;
+    }
+
+    /** 存进原生物 NBT 的标记：这份变形的原实体没有被移除，而是被<b>压制</b>后留在原地。
+     *  复原时据此走"解除压制"而不是"照 NBT 重建"，否则会多出一只（复制）。 */
+    private static final String TITAN_SUPPRESSED_TAG = "jafa_titan_suppressed";
+
+    /**
+     * 压制实体：让它"看起来消失了、也不再作为威胁存在"，但<b>不移除</b>。
+     * 具体做三件事（都是它没有覆写的原版 setter，因此不会被挡）：
+     * <ol>
+     *   <li>{@code setNoAi(true)} —— 关掉整段 AI。它的行为走原版 goal/target 体系，因此这一条能真正停掉索敌与攻击；</li>
+     *   <li>{@code setInvisible(true)} —— 隐藏本体。不能用隐身效果：它的 {@code addEffect(...)} 恒返回 false；</li>
+     *   <li>把它的 {@code parts}（{@code EntityTitanPart} 部件实体）一并隐藏并去掉碰撞，
+     *       否则会留下一堆"打不到的隐形碰撞箱"。</li>
+     * </ol>
+     * 刻意<b>不</b>动 invulnerable：见本文档开头说明。
+     * <p>
+     * 同时在 {@code data.entityNbt()} 里打上 {@link #TITAN_SUPPRESSED_TAG}：这份 NBT 会被
+     * {@link #handleTransmutationKillCredit} / {@link #respawnTransmutedEntity} 读到，
+     * 让它们走"解除压制"而不是"重建原生物"。
+     */
+    private static void suppressTitanEntity(ServerLevel level, LivingEntity entity, TransmutationData data) {
+        boolean origNoAi = entity instanceof Mob m && m.isNoAi();
+        boolean origInvisible = entity.isInvisible();
+        SUPPRESSED_ENTITIES.put(entity.getUUID(), new SuppressedEntity(entity.getUUID(), entity,
+            origNoAi, origInvisible, level.dimension().location(),
+            entity.blockPosition().immutable(), null));
+        if (data != null) {
+            data.entityNbt().putBoolean(TITAN_SUPPRESSED_TAG, true);
+        }
+        if (entity instanceof Mob mob) {
+            mob.setNoAi(true);
+            mob.setTarget(null);
+        }
+        entity.setInvisible(true);
+        // 手持/装备物品必须显式清空：invisible 只让实体本体不渲染，
+        // 手持物与盔甲是<b>独立的渲染层</b>（ItemInHandLayer / CustomArmorLayer），
+        // 它们是不透明的，会照旧画出来（"实体隐藏了但手里还握着东西"就是这么来的）。
+        clearEquipment(entity);
+        // 碰撞箱：noPhysics 关不掉碰撞（它只管移动/卡墙/推挤），部件碰撞又是走父实体的包围盒
+        // （约 = 本体碰撞箱 + 部件局部偏移），所以这里直接把本体包围盒塌缩成一个点 ——
+        // 本体与全部部件会一起失去碰撞，且尺寸取 0 的话 {@code PartEntity.getBoundingBox()}
+        // 自身就返回 null，部件也不再有可供命中的盒子。
+        collapseBoundingBox(entity);
+        int hiddenParts = suppressParts(entity);
+        LOGGER.info("[transmute][SUPPRESS] 压制不可移除实体 type={} id={} uuid={} 部件隐藏数={} 包围盒={} 手持={}",
+            BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()), entity.getId(), entity.getUUID(),
+            hiddenParts, entity.getBoundingBox(), entity.getMainHandItem());
+    }
+
+    /**
+     * 默认存放点：在"原位置水平偏移很远"的候选点附近，找一个<b>未加载的区块</b>。
+     * <p>
+     * 为什么不直接用一个固定偏移点：那个点有可能**已经被探索过**（甚至被强加载）。
+     * 一旦它所在区块是加载状态，实体就会重新进可见实体表 —— 血条、索敌、碰撞箱全都回来，
+     * 压制等于白做（实测日志里就出现过 {@code getEntity(uuid)可查到=true}，证明确实被加载了）。
+     * <p>
+     * 判定用 {@link net.minecraft.server.level.ServerChunkCache#hasChunk(int, int)}
+     * （"这个区块现在加载着吗"）。未加载的区块在离玩家一万格的地方几乎必然是**未探索**的，
+     * 因此这个判定同时也替我们拿到了"不会额外触发生成"的落点。
+     * <p>
+     * 搜索方式：以偏移点为圆心、由近到远随机撒点（每圈 24 个方向），找到就返回；
+     * 整圈都找不到（例如整片区域都被探索/加载）才退回偏移点本身，并打警告。
+     */
+    private static BlockPos defaultTitanStashPos(ServerLevel level, BlockPos origin) {
+        BlockPos preferred = origin.offset(TITAN_STASH_OFFSET, 0, TITAN_STASH_OFFSET);
+        net.minecraft.server.level.ServerChunkCache chunks = level.getChunkSource();
+        java.util.Random rnd = new java.util.Random(level.getGameTime() ^ origin.asLong());
+        for (int ring = 0; ring < TITAN_STASH_SEARCH_RINGS; ring++) {
+            int r = TITAN_STASH_SEARCH_MIN_RADIUS + ring * 16;
+            for (int i = 0; i < 24; i++) {
+                double ang = rnd.nextDouble() * Math.PI * 2.0;
+                int x = preferred.getX() + (int) Math.round(Math.cos(ang) * r);
+                int z = preferred.getZ() + (int) Math.round(Math.sin(ang) * r);
+                BlockPos cand = new BlockPos(x, preferred.getY(), z);
+                // 两道硬约束：
+                //  · 区块未加载（hasChunk == false）；
+                //  · 不在任何玩家的模拟距离内（isPositionEntityTicking == false）。
+                // 后者是关键保险：万一玩家恰好跑到存放点附近，也不会挑到他身边的落点，
+                // 否则实体立刻回到"附近"，血条与索敌当场复活。
+                if (!chunks.hasChunk(x >> 4, z >> 4) && !level.isPositionEntityTicking(cand)) {
+                    return cand;
+                }
+            }
+        }
+        LOGGER.warn("[transmute][STASH] 偏移点附近 {} 圈内没找到未加载且不在模拟距离内的区块，"
+            + "回退到偏移点 {}（可能被加载而失效）", TITAN_STASH_SEARCH_RINGS, preferred);
+        return preferred;
+    }
+
+    /** 存放点的水平偏移量（格）。 一万格远超模拟距离，足以离开一切玩家的认知范围。 */
+    private static final int TITAN_STASH_OFFSET = 10000;
+    /** 在偏移点附近搜索未加载区块的圈数（每圈一圈 16 格、24 个方向）。 */
+    private static final int TITAN_STASH_SEARCH_RINGS = 12;
+    /** 搜索起始半径（格）：偏移点本身留作回退，从它外侧开始找。 */
+    private static final int TITAN_STASH_SEARCH_MIN_RADIUS = 32;
+
+    /**
+     * 把被压制的实体<b>存放到加载范围之外</b>：血条与索敌都只看"实体是否还在附近"，
+     * 而它们都不看隐身/碰撞（见本段开头的说明），所以只有让它离开"附近"才能同时消掉。
+     * <p>
+     * 用 {@code setPos} 迁移：这会触发实体自己的区段回调（{@code Callback#onMove}），
+     * 把它从原区段搬到目标区段；目标区段若不在已加载区块里，其可见性就是
+     * {@code EntitySectionStorage} 的默认值 {@code HIDDEN} —— 于是它
+     * <b>不进可见实体表、不 tick、也不发给客户端</b>，但依然存在于世界中、可被迁回。
+     * <p>
+     * 拿实体是<b>靠记录里的直接引用</b>，不靠 {@code getEntity(uuid)}：后者只查可见实体表，
+     * 对存放中的实体会返回 null（这是本方案最关键的坑，详见 {@link SuppressedEntity}）。
+     *
+     * @return 是否成功存放
+     */
+    private static boolean stashSuppressedTitan(UUID uuid, BlockPos stashPos) {
+        SuppressedEntity s = SUPPRESSED_ENTITIES.get(uuid);
+        if (!(s != null && s.ref() instanceof LivingEntity le)) return false;
+        try {
+            le.setPos(stashPos.getX() + 0.5, stashPos.getY(), stashPos.getZ() + 0.5);
+            SUPPRESSED_ENTITIES.put(uuid, new SuppressedEntity(uuid, le, s.origNoAi(),
+                s.origInvisible(), s.dim(), s.pos(), stashPos.immutable()));
+            boolean lookupable = le.level() instanceof ServerLevel refLevel
+                && refLevel.getEntity(uuid) != null;
+            LOGGER.info("[transmute][STASH] 存放压制实体 uuid={} 目标={} 迁移后坐标={} "
+                + "getEntity(uuid)可查到={}（false = 已离开可见实体表，为预期；"
+                + "true = 落点区块仍加载，血条/索敌可能没消）",
+                uuid, stashPos, le.blockPosition(), lookupable);
+            return true;
+        } catch (Throwable t) {
+            LOGGER.warn("[transmute][STASH] 存放失败：{}", t.toString());
+            return false;
+        }
+    }
+
+    /**
+     * 清空实体的全部装备（主手 / 副手 / 盔甲）。
+     * <p>
+     * 用 {@code getAllSlots()}（只读视图，元素即真实 ItemStack 对象）逐格置空，
+     * 比 {@code setItemSlot} 更能覆盖到盔甲槽位，也不依赖任何 mod 专有方法。
+     * 这里刻意<b>不</b>掉落：压制只是"临时藏起来"，掉一地装备反而污染世界；
+     * 万一它此后真的死亡，装备本来就该随实体一起消失。
+     */
+    private static void clearEquipment(LivingEntity entity) {
+        try {
+            for (ItemStack stack : entity.getAllSlots()) {
+                if (!stack.isEmpty()) stack.setCount(0);
+            }
+        } catch (Throwable t) {
+            LOGGER.warn("[transmute][SUPPRESS] 清空装备失败：{}", t.toString());
+        }
+    }
+
+    /**
+     * 把实体包围盒塌缩成一个点，从而去掉碰撞箱（本体 + 部件一起）。
+     * <p>
+     * 做法与"矮空间强制站立"那处一脉相承：直接 {@code setPos} 会触发 {@code setBoundingBox}
+     * 更新，并在实体的 {@code dimensions} 与当前盒高不一致时记录尺寸更新包
+     * （{@code setBoundingBox} 里会 {@code this.setDimensions} = 盒宽/盒高），
+     * 因此客户端也会同步到这个小盒子。
+     * <p>
+     * 复原走 {@code refreshDimensions()}：它按 {@code getDimensions(pose)} 重新算，
+     * 也就是回到它原本的巨大尺寸。
+     */
+    private static void collapseBoundingBox(LivingEntity entity) {
+        try {
+            double x = entity.getX();
+            double y = entity.getY();
+            double z = entity.getZ();
+            entity.setPos(x, y, z);
+            entity.setBoundingBox(new net.minecraft.world.phys.AABB(x, y, z, x, y, z));
+        } catch (Throwable t) {
+            LOGGER.warn("[transmute][SUPPRESS] 塌缩包围盒失败：{}", t.toString());
+        }
+    }
+
+    /** 复原包围盒到实体自身尺寸（并让客户端同步）。 */
+    private static void restoreBoundingBox(LivingEntity entity) {
+        try {
+            entity.refreshDimensions();
+        } catch (Throwable t) {
+            LOGGER.warn("[transmute][UNSUPPRESS] 复原包围盒失败：{}", t.toString());
+        }
+    }
+
+    /**
+     * 把泰坦的部件实体（{@code EntityTitanPart}，由 {@code EntityTitan.parts} 数组持有）
+     * 隐藏并去掉碰撞。
+     * <p>
+     * 用反射取字段：部件数组是那个 mod 的私有字段，我们不想把它变成编译期依赖。
+     * 用 {@code setInvisible} + {@code setNoGravity} 这类原版 setter，避免调用 PartEntity 上
+     * 可能不存在的 mod 专有方法。
+     *
+     * @return 实际处理到的部件数量（取不到字段时返回 0）
+     */
+    private static int suppressParts(LivingEntity entity) {
+        Object raw = readField(entity, "parts");
+        if (!(raw instanceof Object[] parts)) return 0;
+        int n = 0;
+        for (Object part : parts) {
+            if (!(part instanceof Entity partEntity)) continue;
+            try {
+                partEntity.setInvisible(true);
+                partEntity.setNoGravity(true);
+                partEntity.noPhysics = true;   // 去掉碰撞，避免留下打不到的隐形碰撞箱
+                n++;
+            } catch (Throwable ignored) {
+                // 单个部件处理失败不影响其它部件
+            }
+        }
+        return n;
+    }
+
+    /** 在类继承链上找名为 {@code name} 的字段（不要求声明类型），找不到返回 null。 */
+    private static Object readField(Object target, String name) {
+        for (Class<?> c = target.getClass(); c != null; c = c.getSuperclass()) {
+            try {
+                java.lang.reflect.Field f = c.getDeclaredField(name);
+                f.setAccessible(true);
+                return f.get(target);
+            } catch (NoSuchFieldException ignored) {
+                // 继续往父类找
+            } catch (Throwable ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 复原被压制的实体：先把它从存放点<b>迁回原坐标</b>，再还原 AI / 可见性 / 部件 / 包围盒
+     * （不移除、不杀死）。
+     * <p>
+     * 拿实体<b>优先用记录里的直接引用</b>：它是被存放到加载范围之外的，此时
+     * {@code level.getEntity(uuid)} 只会返回 null（只查可见实体表），靠 UUID 找必然失败。
+     * 直接引用失效时（理论上不该发生）再退回按 UUID 查一次，尽量不丢实体。
+     */
+    private static LivingEntity unsuppressTitanEntity(ServerLevel level, UUID uuid) {
+        SuppressedEntity s = SUPPRESSED_ENTITIES.remove(uuid);
+        if (s == null) return null;
+
+        // 拿实体的顺序很讲究：
+        //  1) 记录里的直接引用 —— 但**可能已失效**（存放区块一旦卸载，实体对象会被丢弃/换新，
+        //     实测日志里就出现过"产物被摧毁时找不到原实体"）；
+        //  2) 强制加载存放区块，再按 UUID 查 —— 区块加载会把实体重新注册进可见实体表，
+        //     getEntity(uuid) 才拿得到；
+        //  3) 全维度按 UUID 查 —— 兜底。
+        LivingEntity le = null;
+        if (s.ref() instanceof LivingEntity r && r.isAlive() && !r.isRemoved()) {
+            le = r;
+        }
+        if (le == null && s.stashPos() != null) {
+            // 强制加载存放区块。返回值不用来接实体：实体是否被重新注册取决于区段可见性，
+            // 直接按 UUID 查更可靠。
+            level.getChunk(s.stashPos().getX() >> 4, s.stashPos().getZ() >> 4,
+                net.minecraft.world.level.chunk.status.ChunkStatus.FULL, true);
+            Entity found = level.getEntity(uuid);
+            if (found instanceof LivingEntity l2) le = l2;
+            if (le == null) {
+                LOGGER.warn("[transmute][UNSUPPRESS] 强制加载存放区块 {} 后仍查不到实体 uuid={}",
+                    s.stashPos(), uuid);
+            }
+        }
+        if (le == null) {
+            Entity found = findEntityAnyLevel(level.getServer(), uuid);
+            if (found instanceof LivingEntity l3) le = l3;
+        }
+        if (le == null) {
+            LOGGER.warn("[transmute][UNSUPPRESS] 找不到被压制实体 uuid={}，无法还原", uuid);
+            return null;
+        }
+
+        // 先迁回原坐标（存放点在加载范围之外，必须先搬回来才能正常参与世界）
+        try {
+            le.setPos(s.pos().getX() + 0.5, s.pos().getY(), s.pos().getZ() + 0.5);
+        } catch (Throwable t) {
+            LOGGER.warn("[transmute][UNSUPPRESS] 迁回原位失败：{}", t.toString());
+        }
+        if (le instanceof Mob mob) {
+            mob.setNoAi(s.origNoAi());
+        }
+        le.setInvisible(s.origInvisible());
+        restoreParts(le);
+        restoreBoundingBox(le);   // 包围盒从"塌缩成点"恢复成它原本的巨大尺寸
+        LOGGER.info("[transmute][UNSUPPRESS] 复原被压制实体 type={} id={} uuid={} 原坐标={} 现坐标={} 可查到={}",
+            BuiltInRegistries.ENTITY_TYPE.getKey(le.getType()), le.getId(), uuid, s.pos(), le.blockPosition(),
+            level.getEntity(uuid) != null);
+        return le;
+    }
+
+    /** 把部件的隐藏/无碰撞状态还回去。 */
+    private static void restoreParts(LivingEntity entity) {
+        Object raw = readField(entity, "parts");
+        if (!(raw instanceof Object[] parts)) return;
+        for (Object part : parts) {
+            if (!(part instanceof Entity partEntity)) continue;
+            try {
+                partEntity.setInvisible(false);
+                partEntity.setNoGravity(false);
+                partEntity.noPhysics = false;
+            } catch (Throwable ignored) {
+                // 单个部件失败不影响其它
+            }
+        }
+    }
+
+    // ==================== 泰坦专用致命伤害 ====================
+
+    /** 泰坦 mod 的有效伤害类型：thetitansneo:titan_attack。它的 hurt() 只对
+     *  {@code DamageSourceTitanAttack} 豁免"伤害上限 1000"的截断，这就是两把终极武器的原理。 */
+    private static final net.minecraft.resources.ResourceKey<net.minecraft.world.damagesource.DamageType>
+        TITAN_ATTACK_DAMAGE_TYPE = net.minecraft.resources.ResourceKey.create(
+            net.minecraft.core.registries.Registries.DAMAGE_TYPE,
+            ResourceLocation.fromNamespaceAndPath("thetitansneo", "titan_attack"));
+
+    /**
+     * 对泰坦施加"有效致命伤害"：照抄它自己两把终极武器的做法 ——
+     * {@code new DamageSourceTitanAttack(player)} + {@code titan.hurt(ds, 2000)}。
+     * <p>
+     * 我们按<b>注册表 ID</b>构造同样的伤害源（不引用它的类，保持零编译期依赖）：
+     * {@code level.damageSources().source(TITAN_ATTACK_DAMAGE_TYPE, attacker)}。
+     * <p>
+     * 为什么不一次性打死：它的 {@code hurt()} 里 {@code amount > 1000} 会被截到 1000，
+     * 2000 一次也只结算 1000。所以这里循环施加，直到它进入 {@code isDeadOrDying()}
+     * （其 {@code baseHurt} 会对 {@code isDeadOrDying()} 直接返回 false，也就是打够了）。
+     * <p>
+     * 注意它的 {@code hurt()} 还会在 {@code entity == null}（无攻击者）时直接返回 false，
+     * 所以这里必须带一个攻击者，没有玩家时退回用泰坦自己当来源实体。
+     *
+     * @return 是否成功造成过伤害
+     */
+    private static boolean hurtTitanLethally(ServerLevel level, LivingEntity titan, @Nullable Player attacker) {
+        net.minecraft.world.entity.Entity src = attacker != null ? attacker : titan;
+        boolean any = false;
+        for (int i = 0; i < 64; i++) {
+            if (titan.isDeadOrDying()) break;
+            try {
+                boolean ok = titan.hurt(
+                    level.damageSources().source(TITAN_ATTACK_DAMAGE_TYPE, src), 2000.0F);
+                if (!ok) break;   // 无敌期 / 被拒收：再打也没用
+                any = true;
+            } catch (Throwable t) {
+                LOGGER.warn("[transmute][TITAN-DMG] 施加 titan_attack 伤害时异常：{}", t.toString());
+                break;
+            }
+        }
+        LOGGER.info("[transmute][TITAN-DMG] 对泰坦施加 titan_attack 伤害：uuid={} 是否生效={} 已濒死={} 剩余血量={}",
+            titan.getUUID(), any, titan.isDeadOrDying(), titan.getHealth());
+        return any;
+    }
+
+    /**
+     * 变形时移除原实体：按 {@link #TRANSMUTATION_REMOVAL_METHODS} 轮换手段，并在日志里输出每种手段的结果。
+     * <p>
+     * 输出两段：
+     * <ol>
+     *   <li>{@code DISCARD-PRE}：移除<b>前</b>记录实体类型 / 数字 id / UUID / 位置 / 目标 itemType /
+     *       同类型数量，并标明<b>本次采用哪种手段</b>。{@code id=} 是关键——重生出来的新实体会拿到
+     *       <b>不同的数字 id</b>，据此可一眼区分是"原来那只还在"还是"补了一只新的"。</li>
+     *   <li>{@code DISCARD-POST}：手段执行完的同一刻，立即回报实体是否已被标记移除
+     *       （{@code isRemoved}）、是否还活着、是否还留在关卡里、以及<b>是否触发了兜底</b>。
+     *       这一步能区分"方法没生效"与"方法生效了但下一刻又被补回来"。</li>
+     * </ol>
+     * 之后再由 {@code DISCARD-PROBE}（{@link #DISCARD_PROBE_DELAY_TICKS} 刻后）复查数量变化，
+     * 用于判断重生是同步还是延迟发生的（见 {@link #tickDiscardProbes}）。
+     * <p>
+     * <b>兜底（重要）</b>：实体"存在"由两套独立登记决定 —— 关卡实体表
+     * （{@code PersistentEntitySectionManager}，决定还 tick 吗、还能不能打人）与客户端跟踪表
+     * （{@code ChunkMap#entityMap}，决定看得见吗）。轮换表里 {@code chunkcache-removeEntity} /
+     * {@code chunkcache+setRemoved} / {@code setHealth0} 属于"实验性半移除"，<b>只动其中一套</b>：
+     * 实测会出现"模型与碰撞箱消失、却仍在服务端 tick 并继续攻击玩家"的幽灵实体。
+     * 因此本方法在手段执行后强制校验 {@code isRemoved() || 已不在关卡}，不满足就补一刀
+     * {@code discard()} —— 实验可以照做，但绝不允许把实体留在半移除状态。
+     * <p>
+     * 注意：轮换使每次命中用不同手段，所以日志里必须认准 {@code 手段=} 字段，不能把不同手段的结果混着读。
+     *
+     * @return {@code true} 表示原实体确实已被移除，可以安全地生成变形产物；
+     *         {@code false} 表示它拒绝被移除（见下），调用方<b>必须中止</b>本次变形。
+     */
+    private static boolean removeForTransmutation(ServerLevel level, LivingEntity entity, String itemType) {
+        if (!ModConfig.DEBUG_MODE.get()) {
+            // 非 debug：保持既有行为不变（原样 discard）
+            entity.discard();
+            return true;
+        }
+        EntityType<?> type = entity.getType();
+        ResourceLocation typeId = BuiltInRegistries.ENTITY_TYPE.getKey(type);
+        BlockPos pos = entity.blockPosition();
+        int radius = DISCARD_PROBE_RADIUS;
+        int before = level.getEntitiesOfClass(LivingEntity.class,
+            entity.getBoundingBox().inflate(radius), e -> e.getType() == type).size();
+        String method = TRANSMUTATION_REMOVAL_METHODS[
+            Math.floorMod(REMOVAL_METHOD_CURSOR.getAndIncrement(),
+                TRANSMUTATION_REMOVAL_METHODS.length)];
+        LOGGER.info("[transmute][DISCARD-PRE] 手段={} type={} id={} uuid={} pos={} -> itemType={} 同类型在半径{}内={}",
+            method, typeId, entity.getId(), entity.getUUID(), pos, itemType, radius, before);
+
+        boolean threw = false;
+        String error = "";
+        try {
+            applyRemovalMethod(level, entity, method);
+        } catch (Throwable t) {
+            threw = true;
+            error = t.toString();
+        }
+
+        // ===== 兜底：绝不允许实体停在"半移除"状态 =====
+        // 半移除（典型是只从 ChunkMap 摘掉）会让客户端看不到、服务端却还在 tick 并攻击玩家，
+        // 也就是玩家看到的"灵魂留在主世界"。这里只要"没被标记移除且仍在关卡里"就补一刀 discard()。
+        boolean removedNow = entity.isRemoved() || level.getEntity(entity.getUUID()) == null;
+        boolean usedFallback = false;
+        if (!removedNow) {
+            usedFallback = true;
+            try {
+                entity.discard();
+            } catch (Throwable t) {
+                error = error.isEmpty() ? t.toString() : error + " | fallback:" + t;
+            }
+        }
+
+        // 最终判定：用尽所有手段（含兜底 discard）之后，实体是否真的离开了关卡。
+        // 单独看 isRemoved() 不可靠：TheTitansNeo 的 EntityTitan 把 remove() 覆写成空方法，
+        // 还在 tick() 里主动 {@code this.removalReason = null} 清掉移除标记 ——
+        // 所以"还在关卡实体表里"才是唯一可信的判据。
+        boolean reallyRemoved = level.getEntity(entity.getUUID()) == null;
+        if (!reallyRemoved) {
+            LOGGER.warn("[transmute][ABORT] 原实体拒绝被移除，本次变形中止（否则会留下幽灵/复制）："
+                + "手段={} id={} uuid={} type={} isRemoved={} 仍留在关卡实体表里",
+                method, entity.getId(), entity.getUUID(), typeId, entity.isRemoved());
+        }
+        LOGGER.info("[transmute][DISCARD-POST] 手段={} id={} isRemoved={} alive={} inLevel={} threw={} 兜底={} 已移除={} {}",
+            method, entity.getId(), entity.isRemoved(), entity.isAlive(),
+            level.getEntity(entity.getUUID()) != null, threw, usedFallback, reallyRemoved, error);
+
+        // 探针登记：复查"这一步之后有没有同类型实体补上来"
+        DISCARD_PROBES.add(new DiscardProbe(level.dimension().location(), typeId, type,
+            entity.getId(), entity.getUUID(), pos.immutable(), before, DISCARD_PROBE_DELAY_TICKS));
+        return reallyRemoved;
+    }
+
+    /** 按名字执行一种移除手段（供 {@link #removeForTransmutation} 轮换调用）。 */
+    private static void applyRemovalMethod(ServerLevel level, LivingEntity entity, String method) {        switch (method) {
+            case "discard" -> entity.discard();
+            case "setRemoved-KILLED" ->
+                entity.setRemoved(net.minecraft.world.entity.Entity.RemovalReason.KILLED);
+            case "chunkcache-removeEntity" ->
+                // 最底层可用入口：从 ChunkMap 的实体映射里直接摘掉，不经过实体自己的 remove()
+                level.getChunkSource().removeEntity(entity);
+            case "chunkcache+setRemoved" -> {
+                // 底层摘表 + 实体标记一起清，排除"只清了一处所以又被认回来"
+                level.getChunkSource().removeEntity(entity);
+                entity.setRemoved(net.minecraft.world.entity.Entity.RemovalReason.DISCARDED);
+            }
+            case "setHealth0" -> entity.setHealth(0.0F);
+            case "kill" -> entity.kill();
+            case "forgetChunk" -> {
+                // 模拟"退出重进存档"那条路径：先从区块表摘掉，再强制重载该区块
+                // （重载会走一遍实体加载流程，能反映"是不是只有区块重载才真的把它清掉"）
+                net.minecraft.world.level.ChunkPos cp =
+                    new net.minecraft.world.level.ChunkPos(entity.blockPosition());
+                level.getChunkSource().removeEntity(entity);
+                level.getChunkSource().getChunk(cp.x, cp.z,
+                    net.minecraft.world.level.chunk.status.ChunkStatus.FULL, true);
+            }
+            default -> entity.discard();
+        }
+    }
+
+    /** 待复查的 discard 探针（见 {@link #removeForTransmutation}）。 */
+    private record DiscardProbe(ResourceLocation dim, ResourceLocation typeId, EntityType<?> type,
+            int originalEntityId, UUID originalUuid, BlockPos pos, int countBefore, int ticksLeft) {}
+
+    /** discard 探针名单：变形前登记，{@value #DISCARD_PROBE_DELAY_TICKS} 刻后复查一次。 */
+    private static final java.util.List<DiscardProbe> DISCARD_PROBES =
+        java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+
+    /**
+     * 复查 discard 探针（每服务端刻由 {@link #handleTransmutationTick} 调用）：
+     * 数一次"同类型实体"，把数量与各自 id/UUID 打出来，据此判断是否有重生、以及重生发生在哪一刻。
+     * <p>
+     * 刻意<b>不</b>保存/触碰原实体引用：实体已经 discard，再对它调方法没有意义，
+     * 这里全部按 UUID / 类型 / 坐标重新查，保证诊断本身不会引入副作用。
+     */
+    private static void tickDiscardProbes(net.minecraft.server.MinecraftServer server) {
+        if (DISCARD_PROBES.isEmpty()) return;
+        synchronized (DISCARD_PROBES) {
+            java.util.Iterator<DiscardProbe> it = DISCARD_PROBES.iterator();
+            while (it.hasNext()) {
+                DiscardProbe probe = it.next();
+                int left = probe.ticksLeft() - transmutationTickStep();
+                if (left > 0) {
+                    DISCARD_PROBES.set(DISCARD_PROBES.indexOf(probe), new DiscardProbe(
+                        probe.dim(), probe.typeId(), probe.type(), probe.originalEntityId(),
+                        probe.originalUuid(), probe.pos(), probe.countBefore(), left));
+                    continue;
+                }
+                it.remove();
+                ServerLevel level = server.getLevel(net.minecraft.resources.ResourceKey.create(
+                    net.minecraft.core.registries.Registries.DIMENSION, probe.dim()));
+                if (level == null) continue;
+                java.util.List<LivingEntity> sameType = level.getEntitiesOfClass(LivingEntity.class,
+                    new net.minecraft.world.phys.AABB(probe.pos()).inflate(DISCARD_PROBE_RADIUS),
+                    e -> e.getType() == probe.type());
+                StringBuilder ids = new StringBuilder();
+                for (LivingEntity e : sameType) {
+                    if (ids.length() > 0) ids.append(", ");
+                    ids.append(e.getId()).append('/').append(e.getUUID());
+                }
+                LOGGER.info("[transmute][DISCARD-PROBE] {} 刻后 type={} pos={} 同类型数量 {} -> {}，当前 id/uuid=[{}]（原 id={} uuid={}）",
+                    DISCARD_PROBE_DELAY_TICKS, probe.typeId(), probe.pos(), probe.countBefore(),
+                    sameType.size(), ids, probe.originalEntityId(), probe.originalUuid());
+            }
+        }
+    }
+
     private static void handleTransmutationTick(ServerTickEvent.Pre event) {
         for (ServerLevel level : event.getServer().getAllLevels()) {
             tickTransmutationFallingLocks(level);
@@ -12723,6 +15578,17 @@ public class ModMain {
         }
         // 壳体可能位于任意维度，因此全局跨维度处理，避免每维度各自递减导致漏查/重复
         tickLivingShells(event.getServer());
+        // discard 诊断探针：复查"原实体被丢弃后是否有同类型实体原地重生"
+        tickDiscardProbes(event.getServer());
+        // 压制登记清理：只清理"引用已失效"的条目。
+        // 注意【不能】按 findEntityAnyLevel(...) == null 来判 —— 被存放到加载范围之外的实体
+        // 本来就从可见实体表里被移出去了，那样判会把有效的记录全删掉，实体就永远回不来了。
+        if (!SUPPRESSED_ENTITIES.isEmpty()) {
+            SUPPRESSED_ENTITIES.entrySet().removeIf(e -> {
+                Entity ref = e.getValue().ref();
+                return ref == null || !ref.isAlive() || ref.isRemoved();
+            });
+        }
     }
 
     // 凋灵/末影龙对一切状态效果免疫，onMobEffectAdded 永远不会触发。
@@ -12747,6 +15613,15 @@ public class ModMain {
         while (it.hasNext()) {
             Map.Entry<UUID, TransmutationData> entry = it.next();
             TransmutationData data = entry.getValue();
+            // 主人空壳已经没了：下落方块产物就地收掉，不复原（见 destroyMorphedSummonProducts）
+            if (cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.isNbtOrphaned(data.entityNbt())) {
+                Entity orphan = level.getEntity(entry.getKey());
+                if (orphan != null) {
+                    orphan.discard();
+                    it.remove();
+                }
+                continue;
+            }
             if (data.playerUuid() == null) continue; // 非玩家源保持原行为（自然下落落地成方块）
             Entity falling = level.getEntity(entry.getKey());
             if (falling == null || !falling.isAlive()) continue;
@@ -12754,7 +15629,7 @@ public class ModMain {
             if (player == null) continue;
             // 玩家源：方块跟随玩家，同时倒计时；倒计时结束复原玩家
             makeTransmutedFollowPlayer(falling, player);
-            TransmutationData nd = new TransmutationData(data.entityNbt, data.remainingTicks - 1,
+            TransmutationData nd = new TransmutationData(data.entityNbt, data.remainingTicks - transmutationTickStep(),
                 data.killerPlayerUuid(), data.itemType, data.playerUuid());
             entry.setValue(nd);
             if (nd.remainingTicks <= 0) {
@@ -13234,6 +16109,7 @@ public class ModMain {
             LuckyPortalBlock.removePortalTimer(player.getUUID());
             LAPIS_FLIGHT_PLAYERS.remove(player.getUUID());
             COMMAND_FLIGHT_PLAYERS.remove(player.getUUID());
+            WINGS_FLIGHT_PLAYERS.remove(player.getUUID());
             PHYSICS_NIGHT_VISION_PLAYERS.remove(player.getUUID());
         }
     }
@@ -13242,6 +16118,16 @@ public class ModMain {
         if (!(event.getLevel() instanceof ServerLevel serverLevel)) return;
 
         Entity entity = event.getEntity();
+
+        // 空壳（或核心）已经没了、而它名下的召唤物当时正待在没加载的区块里（碰不到）：等它随区块加载
+        // 回来时就地抹掉 —— 这是"尽快消失"在区块卸载情况下的落点（见 OrbPossessionSummons#ownerVanished）。
+        if (cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.ownerVanished(entity)) {
+            LOGGER.info("[召唤物] 主人（核心/空壳）已消失，随区块加载归来的 {} 就地抹掉",
+                entity.getType().toShortString());
+            event.setCanceled(true);
+            entity.discard();
+            return;
+        }
 
         // Creeper Clan 维度兜底：加入世界的非苦力怕生物，若属于「世界自动生成」途径则阻止加入。
         // FinalizeSpawnEvent 已拦截绝大多数（含区块初始生成），此处作为兜底覆盖任何漏网路径
@@ -13276,6 +16162,14 @@ public class ModMain {
         // 玩家空壳：重新加载时恢复“玩家锁定”跟踪（原玩家 UUID 等已持久化在实体 NBT 中）
         if (entity instanceof PlayerShellEntity shell) {
             reconstructLivingShell(shell);
+        }
+
+        // 生物壳：LIVING_SHELLS 是内存表，重进存档后是空的；从实体持久化数据把变形数据重建回来，
+        // 否则对它丢变形解药无法复原原生生物（旧存档没写过这些数据，只能维持现状）。
+        if (!(entity instanceof PlayerShellEntity)
+            && entity instanceof LivingEntity livingShell
+            && livingShell.getPersistentData().getBoolean(TRANSMUTATION_SHELL_TAG)) {
+            reconstructMobShell(livingShell);
         }
 
         // 女巫Boss：存档重进时重新登记血条跟踪，避免退出重进后 Boss条（ServerBossEvent）消失
@@ -13387,6 +16281,8 @@ public class ModMain {
                     int multishot = getMultishotLevel(serverLevel, shooter);
                     if (multishot > 0) {
                         proj.getPersistentData().putBoolean(MULTISHOT_DONE_TAG, true);
+                        // 注意：<b>本体不打</b> MULTISHOT_VOLLEY_TAG（用户指定）—— 只有分裂副本落地 2 秒后消失，
+                        // 射手自己那一发照旧按它原本的规则存在（箭/三叉戟照原版时长、西瓜刀照样插地等回收）。
                         // 实体发射的是烟花火箭：将其本体也随机化为随机效果/颜色/飞行时长
                         if (proj instanceof FireworkRocketEntity firework) {
                             randomizeFireworkRocket(serverLevel, firework);
@@ -13737,7 +16633,11 @@ public class ModMain {
      *  （长半轴 4 格、横截面直径 3 格的椭球 + 后方“眼睛→中心”的柱体（半径 1.5 格）），
      *  抛射速度 0.75，推出后平飞期间一旦碰撞方块立即原地固化（不掉落）。 */
     public static void executeObsidianStaffAbility(Player player, ItemStack stack, InteractionHand hand) {
-        launchFallingBlockStaff(player, stack, hand, 4.0, 1.5, 1.5, 0.75, 3, true);
+        if (launchFallingBlockStaff(player, stack, hand, 4.0, 1.5, 1.5, 0.75, 3, true)
+            && player instanceof ServerPlayer sp) {
+            // 成就「位移」：真的让方块发生了位移（选区非空且抛射体已生成）
+            awardAdvancement(sp, MOVEMENT_ADV);
+        }
     }
 
     // ============================ 冰块权杖：冻结并困住生物 ============================
@@ -14198,18 +17098,23 @@ public class ModMain {
     }
 
     public static void executeBedrockStaffAbility(Player player, ItemStack stack, InteractionHand hand) {
-        launchFallingBlockStaff(player, stack, hand, 20.0, 3.0, 3.0, 1.5, -1, false);
+        if (launchFallingBlockStaff(player, stack, hand, 20.0, 3.0, 3.0, 1.5, -1, false)
+            && player instanceof ServerPlayer sp) {
+            // 成就「还回来吃饭吗」（「位移」的附属）：真的让方块飞了出去
+            awardAdvancement(sp, DAD_BOUGHT_MILK_ADV);
+        }
     }
 
     /** 通用“拔起选区内的方块并沿视线抛射”：
      *  以视线为轴，前方为长半轴 longRadius、短半轴 shortRadius 的椭球，后方（玩家侧）为“眼睛→中心”的柱体；
      *  被拔起的方块生成 BedrockFallingBlockEntity，初速 speed。
      *  solidifyOnImpact 为 true 时（黑曜石权杖）平飞期间一旦碰撞判定即原地固化；false 时（基岩权杖）
-     *  平飞 flightDurationTicks 刻后转重力落地固化（<=0 沿用 1200 刻超时）。 */
-    private static void launchFallingBlockStaff(Player player, ItemStack stack, InteractionHand hand,
+     *  平飞 flightDurationTicks 刻后转重力落地固化（<=0 沿用 1200 刻超时）。
+     *  @return 是否真的拔起了方块（选区非空；成就判定用） */
+    private static boolean launchFallingBlockStaff(Player player, ItemStack stack, InteractionHand hand,
                                                  double longRadius, double shortRadius, double hemisphereRadius,
                                                  double speed, int flightDurationTicks, boolean solidifyOnImpact) {
-        if (!(player.level() instanceof ServerLevel serverLevel)) return;
+        if (!(player.level() instanceof ServerLevel serverLevel)) return false;
 
         Vec3 eyePos = player.getEyePosition();
         Vec3 lookVec = player.getLookAngle();
@@ -14217,8 +17122,8 @@ public class ModMain {
         BlockHitResult hitResult = serverLevel.clip(
             new ClipContext(eyePos, eyePos.add(lookVec.scale(7.0)),
                 ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
-        if (hitResult.getType() != HitResult.Type.BLOCK) return;
-        if (eyePos.distanceTo(hitResult.getLocation()) > 7.0) return;
+        if (hitResult.getType() != HitResult.Type.BLOCK) return false;
+        if (eyePos.distanceTo(hitResult.getLocation()) > 7.0) return false;
 
         // 选区中心到玩家眼睛的距离（格）：后方柱体从玩家眼睛延伸到此处
         double centerLookDist = 3.5;
@@ -14286,7 +17191,7 @@ public class ModMain {
             }
         }
 
-        if (selectedBlocks.isEmpty()) return;
+        if (selectedBlocks.isEmpty()) return false;
 
         player.level().playSound(null, player.getX(), player.getY(), player.getZ(),
             SoundEvents.STONE_BREAK, SoundSource.PLAYERS, 1.0F, 1.0F);
@@ -14319,6 +17224,7 @@ public class ModMain {
         }
 
         hurtStaff(stack, selectedBlocks.size(), player, slot);
+        return true;
     }
 
     /**
@@ -14558,6 +17464,47 @@ public class ModMain {
         }
     }
 
+    // ===== 蜂巢权杖 =====
+
+    /** 苦力蜂：被任意非友好方攻击（含创造玩家，其攻击可能不经过 hurt()）即锁定并反击。 */
+    public static void onBeeperAttacked(net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent event) {
+        if (event.getEntity() instanceof cn.autoforged.joes_addons_for_abmc.entity.BeeperEntity beeper) {
+            if (event.getSource().getEntity() instanceof net.minecraft.world.entity.LivingEntity attacker) {
+                beeper.provokeBy(attacker);
+            }
+        }
+    }
+
+    /** BeeBoss：屏蔽原版「毒刺脱落后自毙」。
+     *  <p>原版 {@code Bee.customServerAiStep} 在 {@code hasStung} 时每 5 刻按 {@code 1/(1200-t)} 概率执行
+     *  {@code hurt(damageSources().generic(), getHealth())}——即蛰完约 1 分钟内暴毙。真实蜜蜂如此，Boss 不适用：
+     *  它的蛰针会在 {@code BeeBossData.STINGER_REGROW_TICKS} 后再生以便继续近战。
+     *  <p>只拦这一种自伤：受伤者是 BeeBoss、处于 hasStung、且伤害类型为 generic。 */
+    public static void onBeeBossStingDeath(net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent event) {
+        if (!(event.getEntity() instanceof net.minecraft.world.entity.animal.Bee bee)) return;
+        if (!cn.autoforged.joes_addons_for_abmc.BeeBossData.isBeeBoss(bee)) return;
+        if (!bee.hasStung()) return;
+        if (event.getSource().is(net.minecraft.world.damagesource.DamageTypes.GENERIC)) {
+            event.setCanceled(true);
+        }
+    }
+
+    /** 左键：服务端从玩家眼睛做 128 格预判，命中生物则释放权杖中全部蜜蜂并让其仇视该生物。 */
+    public static void handleBeeStaffAttack(Player player) {
+        if (!(player instanceof ServerPlayer sp)) return;
+        net.minecraft.world.entity.LivingEntity target =
+            cn.autoforged.joes_addons_for_abmc.BeehiveStaffHelper.raycastLiving(
+                sp, cn.autoforged.joes_addons_for_abmc.BeehiveStaffHelper.RELEASE_RANGE);
+        if (target == null) return;
+        cn.autoforged.joes_addons_for_abmc.BeehiveStaffHelper.releaseAllToTarget(sp, target);
+    }
+
+    /** 左Alt：每隔 10 刻释放一只友善蜜蜂（永不仇视持有本权杖的玩家）。 */
+    public static void handleBeeStaffReleaseOne(Player player) {
+        if (!(player instanceof ServerPlayer sp)) return;
+        cn.autoforged.joes_addons_for_abmc.BeehiveStaffHelper.releaseOneFriendly(sp);
+    }
+
     // ===== 刷怪笼权杖 =====
 
     /** 刷怪笼权杖排除的 Boss：末影龙、凋灵、远古守卫者、监守者（按需求视作 boss）；
@@ -14646,12 +17593,21 @@ public class ModMain {
 
     /** 写入“自体附魔”标记；只写 NBT，发包需调用 {@link #broadcastEnchantSelf}。 */
     public static void setEnchantSelf(net.minecraft.world.entity.LivingEntity target, boolean enchanted) {
+        // 玩家空壳<b>永远</b>不渲染"附魔光效"：它是玩家的身体，头顶/身上不该凭空多一层紫红光晕。
+        // 这里是"自体附魔"标记的<b>唯一写入口</b>（魔咒状态效果、祝福、指令最后都走它），
+        // 所以在这一处吞掉写入就够：无论谁想给空壳开光效都开不了，也不怕读档/重登后残留。
+        if (target instanceof cn.autoforged.joes_addons_for_abmc.entity.PlayerShellEntity) {
+            target.getPersistentData().putBoolean(ENCHANT_SELF_TAG, false);
+            return;
+        }
         target.getPersistentData().putBoolean(ENCHANT_SELF_TAG, enchanted);
     }
 
     /** 把“自体附魔”状态广播给追踪该实体的所有玩家及祝福者本人，使附魔光效持续显示。 */
     public static void broadcastEnchantSelf(net.minecraft.world.entity.Entity target) {
         if (!(target instanceof net.minecraft.world.entity.LivingEntity living)) return;
+        // 玩家空壳不带光效（见 setEnchantSelf），别为它白发包
+        if (living instanceof cn.autoforged.joes_addons_for_abmc.entity.PlayerShellEntity) return;
         boolean en = getEnchantSelf(living);
         net.neoforged.neoforge.network.PacketDistributor.sendToPlayersTrackingEntityAndSelf(
             target, new cn.autoforged.joes_addons_for_abmc.network.EnchantSelfPayload(target.getId(), en));
@@ -14821,7 +17777,8 @@ public class ModMain {
         net.minecraft.world.entity.Mob mob = null;
         int attempts = Math.min(8, pool.size());
         for (int i = 0; i < attempts && mob == null; i++) {
-            EntityType<?> chosen = pool.get(random.nextInt(pool.size()));
+            // 2% 概率召唤苦力蜂（Beeper）
+            EntityType<?> chosen = random.nextFloat() < 0.02F ? ModEntities.BEEPER.get() : pool.get(random.nextInt(pool.size()));
             try {
                 Entity e = chosen.create(serverLevel);
                 if (e instanceof net.minecraft.world.entity.Mob m) {
@@ -15065,12 +18022,23 @@ public class ModMain {
         }
     }
 
-    /** 命中方块：向目标坐标发起拉扯（S 形加速度，距离越远峰值越大，对数关系）。 */
+    /** 命中方块：向目标坐标发起拉扯（S 形加速度，距离越远峰值越大，对数关系）。蛛丝视觉。 */
     private static void startCobwebPull(Player player, Vec3 anchor) {
+        startCobwebPull(player, anchor, false);
+    }
+
+    /**
+     * 命中方块：向目标坐标发起拉扯（S 形加速度，距离越远峰值越大，对数关系）。
+     *
+     * @param chainVisual true = 让客户端把这条"绳"渲染成<b>铁链</b>（铁抓钩，不发蛛丝、也不授蜘蛛侠成就）；
+     *                    false = 渲染成<b>蛛丝</b>（蜘蛛网权杖）
+     */
+    public static void startCobwebPull(Player player, Vec3 anchor, boolean chainVisual) {
         double dist = player.position().distanceTo(anchor);
         if (dist < 2.0) {
-            if (COBWEB_PULLING.remove(player.getUUID()) != null) {
+            if (COBWEB_PULLING.remove(player.getUUID()) != null && player instanceof ServerPlayer sp) {
                 recordCobwebPullEnd(player.getUUID());
+                sendPullStop(sp, chainVisual);
             }
             return;
         }
@@ -15082,10 +18050,21 @@ public class ModMain {
         double initSpeed = Mth.clamp(0.05 * logD, 0.10, 0.40);
         Vec3 initVel = new Vec3(dir.x * initSpeed, dir.y * initSpeed, dir.z * initSpeed);
         int rampTicks = (int) Mth.clamp(20 + dist * 1.5, 30, 160);
-        COBWEB_PULLING.put(player.getUUID(), new CobwebPullState(anchor, rampTicks, apex, initVel));
-        // 通知客户端开始渲染“玩家→锚点”蛛丝线段（锚点不动，起始跟随玩家）。
+        COBWEB_PULLING.put(player.getUUID(),
+            new CobwebPullState(anchor, rampTicks, apex, initVel, chainVisual));
         if (player instanceof ServerPlayer sp) {
-            sp.connection.send(new CobwebPullPayload(anchor));
+            if (chainVisual) {
+                // 铁抓钩：通知客户端在"玩家发射点 → 锚点"之间渲染铁链（终点固定，起点由客户端实时重算）
+                Vec3 origin = applyLineEmitterOffset(sp, sp.getEyePosition());
+                sp.connection.send(new cn.autoforged.joes_addons_for_abmc.network.ChainGrabPayload(
+                    cn.autoforged.joes_addons_for_abmc.network.ChainGrabPayload.MODE_BLOCK,
+                    origin.x, origin.y, origin.z, anchor.x, anchor.y, anchor.z, -1));
+            } else {
+                // 通知客户端开始渲染“玩家→锚点”蛛丝线段（锚点不动，起始跟随玩家）。
+                sp.connection.send(new CobwebPullPayload(anchor));
+                // 成就「蜘蛛侠！」：对准方块 + 蛛丝确实射出并开始拉扯（距离 < 2 的情况上面已提前返回，不授予）
+                awardAdvancement(sp, SPIDERMAN_ADV);
+            }
         }
     }
 
@@ -15106,7 +18085,7 @@ public class ModMain {
             if (pos.distanceTo(st.target) < 2.0) {
                 it.remove(); // 距离<2 断开，保留已获得速度
                 recordCobwebPullEnd(p.getUUID());
-                p.connection.send(new CobwebPullStopPayload()); // 清除客户端蛛丝线段
+                sendPullStop(p, st.chainVisual); // 清除客户端渲染（铁链 / 蛛丝）
                 continue;
             }
             // 方块阻挡判定（宽松）：检测“玩家→锚点”路径是否被实体方块拦断（命中点明显比锚点更近）。
@@ -15129,7 +18108,7 @@ public class ModMain {
                     if (st.blockedTicks > 100) {
                         it.remove();
                         recordCobwebPullEnd(p.getUUID());
-                        p.connection.send(new CobwebPullStopPayload());
+                        sendPullStop(p, st.chainVisual);
                         continue;
                     }
                 }
@@ -15369,6 +18348,10 @@ public class ModMain {
         long lastSyncTick;
         /** 持续拉取耐久计时。 */
         int durabilityTick;
+        /** 这次会话是不是<b>铁抓钩</b>发起的（false = 铁块权杖）。
+         *  两处区别：①存续判定看玩家手上是铁抓钩还是铁链权杖；
+         *  ②铁抓钩"每次发射扣 1 点"，不做 20 刻一次的持续扣耐久。 */
+        boolean fromHook;
     }
 
     /** 铁块权杖右键能力：发射铁链（直线、不受重力），抬起目标并拉向玩家。
@@ -15428,7 +18411,8 @@ public class ModMain {
         } else {
             LivingEntity living = (LivingEntity) target;
             ItemStack held = living.getMainHandItem();
-            if (!held.isEmpty()) {
+            // 幸运核心免疫缴械：手里拿着它时不被抽走，直接走"拉生物本体"分支。
+            if (!held.isEmpty() && !held.is(cn.autoforged.joes_addons_for_abmc.item.ModItems.ORB_OF_LUCK.get())) {
                 // 缴械：把主手物品抽出为掉落物，钩住该掉落物拉向玩家脚下。
                 ItemStack drop = held.copy();
                 held.shrink(held.getCount());
@@ -15485,22 +18469,27 @@ public class ModMain {
                 player.connection.send(new cn.autoforged.joes_addons_for_abmc.network.ChainGrabStopPayload());
                 continue;
             }
-            // 玩家不再持有铁链权杖（切手/换物品）：断开，生物以摆锤速度甩出。
-            if (!isHoldingChainStaff(player)) {
+            // 玩家不再持有"发起这次钩取的物品"（切手/换物品/丢掉）：断开，生物以摆锤速度甩出。
+            // ★ 铁块权杖要求手上仍是铁链权杖；铁抓钩发起的会话则要求手上仍是铁抓钩。
+            if (!stillHoldingGrabSource(player, st.fromHook)) {
                 it.remove();
                 flingChainTarget(player, st);
                 player.connection.send(new cn.autoforged.joes_addons_for_abmc.network.ChainGrabStopPayload());
                 continue;
             }
             // 持续拉取耐久消耗（每 CHAIN_DURABILITY_TICKS 刻 1 点）。
-            st.durabilityTick++;
-            if (st.durabilityTick >= CHAIN_DURABILITY_TICKS) {
-                st.durabilityTick = 0;
-                ItemStack main = player.getMainHandItem();
-                boolean mainIsStaff = main.getItem() instanceof StaffItem;
-                ItemStack staffStack = mainIsStaff ? main : player.getOffhandItem();
-                EquipmentSlot slot = mainIsStaff ? EquipmentSlot.MAINHAND : EquipmentSlot.OFFHAND;
-                hurtStaff(staffStack, 1, player, slot);
+            // 只有铁块权杖这条路要持续扣耐久；铁抓钩是"每次发射扣 1 点"，
+            // 而且它不在手上时这里会去扣副手物品，所以直接跳过。
+            if (!st.fromHook) {
+                st.durabilityTick++;
+                if (st.durabilityTick >= CHAIN_DURABILITY_TICKS) {
+                    st.durabilityTick = 0;
+                    ItemStack main = player.getMainHandItem();
+                    boolean mainIsStaff = main.getItem() instanceof StaffItem;
+                    ItemStack staffStack = mainIsStaff ? main : player.getOffhandItem();
+                    EquipmentSlot slot = mainIsStaff ? EquipmentSlot.MAINHAND : EquipmentSlot.OFFHAND;
+                    hurtStaff(staffStack, 1, player, slot);
+                }
             }
 
             Vec3 playerPos = player.position();
@@ -15814,6 +18803,17 @@ public class ModMain {
         return false;
     }
 
+    /** 玩家当前主手/副手是否持有铁抓钩。 */
+    private static boolean isHoldingIronHook(Player p) {
+        return p.getMainHandItem().getItem() instanceof cn.autoforged.joes_addons_for_abmc.item.IronHookItem
+            || p.getOffhandItem().getItem() instanceof cn.autoforged.joes_addons_for_abmc.item.IronHookItem;
+    }
+
+    /** 这次钩取会话的"发起物品"是否还在手上（铁抓钩 / 铁链权杖二选一）。 */
+    private static boolean stillHoldingGrabSource(Player p, boolean fromHook) {
+        return fromHook ? isHoldingIronHook(p) : isHoldingChainStaff(p);
+    }
+
     /** 点 p 到线段 a→b 的最短距离。 */
     private static double distToSegment(Vec3 a, Vec3 b, Vec3 p) {
         Vec3 ab = b.subtract(a);
@@ -15870,6 +18870,218 @@ public class ModMain {
         if (target == null || !target.isAlive()) return;
         target.setDeltaMovement(st.pendVel);
         target.hasImpulse = true;
+    }
+
+    // ===== 铁抓钩（iron_hook） =====
+
+    /**
+     * 铁抓钩：右键发射。沿视线做一次 {@link cn.autoforged.joes_addons_for_abmc.item.IronHookItem#HOOK_RANGE}
+     * 格的射线检测：
+     * <ol>
+     *   <li>命中<b>生物</b> → {@link #startHookGrab}：把它拉向玩家（套用铁块权杖"拉生物本体"的抓取逻辑）；</li>
+     *   <li>否则命中<b>方块</b> → {@link #startHookGrapple}：把玩家拉向命中点
+     *       （套用蛛网权杖的"蛛丝游走"拉扯物理，但客户端把这条绳渲染成铁链）；</li>
+     *   <li>都没命中 → 只播放"发射后收回"的铁链动画，无其它效果。</li>
+     * </ol>
+     * 命中判定与铁块权杖保持一致（碰撞箱向外膨胀 0.25 格容错、取射线最近者），但有两点不同：
+     * <ul>
+     *   <li><b>只拉生物</b>：掉落物（{@code ItemEntity}）不算目标，铁抓钩不会去拉物品；</li>
+     *   <li><b>不会缴械</b>：命中手持物品的生物时，权杖会先把主手物品抽走，铁抓钩不这么做，
+     *       直接拉生物本体；</li>
+     *   <li>与权杖一样不钩玩家（玩家由客户端位置预测控制，服务端拉不动，只会打架）。</li>
+     * </ul>
+     */
+    public static void fireIronHook(ServerPlayer sp, ItemStack stack, InteractionHand hand) {
+        ServerLevel level = sp.serverLevel();
+        Vec3 origin = applyLineEmitterOffset(sp, sp.getEyePosition());
+        Vec3 end = origin.add(sp.getLookAngle().scale(cn.autoforged.joes_addons_for_abmc.item.IronHookItem.HOOK_RANGE));
+
+        final double FUZZ = 0.25;
+        double nearest = Double.MAX_VALUE;
+        Entity target = null;
+        AABB scanBox = new AABB(origin, end).inflate(FUZZ + 2.0);
+        // 只把"生物"当目标：掉落物不参与（需求：只会拉生物）
+        for (Entity e : level.getEntities(sp, scanBox,
+            e -> e.isAlive() && !e.isSpectator() && !(e instanceof ServerPlayer)
+                && e.isPickable() && e instanceof LivingEntity)) {
+            if (!segmentHitsBox(origin, end, e.getBoundingBox().inflate(FUZZ))) continue;
+            double d = distToSegment(origin, end, e.position());
+            if (d < nearest) {
+                nearest = d;
+                target = e;
+            }
+        }
+        if (target != null) {
+            startHookGrab(sp, stack, hand, target);
+            return;
+        }
+
+        net.minecraft.world.phys.BlockHitResult hit = level.clip(
+            new net.minecraft.world.level.ClipContext(origin, end,
+                net.minecraft.world.level.ClipContext.Block.COLLIDER,
+                net.minecraft.world.level.ClipContext.Fluid.NONE, sp));
+        if (hit.getType() != net.minecraft.world.phys.HitResult.Type.MISS) {
+            startHookGrapple(sp, stack, hand, hit.getLocation());
+            return;
+        }
+
+        // 空放：铁链伸出去再收回（复用权杖的"未命中"动画包），无其他效果。
+        playHookLaunchSound(sp);
+        sp.connection.send(new cn.autoforged.joes_addons_for_abmc.network.ChainLaunchPayload(end.x, end.y, end.z));
+    }
+
+    // ===== 翅膀（wings） =====
+
+    /** 翅膀的耐久消耗间隔（刻）：3 秒 1 点。 */
+    private static final int WINGS_DURABILITY_INTERVAL_TICKS = 60;
+
+    /**
+     * 翅膀（wings）每刻处理：
+     * <ol>
+     *   <li><b>飞行能力</b>：胸甲栏穿着翅膀且耐久没用坏 → {@code abilities.mayfly = true}。
+     *       <b>只补上、绝不抹掉</b>别人的飞行来源：本模组里青金石/命令方块/Herobrine 权杖与 Omega
+     *       各自有自己的 {@code *_FLIGHT_PLAYERS} 集合，撤销时也<b>只撤销自己授予的那一次</b>，
+     *       并且确认没有别的来源还在给；</li>
+     *   <li><b>耐久消耗</b>：装备 + 处于<b>生存/冒险</b>模式 + <b>正在飞行</b>（{@code abilities.flying}）
+     *       → 每 {@value #WINGS_DURABILITY_INTERVAL_TICKS} 刻（3 秒）扣 1 点。</li>
+     * </ol>
+     */
+    private static void handleWingsTick(MinecraftServer server) {
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            UUID id = player.getUUID();
+            ItemStack chest = player.getItemBySlot(EquipmentSlot.CHEST);
+            boolean wearing = chest.getItem() instanceof cn.autoforged.joes_addons_for_abmc.item.WingsItem
+                && cn.autoforged.joes_addons_for_abmc.item.WingsItem.isUsable(chest);
+
+            // 创造/旁观自带飞行，不参与授受；顺手清掉记录，免得切回生存后被误收
+            if (player.isCreative() || player.isSpectator()) {
+                WINGS_FLIGHT_PLAYERS.remove(id);
+                continue;
+            }
+
+            if (wearing) {
+                // 只在"当前没有飞行能力"时补一次，避免每刻发包；已有（不管是自己还是别的来源给的）就不动
+                if (!player.getAbilities().mayfly) {
+                    player.getAbilities().mayfly = true;
+                    player.onUpdateAbilities();
+                }
+                WINGS_FLIGHT_PLAYERS.add(id);
+            } else if (WINGS_FLIGHT_PLAYERS.remove(id) && !hasOtherFlightSource(id)) {
+                // 只收回"我们给的那一次"；若别的飞行来源还在生效（例如同时握着命令方块权杖），
+                // 就别碰 mayfly/flying —— 否则会把人家刚授予的飞行一并清掉，表现为"飞一下就被打断"。
+                player.getAbilities().mayfly = false;
+                player.getAbilities().flying = false;
+                player.onUpdateAbilities();
+            }
+
+            // 耐久：生存/冒险（上面的提前 return 已排除创造/旁观）+ 正在飞行 + 穿着翅膀 → 每 3 秒 1 点
+            if (wearing && player.getAbilities().flying
+                && player.tickCount % WINGS_DURABILITY_INTERVAL_TICKS == 0) {
+                chest.hurtAndBreak(1, player, EquipmentSlot.CHEST);
+            }
+        }
+    }
+
+    /** 除翅膀之外，当前是否还有别的本模组飞行来源在给这名玩家飞行能力（各权杖 / Omega）。 */
+    private static boolean hasOtherFlightSource(UUID id) {
+        return LAPIS_FLIGHT_PLAYERS.contains(id)
+            || COMMAND_FLIGHT_PLAYERS.contains(id)
+            || HEROBRINE_FLIGHT_PLAYERS.contains(id)
+            || OMEGA_POWER_PLAYERS.contains(id);
+    }
+
+    /**
+     * 铁抓钩：按下右键时的<b>"松开"</b>（同一个键位既发射也松开，形成开/关）。
+     * <ul>
+     *   <li>已经<b>钩着生物</b> → 断开铁链，并把它按当前摆锤速度<b>甩出去</b>
+     *       （与铁块权杖左键中断用的是同一套 {@link #cancelChainGrab}）；</li>
+     *   <li>正在<b>被铁链拉着走</b>（"蛛丝游走"式拉扯）→ 断开铁链、保留当前动量飞出，
+     *       并保留断开后 3 秒的摔落/动能免疫宽限（与正常拉到目标时一致）。</li>
+     * </ul>
+     *
+     * @return 这次右键是否被"松开"消费掉了（true = 已经松开过，调用方不应再发起新的钩取）
+     */
+    public static boolean releaseIronHook(ServerPlayer sp) {
+        boolean released = false;
+        if (CHAIN_GRABS.containsKey(sp.getUUID())) {
+            cancelChainGrab(sp);
+            released = true;
+        }
+        if (COBWEB_PULLING.containsKey(sp.getUUID())) {
+            stopCobwebPull(sp);
+            released = true;
+        }
+        return released;
+    }
+
+    /** 铁抓钩：把玩家拉向命中点（复用蛛网权杖的 S 形加速拉扯，客户端渲染成铁链）。 */
+    public static void startHookGrapple(ServerPlayer sp, ItemStack stack, InteractionHand hand, Vec3 anchor) {
+        if (sp.getEyePosition().distanceTo(anchor) > cn.autoforged.joes_addons_for_abmc.item.IronHookItem.HOOK_RANGE) {
+            return; // 超出射程：不生效（也不扣耐久）
+        }
+        cancelChainGrab(sp);   // 同一条铁链只保留一个会话
+        stopCobwebPull(sp);
+        damageHook(stack, sp, hand, 1);
+        playHookLaunchSound(sp);
+        startCobwebPull(sp, anchor, true);
+    }
+
+    /**
+     * 铁抓钩：把瞄准的<b>生物</b>拉向玩家 —— 套用铁块权杖"拉生物本体"的绳摆逻辑
+     * （近似定长、被甩时甩出去、平静时垂在玩家身边）。
+     *
+     * <p>与权杖的两点区别（按需求）：
+     * <ul>
+     *   <li><b>只拉生物</b>：掉落物不是合法目标，直接不生效；</li>
+     *   <li><b>不会缴械</b>：权杖命中手持物品的生物时会先把主手物品抽成掉落物，铁抓钩不这么做，
+     *       无论它手里拿着什么，拉的都是生物本体。</li>
+     * </ul>
+     */
+    public static void startHookGrab(ServerPlayer sp, ItemStack stack, InteractionHand hand, Entity target) {
+        if (target == sp || !target.isAlive() || target.isSpectator()) return;
+        if (!(target instanceof LivingEntity)) return; // 只拉生物
+
+        cancelChainGrab(sp);
+        stopCobwebPull(sp);
+        damageHook(stack, sp, hand, 1);
+        playHookLaunchSound(sp);
+
+        int mode = cn.autoforged.joes_addons_for_abmc.network.ChainGrabPayload.MODE_LIVING;
+
+        ChainGrabState st = new ChainGrabState();
+        st.mode = mode;
+        st.fromHook = true; // ★ 铁抓钩发的会话：不按"手持铁链权杖"判定存续，也不做 20 刻持续扣耐久
+        st.targetUuid = target.getUUID();
+        st.targetId = target.getId();
+        // 与权杖一致：初始绳长 = 当前距离，夹在 [静止下垂深度, 最大绳长] 之间
+        double calmLen = chainHangDepth(target);
+        Vec3 origin = applyLineEmitterOffset(sp, sp.getEyePosition());
+        st.whipLen = net.minecraft.util.Mth.clamp(origin.distanceTo(target.position()), calmLen, WHIP_MAX);
+        st.lastYaw = sp.getYRot();
+        st.lastSyncTick = sp.serverLevel().getGameTime();
+        CHAIN_GRABS.put(sp.getUUID(), st);
+        sendChainGrabSync(sp.serverLevel(), sp, st);
+    }
+
+    /** 铁抓钩：按手别扣耐久（内部已处理创造模式与耐久附魔）。 */
+    private static void damageHook(ItemStack stack, ServerPlayer sp, InteractionHand hand, int amount) {
+        hurtStaff(stack, amount, sp,
+            hand == InteractionHand.MAIN_HAND ? EquipmentSlot.MAINHAND : EquipmentSlot.OFFHAND);
+    }
+
+    /** 铁抓钩"甩出去"的音效（铁链碰撞声）。 */
+    private static void playHookLaunchSound(ServerPlayer sp) {
+        sp.serverLevel().playSound(null, sp.getX(), sp.getY(), sp.getZ(),
+            net.minecraft.sounds.SoundEvents.CHAIN_PLACE, net.minecraft.sounds.SoundSource.PLAYERS, 1.0F, 0.9F);
+    }
+
+    /** 中断正在进行的拉扯（蛛丝或铁链），并按视觉类型清除客户端渲染。 */
+    private static void stopCobwebPull(ServerPlayer sp) {
+        CobwebPullState old = COBWEB_PULLING.remove(sp.getUUID());
+        if (old != null) {
+            recordCobwebPullEnd(sp.getUUID());
+            sendPullStop(sp, old.chainVisual);
+        }
     }
 
     /** 蜘蛛网权杖：持有者左键按下，主动断开当前拉扯的蛛丝。 */
@@ -16481,6 +19693,8 @@ public class ModMain {
                     SoundEvents.BONE_MEAL_USE, SoundSource.PLAYERS, 1.0F, 1.0F);
                 EquipmentSlot slot = hand == InteractionHand.MAIN_HAND ? EquipmentSlot.MAINHAND : EquipmentSlot.OFFHAND;
                 hurtStaff(stack, 1, player, slot);
+                // 成就「蓝手指」：水下分支催熟成功
+                if (player instanceof ServerPlayer sp) awardAdvancement(sp, BLUE_THUMB_ADV);
             }
             return;
         }
@@ -16723,6 +19937,9 @@ public class ModMain {
             task.duplicationTargets = duplicationTargets;
             PENDING_BONEMEAL_TASKS.add(task);
         }
+
+        // 成就「蓝手指」：至少催熟了一个目标（totalAffected > 0，上面已提前 return）
+        if (player instanceof ServerPlayer sp) awardAdvancement(sp, BLUE_THUMB_ADV);
     }
 
     public static void executeFurnaceStaffAbility(Player player, ItemStack stack, InteractionHand hand) {
@@ -16818,6 +20035,8 @@ public class ModMain {
             }
             EquipmentSlot slot = hand == InteractionHand.MAIN_HAND ? EquipmentSlot.MAINHAND : EquipmentSlot.OFFHAND;
             hurtStaff(stack, smeltedCount, player, slot);
+            // 成就「烧炼变得方便了！」：地面掉落物真的被烧炼成了产物
+            if (player instanceof ServerPlayer sp) awardAdvancement(sp, EASIER_TO_SMELT_ADV);
         }
     }
 
@@ -17028,6 +20247,12 @@ public class ModMain {
 
         EquipmentSlot slot = hand == InteractionHand.MAIN_HAND ? EquipmentSlot.MAINHAND : EquipmentSlot.OFFHAND;
         hurtStaff(stack, 1, player, slot);
+
+        // 成就「烧炼变得方便了！」：对着装了待烧炼物品（输入槽非空）的熔炉/高炉/烟熏炉使用，
+        // 且本次点火/加速确实生效（上面的冷却检查已经通过）——即“用它烧炼你的食物和矿石”。
+        if (player instanceof ServerPlayer sp && !furnaceBe.getItem(0).isEmpty()) {
+            awardAdvancement(sp, EASIER_TO_SMELT_ADV);
+        }
     }
 
     private static int getFurnaceFieldInt(AbstractFurnaceBlockEntity be, String fieldName) {
@@ -17652,12 +20877,80 @@ public class ModMain {
 
     // ==================== TRANSMUTATION SYSTEM ====================
 
+    /**
+     * 是否免疫变形药水：<b>幸运核心本体</b>，以及<b>正被幸运核心依附的那具"玩家"空壳</b>。
+     * <p>
+     * 这是"暂时这样设定"的规则（附体形态专属）：核心与其外壳既然是一体的，
+     * 就不该被一瓶变形药水拆开（核心变成物品/方块、空壳原地留下之类的场面无法收场）。
+     * <p>
+     * 空壳的判定分两步：
+     * <ol>
+     *   <li>实时骑乘关系 —— 附体时核心就骑在空壳身上（见 {@code OrbOfLuckEntity.startPossession}），
+     *       <b>用"乘客里有核心"而不是"查核心的 UUID"</b>：骑乘关系是实时的、不会失效，
+     *       而 UUID 记录在读档/异常后可能指向一颗已经不存在的核心；空壳也不该反过来知道
+     *       "我属于哪颗核心"；</li>
+     *   <li>附体登记（{@code getPossessedOrb()}）—— 兜住骑乘关系尚未建立或刚断开的那一两刻。
+     *       变形药水做出来的临时空壳没有这个登记，因此不受影响。</li>
+     * </ol>
+     * 拦截点见 {@link #onMobEffectApplicable}（正常路径，效果根本不会被写入）
+     * 与 {@link #onMobEffectAdded}（兜底"手动 post 的 Added"路径）。
+     */
+    public static boolean isTransmutationPotionImmune(Entity entity) {
+        // 附体主空壳（幸运核心附体真玩家时产生的那具 boss 身体）：按用户要求<b>不再免疫变形药水</b> ——
+        // 它可以被变成生物/方块/物品。附体状态由核心特殊处理：变形期间核心不补新壳、跟着产物走，
+        // 复原时重新认领那具新壳（见 OrbOfLuckEntity#onVesselMorphed / #onVesselReverted）。
+        if (entity instanceof PlayerShellEntity) {
+            return false;   // 临时空壳本来就不免疫；附体主空壳现在也不免疫
+        }
+        if (entity instanceof cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity) {
+            // 核心本体仍然免疫：它自己变成物品/方块会让附体这件事彻底无法收场
+            // （玩家卡在旁观、身体没人管），见 OrbOfLuckEntity 的类注释。
+            return true;
+        }
+        for (Entity passenger : entity.getPassengers()) {
+            if (passenger instanceof cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 这个实体是不是"变形药水"：喷溅/滞留药水瓶，或者它留下的状态效果云。
+     * <p>
+     * 两种判据：药水本身是模组的变形药水（{@link #isTransmutationPotion(ItemStack)}），
+     * 或者它带着"变形目标"数据组件（{@code ModDataComponents.ITEM_TYPE} —— 那些"变成某某"的变形药水
+     * 就是靠它记录目标的；云则记在 {@link #TRANSMUTATION_POTION_ITEM_TYPES} 里）。
+     * <p>
+     * 供空壳的"变形解药"特攻使用（见 {@code OrbPossessedAttackEvents.TransmutationAntidoteEvent}）。
+     */
+    public static boolean isTransmutationPotionEntity(Entity entity) {
+        if (entity instanceof ThrownPotion potion) {
+            ItemStack stack = potion.getItem();
+            return isTransmutationPotion(stack)
+                || stack.getOrDefault(ModDataComponents.ITEM_TYPE.get(), null) != null;
+        }
+        if (entity instanceof AreaEffectCloud cloud) {
+            // 云没有公开的"药水内容"读取接口（字段 private、只有 setter），
+            // 所以只能查模组自己在实体加入世界时登记的这张表（见 TRANSMUTATION_POTION_ITEM_TYPES 的填充处）。
+            return TRANSMUTATION_POTION_ITEM_TYPES.get(cloud.getId()) != null;
+        }
+        return false;
+    }
+
     /** 炼药锅权杖“药水护盾”：按住右键期间，玩家免疫一切将要施加在身上的状态效果。
      *  在效果真正写入前用 {@link MobEffectEvent.Applicable} 的 DO_NOT_APPLY 拦截——
      *  MobEffectEvent.Added 不具备取消能力，且先于效果写入触发，无法真正阻止效果生效。 */
     private static void onMobEffectApplicable(MobEffectEvent.Applicable event) {
         if (event.getEntity() instanceof ServerPlayer sp && isPlayerUsingCauldronStaff(sp)) {
             MobEffectInstance instance = event.getEffectInstance();
+            event.setResult(MobEffectEvent.Applicable.Result.DO_NOT_APPLY);
+            return;
+        }
+        // 幸运核心（及其依附的玩家空壳）免疫变形药水：同样在写入前拒绝，连药水粒子/HUD 图标都不会出现
+        // （这里返回 false 会让 LivingEntity.addEffect 直接返回 false、效果根本不入表）
+        if (event.getEffectInstance().getEffect().is(ModMobEffects.TRANSMUTATION)
+            && isTransmutationPotionImmune(event.getEntity())) {
             event.setResult(MobEffectEvent.Applicable.Result.DO_NOT_APPLY);
         }
     }
@@ -17672,6 +20965,19 @@ public class ModMain {
         // 这里兜底拦截“手动 post 的 Added”（如女巫Boss 的 forceAddEffect 兜底路径），
         // 避免其继续走下方变形流程。
         if (target instanceof ServerPlayer sp && isPlayerUsingCauldronStaff(sp)) {
+            return;
+        }
+
+        // 幸运核心（及其依附的玩家空壳）免疫变形药水：正常路径已被 onMobEffectApplicable 挡在写入之前，
+        // 这里兜底"手动 post 的 Added"——女巫Boss 的喷溅药水在 addEffect 失败后会走
+        // forceAddEffect + 手动 post Added 的路径（见 ProjectileImpactEvent 里那段），
+        // 那条路径不看 Applicable 的结果，只能在这里把效果撤掉。
+        // 顺手清掉它留下的 FORCE_TRANSMUTATION_TEMP 标记：这次变形没有发生，
+        // 标记若留着会一直挂在实体 UUID 上（performTransmutation 才是它的消费点）。
+        if (instance.getEffect().is(ModMobEffects.TRANSMUTATION)
+            && isTransmutationPotionImmune(target)) {
+            target.removeEffect(ModMobEffects.TRANSMUTATION);
+            FORCE_TRANSMUTATION_TEMP.remove(target.getUUID());
             return;
         }
 
@@ -17985,6 +21291,76 @@ public class ModMain {
         return TRANSMUTED_ENTITIES.contains(uuid);
     }
 
+    /**
+     * 女巫Boss·阶段1（生物阶段）是否免疫这瓶变形药水：免疫一切"把生物变方块/物品"的药水，
+     * 无论它来自玩家、发射器，还是她自己扔出后溅到自己。
+     * <p>
+     * 判据原本只写在 {@link #performTransmutation} 开头（作为进不去变形流程的兜底），以及效果路径
+     * {@code onMobEffectAdded} 里对她自己投掷的豁免逻辑。这里提出来做成谓词，是为了让
+     * {@link #onProjectileImpact} 里的"通用直接变形路径"也先过一遍同样的门槛 ——
+     * 那条路绕开了状态效果，若不显式检查，玩家一瓶方块/物品药水就能把阶段1的女巫Boss直接变成方块，
+     * 她的三阶段战斗会被整个跳过。
+     * <p>
+     * 注意"变生物/玩家空壳"（{@code mob_shell:} / {@code player_shell:}）不在此列：
+     * 自我变生物是阶段1的既有机制，必须放行。
+     */
+    private static boolean isWitchBossStage1ImmuneTo(Entity entity, String itemType) {
+        return entity instanceof Witch w
+            && w.getPersistentData().getBoolean(WITCH_BOSS_TAG)
+            && getWitchBossStage(w) == WITCH_BOSS_STAGE_ENTITY
+            && itemType != null
+            && !itemType.startsWith("mob_shell:")
+            && !itemType.startsWith("player_shell:");
+    }
+
+    /**
+     * 「变形药水·直接变形路径」的黑名单：命中即变形这条路绕开了状态效果，
+     * 因而绕开了原本由 {@code onMobEffectAdded} 做的那一整套免疫判定。此谓词把这些判定
+     * <b>逐条搬过来</b>，凡是原先"效果加不上 / 加了也被撤掉 / 加了也不变形"的对象，一律不进直接路径。
+     * <p>
+     * 逐条对应关系（括号内为效果路径里原来的位置）：
+     * <ol>
+     *   <li><b>玩家</b>——玩家从来不是"被 discard 换成产物"的对象，而是本体留在世界里做渲染替换；
+     *       对 ServerPlayer 调 discard 会剥夺它的关卡成员资格，导致全实体同步停摆（实测故障，见
+     *       {@link #performTransmutation} 里那段"禁止回复"注释）。{@code spawnX/Y/Z} 之外不再动实体。
+     *       玩家身上的"炼药锅权杖护盾"（按住右键期间免疫一切效果）随之一并挡下——本来也到不了这一步。</li>
+     *   <li><b>凋灵 / 末影龙</b>——它们免疫一切状态效果，效果路径永远不会触发，因此另有
+     *       "药水瓶碎裂瞬间直接变形"的专线（{@link #tryTransmuteBoss}，见 {@link #isTransmutableBoss}）。
+     *       直接路径必须让开，否则会与那条有专属计数/血量逻辑的专线撞车、并绕过它。</li>
+     *   <li><b>幸运核心本体 / 被核心依附的空壳</b>——见 {@link #isTransmutationPotionImmune}。</li>
+     *   <li><b>暴力击败女巫Boss的奖励免疫</b>——{@code TRANSFORM_POTION_IMMUNE_TAG} 让目标对
+     *       <b>任何来源</b>的变形药水完全免疫。</li>
+     *   <li><b>已变形中</b>——玩家记在 {@code TRANSMUTED_ENTITIES}，其余生物壳记在 {@code LIVING_SHELLS}。
+     *       其中"方块/物品形态的玩家"在效果路径里是<b>彻底免疫</b>（不再进阶、也不能被药水还原，
+     *       只能靠解药/倒计时/死亡），而"动物形态且未击败女巫"的玩家允许进阶到方块/物品阶段——
+     *       后者的例外由 {@code performTransmutation} 的 carried 机制承担，这里只拦前面那三类。</li>
+     *   <li><b>女巫Boss阶段1</b>——对"变方块/物品"免疫，见 {@link #isWitchBossStage1ImmuneTo}。</li>
+     * </ol>
+     * 另外附带把<b>无耐久语义的假实体</b>挡在外面：变形会对原实体 {@code save()} 存 NBT 供复原用，
+     * 假实体（如只用于渲染/占位的 {@code display}）被 discard 掉不该触发任何结算。
+     * <p>
+     * 注意：本谓词只约束直接路径。<b>不</b>影响效果路径——两条路并存，被挡下的对象仍然照旧
+     * 走 {@code MobEffectEvent.Added}，行为与改动前一致。
+     */
+    private static boolean isDirectTransmutationBlacklisted(Entity entity, String itemType) {
+        if (entity == null) return true;
+        // 1) 玩家：绝不可走"被 discard 换产物"这条路（会拆掉关卡成员资格）。
+        //    玩家身上的炼药锅权杖护盾也随这一条一并挡下，不必单独判断。
+        if (entity instanceof Player) return true;
+        // 2) 凋灵 / 末影龙：由 tryTransmuteBoss 专线处理
+        if (entity instanceof LivingEntity bossCheck && isTransmutableBoss(bossCheck)) return true;
+        // 3) 幸运核心本体 / 核心依附的空壳
+        if (isTransmutationPotionImmune(entity)) return true;
+        // 4) 击败女巫Boss的奖励：全来源免疫
+        if (entity.getPersistentData().getBoolean(TRANSFORM_POTION_IMMUNE_TAG)) return true;
+        // 5) 已变形中：玩家形态表 / 生物壳表
+        if (TRANSMUTED_ENTITIES.contains(entity.getUUID())) return true;
+        if (LIVING_SHELLS.containsKey(entity.getUUID())) return true;
+        // 6) 女巫Boss阶段1对"变方块/物品"的免疫
+        if (isWitchBossStage1ImmuneTo(entity, itemType)) return true;
+        return false;
+    }
+
     @SuppressWarnings("deprecation")
     private static void performTransmutation(ServerLevel level, LivingEntity entity,
             String itemType, int remainingTicks, UUID killerUuid) {
@@ -17992,16 +21368,17 @@ public class ModMain {
         // 无论来自玩家/发射器还是她自己扔出后溅到自己（外部来源本就在 onMobEffectAdded 豁免，
         // 此处主要拦截她自己的方块/物品变形药水中途自伤）。
         // 变成生物（mob_shell）/玩家空壳不在此列：自我变生物是阶段1既有机制。
-        if (entity instanceof Witch immuneWitch
-                && immuneWitch.getPersistentData().getBoolean(WITCH_BOSS_TAG)
-                && getWitchBossStage(immuneWitch) == WITCH_BOSS_STAGE_ENTITY
-                && !itemType.startsWith("mob_shell:")
-                && !itemType.startsWith("player_shell:")) {
+        // 判据与 onProjectileImpact 的"直接变形路径"共用同一个谓词，避免两处漂移。
+        if (isWitchBossStage1ImmuneTo(entity, itemType)) {
             return;
         }
         // 进阶变形：目标若已是“生物/玩家空壳”，先取出其最初 NBT 与归属，供下一形态沿用，
         // 从而解药能一步还原回最初的玩家/生物（而非只还原上一层）。
         CarriedShellOrigin carried = takeCarriedShellOrigin(level, entity);
+
+        // 骷髅马骑士（骑手/坐骑）被变形前先记下"我的另一半是谁"：骑乘关系不在 NBT 里，
+        // 复原时必须靠这条记录把两者重新配起来（见 OrbSkeletonKnightFlight#restoreMountAfterRevert）
+        cn.autoforged.joes_addons_for_abmc.entity.OrbSkeletonKnightFlight.notePartnerBeforeMorph(entity);
 
         // 女巫Boss 被自己的变形药水命中且目标是“生物”：它确实会变成那个生物；但由
         // performMobShellTransmutation 打上“自我变形”标记，变形后的生物稍后会往脚下丢应对
@@ -18060,6 +21437,23 @@ public class ModMain {
         TransmutationData data = new TransmutationData(entityNbt, remainingTicks,
             killerUuid != null ? killerUuid : new UUID(0, 0), itemType, playerUuid);
 
+        // ===== 【已移除·禁止回复】绝不可对 ServerPlayer 调 discard() =====
+        // 这里曾经有一段调试代码：debug 模式下、玩家被变成方块/物品时先执行 {@code entity.discard()}。
+        // 已确认它会引发严重故障，故移除，请勿再加回来：
+        //
+        // 现象（实测，6.7.23）：玩家把自己变成方块后，整个世界所有实体（生物/掉落物/泰坦…）全部消失，
+        // 破坏与放置方块全部失效、也丢不出药水；退出存档重进后一切恢复。
+        //
+        // 原因：{@code Entity.discard()} 会把实体从**关卡的实体系统**里摘掉（玩家清单里还留着）。
+        // 而实体同步与区块跟踪正是围绕"仍留在关卡里的玩家实体"运转的，玩家被摘掉之后这套机制停摆，
+        // 于是客户端收不到实体数据、交互也不再被受理。玩家走的是"渲染替换"（本体本应留在世界里），
+        // 因此这一步对它纯属破坏。注意这与 {@code EntityLeaveLevelEvent} 里那几张 UUID 表的清理无关——
+        // 那些只是表象，真正的原因是关卡成员资格被剥夺。
+        //
+        // 非玩家实体不受影响：它们在下方 else 分支里本来就会被 {@code entity.discard()}
+        // （"markShellMorphingIfNeeded(entity); entity.discard();"），那是正常且必需的换形态步骤。
+        //
+        // "命中即变形"现在由 {@link #onProjectileImpact} 的通用直接变形路径负责，不需要在这里动实体。
         if (isPlayer) {
             // 玩家变方块/物品：真正成为该方块/物品（Morph 式渲染替换，与变生物一致）——
             // 不切模式、不隐身、不生成跟随壳实体；玩家本体即目标，客户端把玩家渲染成方块/物品。
@@ -18110,21 +21504,73 @@ public class ModMain {
             sendTransmutationState(sp, true, 0, itemType);
             return;
         }
-        entity.discard();
+        // 主空壳（附体 boss 身体）被变形时：它的"消失"只是换形态，核心要接着跟产物走
+        UUID vesselOrb = entity instanceof PlayerShellEntity ps && ps.isPossessionVessel()
+            ? ps.getPossessedOrb() : null;
+        markShellMorphingIfNeeded(entity);   // 让 PlayerShellEntity#remove 认出"这是变形，不是没了"
+        // 移除原实体：debug 下轮换多种移除手段并各自输出诊断（见 removeForTransmutation）。
+        // 有些模组生物（实测 TheTitansNeo）把 remove() 覆写成空方法、还在 tick 里清掉移除标记，
+        // 活着的时候根本移不掉。这时必须中止：否则原实体既没死、又已进入变形流程，
+        // 就会留下"看不见却仍能打人"的幽灵，并被它自己的死亡/灵魂逻辑复制出第二只。
+        if (!removeForTransmutation(level, entity, itemType)) {
+            // 移不掉：泰坦这类"活着就不可移除"的实体改走压制式形态替换——本体留在原地但被压制
+            // （关 AI + 隐身 + 部件一并隐藏），产物照常生成，从而绕开它全部的移除自卫逻辑。
+            // 其它移不掉的实体仍然中止，避免留下幽灵/复制。
+            if (!isTitansModEntity(entity)) {
+                return;
+            }
+            suppressTitanEntity(level, entity, data);
+            // 压制之后还要把它"存放到加载范围之外"——否则血条与索敌都还在（它们不看隐身/碰撞，
+            // 只看实体是否还在附近）。存放点默认取"原位置水平方向很远"的同一 Y 高度：
+            // 那里通常不在玩家的加载范围里，实体随即进入 HIDDEN 区段。
+            BlockPos stash = defaultTitanStashPos(level, entity.blockPosition());
+            stashSuppressedTitan(entity.getUUID(), stash);
+        }
 
         if (isBlock) {
             Block block = BuiltInRegistries.BLOCK.get(itemTypeRl);
             if (block != null) {
+                BlockPos spawnPos = BlockPos.containing(spawnX, spawnY, spawnZ);
+                BlockState targetState = block.defaultBlockState();
+                if (targetState.isAir()) {
+                    /*
+                     * 【需求 6.5.22 /jafa air_potion】目标方块是空气（air / cave_air / void_air）：
+                     * <b>不能</b>走下面那条下落方块的路——原版 {@code FallingBlockEntity#tick} 开头就是
+                     * {@code if (this.blockState.isAir()) { this.discard(); } }，实体一生成就消失，
+                     * 随即被 {@code onEntityLeaveLevel} 的"未能正常落地"分支按"变形形态被摧毁"结算，
+                     * 原生物会被当场误杀（这条坑在 {@link #pickRandomTransmutationBlock} 的注释里记过）。
+                     * <p>所以这里直接按"<b>已经落地的静态方块</b>"登记：那一格<b>保持空气</b>（不放置任何方块），
+                     * 数据进 {@link #BLOCK_TRANSMUTATIONS}。之后的一切都自动成立：
+                     * <ul>
+                     *   <li>{@link #tickTransmutationBlocks} 的"位置校验"比的是
+                     *       {@code level.getBlockState(pos).is(expected)}，expected 正是空气 →
+                     *       原地就通过，不会去找"被推动的新位置"，也不会判死；</li>
+                     *   <li>它的倒计时照常走，到点 {@code respawnTransmutedEntity} 把原生物放回来
+                     *       （也就是"过一会儿自己复原"）；</li>
+                     *   <li>变形解药 {@link #applyAntidoteSplash} 是<b>按坐标扫这张表</b>的、
+                     *       根本不看那一格是什么方块，所以往这团空气上丢解药同样能提前复原
+                     *       （需求："这些空气也可以被变形解药复原"）。</li>
+                     * </ul>
+                     * 这一步没有产物实体，所以不调 {@code notifyVesselMorphed}；核心那边靠
+                     * {@link #isVesselMorphed} 扫 {@code BLOCK_TRANSMUTATIONS} 也能知道主空壳正在变形形态。
+                     */
+                    BLOCK_TRANSMUTATIONS
+                        .computeIfAbsent(level.dimension().location(), k -> new ConcurrentHashMap<>())
+                        .computeIfAbsent(spawnPos, k -> new java.util.ArrayList<>())
+                        .add(data);
+                    LOGGER.info("[transmute] {} 被变形为空气（{}），登记在 {}，可被变形解药复原",
+                        entity.getType().toShortString(), itemType, spawnPos);
+                    return;
+                }
                 // 非玩家变方块：使用原版下落方块实体（落地还原）。
                 // 不再在生成时预搜索/预放置，而是让方块按原版物理自然下落，
                 // 落地前一瞬间（onEntityLeaveLevel 中 failed-landing 分支）再寻找附近合适放置位置。
-                BlockState targetState = block.defaultBlockState();
-                BlockPos spawnPos = BlockPos.containing(spawnX, spawnY, spawnZ);
                 FallingBlockEntity vanillaFall = FallingBlockEntity.fall(level, spawnPos, targetState);
                 vanillaFall.setPos(spawnX, spawnY, spawnZ);
                 vanillaFall.setDeltaMovement(Vec3.ZERO);
                 vanillaFall.dropItem = false;
                 FALLING_TRANSMUTATIONS.put(vanillaFall.getUUID(), data);
+                notifyVesselMorphed(level, vesselOrb, vanillaFall.getUUID());
             }
         } else {
             net.minecraft.world.item.Item item = BuiltInRegistries.ITEM.get(itemTypeRl);
@@ -18139,8 +21585,159 @@ public class ModMain {
                 ITEM_TRANSMUTATIONS.put(itemEntity.getUUID(), data);
                 ITEM_TRANSMUTATION_POSITIONS.put(itemEntity.getUUID(),
                     BlockPos.containing(spawnX, spawnY, spawnZ));
+                notifyVesselMorphed(level, vesselOrb, itemEntity.getUUID());
             }
         }
+    }
+
+    /** 附体主空壳被变形：把产物告诉核心（核心据此不补新壳、并跟着产物走）。 */
+    private static void notifyVesselMorphed(ServerLevel level, @Nullable UUID orbUuid, @Nullable UUID productUuid) {
+        if (orbUuid != null
+            && level.getEntity(orbUuid)
+                instanceof cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity orb) {
+            orb.onVesselMorphed(productUuid);
+        }
+    }
+
+    /**
+     * 某颗核心的"附体主空壳"现在是不是<b>正处于变形形态</b>（产物还在世界里）。
+     *
+     * <h2>为什么不能只看"产物实体在不在"</h2>
+     * 变成方块时，产物先是下落方块、落地后那个实体就没了（变成一格静态方块，
+     * 数据转进 {@code BLOCK_TRANSMUTATIONS}）—— 只看实体 ID 会误判成"身体丢了"，
+     * 于是核心当场补一具新壳，场上就多出一具 boss 身体。
+     * <p>
+     * 所以这里直接在各张变形数据表里找"哪份 data 的原始 NBT 是这具主空壳"：
+     * 主空壳是 {@code player_shell} 实体、且 NBT 里带着 {@code PossessedOrb}（它属于哪颗核心）。
+     */
+    public static boolean isVesselMorphed(@Nullable UUID orbUuid) {
+        if (orbUuid == null) {
+            return false;
+        }
+        for (TransmutationData data : ITEM_TRANSMUTATIONS.values()) {
+            if (isVesselNbt(data.entityNbt(), orbUuid)) return true;
+        }
+        for (TransmutationData data : FALLING_TRANSMUTATIONS.values()) {
+            if (isVesselNbt(data.entityNbt(), orbUuid)) return true;
+        }
+        for (TransmutationData data : TNT_TRANSMUTATIONS.values()) {
+            if (isVesselNbt(data.entityNbt(), orbUuid)) return true;
+        }
+        for (LivingShellData data : LIVING_SHELLS.values()) {
+            if (isVesselNbt(data.entityNbt(), orbUuid)) return true;
+        }
+        for (Map<BlockPos, java.util.List<TransmutationData>> dimMap : BLOCK_TRANSMUTATIONS.values()) {
+            for (java.util.List<TransmutationData> list : dimMap.values()) {
+                for (TransmutationData data : list) {
+                    if (isVesselNbt(data.entityNbt(), orbUuid)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** 这份（存起来的）原始 NBT 是不是"某颗核心附体主空壳"的（见 {@link #isVesselMorphed}）。 */
+    private static boolean isVesselNbt(CompoundTag entityNbt, UUID orbUuid) {
+        return entityNbt != null
+            && "joes_addons_for_abmc:player_shell".equals(entityNbt.getString("id"))
+            && entityNbt.hasUUID("PossessedOrb")
+            && orbUuid.equals(entityNbt.getUUID("PossessedOrb"));
+    }
+
+    /**
+     * 这个 UUID 的实体现在是不是<b>正以变形形态存在</b>（它被变形药水换成了产物，还没变回来）。
+     * <p>
+     * 用在哪：空壳消失时判断"召唤物记的那具壳确实没了"是不是<b>变形</b>造成的 ——
+     * 变形只是换了形态（马上会变回来），那时必须放过它的召唤物。
+     * 判据是各张变形数据表里存着的原始 NBT 里的 {@code UUID}（变形前抓的，含原 UUID）。
+     */
+    public static boolean isUuidCurrentlyMorphed(@Nullable UUID uuid) {
+        if (uuid == null) {
+            return false;
+        }
+        for (TransmutationData data : ITEM_TRANSMUTATIONS.values()) {
+            if (nbtHasUuid(data.entityNbt(), uuid)) return true;
+        }
+        for (TransmutationData data : FALLING_TRANSMUTATIONS.values()) {
+            if (nbtHasUuid(data.entityNbt(), uuid)) return true;
+        }
+        for (TransmutationData data : TNT_TRANSMUTATIONS.values()) {
+            if (nbtHasUuid(data.entityNbt(), uuid)) return true;
+        }
+        for (LivingShellData data : LIVING_SHELLS.values()) {
+            if (nbtHasUuid(data.entityNbt(), uuid)) return true;
+        }
+        for (Map<BlockPos, java.util.List<TransmutationData>> dimMap : BLOCK_TRANSMUTATIONS.values()) {
+            for (java.util.List<TransmutationData> list : dimMap.values()) {
+                for (TransmutationData data : list) {
+                    if (nbtHasUuid(data.entityNbt(), uuid)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** 这份存起来的原始 NBT 里的实体 UUID 是不是它。 */
+    private static boolean nbtHasUuid(CompoundTag entityNbt, UUID uuid) {
+        return entityNbt != null && entityNbt.hasUUID("UUID") && uuid.equals(entityNbt.getUUID("UUID"));
+    }
+
+    /**
+     * 附体结束时让"附体主空壳留下的变形产物"<b>作废</b>。
+     * <p>
+     * 不作废的话：那件物品/那格方块/那只生物壳会按自己的倒计时把主空壳"复原"出来 ——
+     * 而核心早已离场，于是世界里多出一具没有核心的 boss 身体（还会自己索敌打架）。
+     * <p>
+     * 这里刻意<b>只打标记、不动表结构</b>（方法可能在某张表的遍历中被间接调到：
+     * 产物到点被"重建并击杀"→ 主空壳死亡 → Retreat → 回到本方法，
+     * 这时候对同一张表做 removeIf 就是 ConcurrentModificationException）。
+     * 打上标记之后，各 tick 循环会照常把产物收掉（见 {@link #tickTransmutationItems} 等处），
+     * 而"复原"这条路已经走不通了（{@link #respawnTransmutedEntity} / {@link #revertLivingShell} 直接返回）。
+     */
+    public static void destroyVesselMorphProducts(@Nullable UUID orbUuid) {
+        if (orbUuid == null) {
+            return;
+        }
+        for (TransmutationData data : ITEM_TRANSMUTATIONS.values()) {
+            if (isVesselNbt(data.entityNbt(), orbUuid)) {
+                cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.markNbtOrphaned(data.entityNbt());
+            }
+        }
+        for (TransmutationData data : FALLING_TRANSMUTATIONS.values()) {
+            if (isVesselNbt(data.entityNbt(), orbUuid)) {
+                cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.markNbtOrphaned(data.entityNbt());
+            }
+        }
+        for (TransmutationData data : TNT_TRANSMUTATIONS.values()) {
+            if (isVesselNbt(data.entityNbt(), orbUuid)) {
+                cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.markNbtOrphaned(data.entityNbt());
+            }
+        }
+        for (LivingShellData data : LIVING_SHELLS.values()) {
+            if (isVesselNbt(data.entityNbt(), orbUuid)) {
+                cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.markNbtOrphaned(data.entityNbt());
+            }
+        }
+        for (Map<BlockPos, java.util.List<TransmutationData>> dimMap : BLOCK_TRANSMUTATIONS.values()) {
+            for (java.util.List<TransmutationData> list : dimMap.values()) {
+                for (TransmutationData data : list) {
+                    if (isVesselNbt(data.entityNbt(), orbUuid)) {
+                        cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons
+                            .markNbtOrphaned(data.entityNbt());
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 附体空壳<b>真的没了</b>时调用（入口见 {@code PlayerShellEntity#remove}）：
+     * 把挂在它名下的一切立刻清场 —— 召唤物本体，以及召唤物变形后的产物。
+     */
+    public static void onPossessionShellGone(net.minecraft.server.MinecraftServer server,
+            PlayerShellEntity shell, UUID orbUuid) {
+        cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons
+            .destroyAllForShell(server, shell, orbUuid);
     }
 
     // ==================== LIVING SHELL TRANSMUTATION ====================
@@ -18197,32 +21794,42 @@ public class ModMain {
             sendTransmutationState(sp, true, 0, "player_shell:" + skinName);
             return;
         } else {
-            entity.discard();
-        }
+            // 主空壳（附体 boss 身体）被变形：它的"消失"只是换形态，核心要接着跟产物走
+            UUID vesselOrb = entity instanceof PlayerShellEntity ps && ps.isPossessionVessel()
+                ? ps.getPossessedOrb() : null;
+            markShellMorphingIfNeeded(entity);   // 让 PlayerShellEntity#remove 认出"这是变形，不是没了"
+            // 移除原实体：debug 下轮换多种移除手段并各自输出诊断（见 removeForTransmutation）。
+            // 本方法的作用域里没有 itemType，按这个分支的实际编码传 player_shell:<皮肤名>。
+            // 移不掉就中止，避免幽灵/复制（理由见 performTransmutation 里同一处调用）。
+            if (!removeForTransmutation(level, entity, "player_shell:" + skinName)) {
+                return;
+            }
 
-        PlayerShellEntity shell = new PlayerShellEntity(ModEntities.PLAYER_SHELL.get(), level);
-        shell.setSkinTexture(skinName);
-        shell.setPos(spawnX, spawnY, spawnZ);
-        shell.setPersistenceRequired();
-        // 变形壳标记：死亡时只掉落原生物/原玩家物品，不掉落壳本身的掉落物
-        shell.getPersistentData().putBoolean(TRANSMUTATION_SHELL_TAG, true);
-        // 玩家变身的壳：禁用 AI，避免其自主寻路/移动与“跟随玩家”贴附逻辑互相拉扯造成抽搐
-        if (playerUuid != null) {
-            shell.setNoAi(true);
-            // 玩家变形跟随壳：右键点击穿透（不阻挡互动），与生物壳保持一致
-            shell.getPersistentData().putBoolean("jafa_transmutation_follow", true);
-        }
-        shell.setTransmutationOrigin(entityNbt, playerUuid,
-            killerUuid != null ? killerUuid : new UUID(0, 0));
-        shell.setRemainingTicks(remainingTicks);
-        level.addFreshEntity(shell);
+            PlayerShellEntity shell = new PlayerShellEntity(ModEntities.PLAYER_SHELL.get(), level);
+            shell.setSkinTexture(skinName);
+            shell.setPos(spawnX, spawnY, spawnZ);
+            shell.setPersistenceRequired();
+            // 变形壳标记：死亡时只掉落原生物/原玩家物品，不掉落壳本身的掉落物
+            shell.getPersistentData().putBoolean(TRANSMUTATION_SHELL_TAG, true);
+            // 玩家变身的壳：禁用 AI，避免其自主寻路/移动与“跟随玩家”贴附逻辑互相拉扯造成抽搐
+            if (playerUuid != null) {
+                shell.setNoAi(true);
+                // 玩家变形跟随壳：右键点击穿透（不阻挡互动），与生物壳保持一致
+                shell.getPersistentData().putBoolean("jafa_transmutation_follow", true);
+            }
+            shell.setTransmutationOrigin(entityNbt, playerUuid,
+                killerUuid != null ? killerUuid : new UUID(0, 0));
+            shell.setRemainingTicks(remainingTicks);
+            level.addFreshEntity(shell);
 
-        // 玩家空壳：玩家本体不变形、不换算血量，max 传 0 禁用按比例换算
-        LIVING_SHELLS.put(shell.getUUID(), new LivingShellData(entityNbt, playerUuid,
-            killerUuid != null ? killerUuid : new UUID(0, 0), remainingTicks, true,
-            0f, 0f, 0f));
-        if (playerUuid != null) {
-            sendTransmutationState((ServerPlayer) entity, true, shell.getId());
+            // 玩家空壳：玩家本体不变形、不换算血量，max 传 0 禁用按比例换算
+            LIVING_SHELLS.put(shell.getUUID(), new LivingShellData(entityNbt, playerUuid,
+                killerUuid != null ? killerUuid : new UUID(0, 0), remainingTicks, true,
+                0f, 0f, 0f));
+            notifyVesselMorphed(level, vesselOrb, shell.getUUID());
+            if (playerUuid != null) {
+                sendTransmutationState((ServerPlayer) entity, true, shell.getId());
+            }
         }
     }
 
@@ -18280,7 +21887,14 @@ public class ModMain {
             applyMorphSpecialAbilities(sp, entityTypeId);
             return; // 玩家走渲染替换，不再生成跟随生物壳
         }
-        entity.discard();
+        // 主空壳（附体 boss 身体）被变形：它的"消失"只是换形态，核心要接着跟产物走
+        UUID vesselOrb = entity instanceof PlayerShellEntity ps && ps.isPossessionVessel()
+            ? ps.getPossessedOrb() : null;
+        markShellMorphingIfNeeded(entity);   // 让 PlayerShellEntity#remove 认出"这是变形，不是没了"
+        // 移除原实体：移不掉就中止，避免幽灵/复制（理由见 performTransmutation 里同一处调用）。
+        if (!removeForTransmutation(level, entity, "mob_shell:" + entityTypeId)) {
+            return;
+        }
 
         ResourceLocation rl = ResourceLocation.tryParse(entityTypeId);
         if (rl == null) return;
@@ -18332,6 +21946,16 @@ public class ModMain {
         LIVING_SHELLS.put(mob.getUUID(), new LivingShellData(entityNbt, playerUuid,
             killerUuid != null ? killerUuid : new UUID(0, 0), remainingTicks, false,
             carriedOrigMax, mobEntity.getMaxHealth(), mobEntity.getHealth()));
+        notifyVesselMorphed(level, vesselOrb, mob.getUUID());
+        // 同步写进实体持久化数据：内存表退出存档就丢，写在这里才能重进后由 reconstructMobShell 重建。
+        // 剩余时间存成“绝对截止刻”而不是剩余刻数——内存里的剩余值每刻都在减，而实体数据不会被每刻刷新，
+        // 存绝对值才能让跨存档的到期时刻保持正确。
+        CompoundTag shellPersist = mobEntity.getPersistentData();
+        shellPersist.put(SHELL_ORIGIN_NBT_TAG, entityNbt.copy());
+        if (playerUuid != null) shellPersist.putUUID(SHELL_ORIGIN_PLAYER_TAG, playerUuid);
+        if (killerUuid != null) shellPersist.putUUID(SHELL_ORIGIN_KILLER_TAG, killerUuid);
+        shellPersist.putLong(SHELL_DEADLINE_TAG, level.getGameTime() + remainingTicks);
+        shellPersist.putFloat(SHELL_ORIGINAL_MAX_HEALTH_TAG, carriedOrigMax);
         // 女巫Boss自我变形：给变形后的生物打标记，让它稍后往脚下丢变形解药把自己还原为 witchboss 本体
         if (wasWitchBoss && playerUuid == null) {
             mobEntity.getPersistentData().putBoolean(WITCH_BOSS_SELF_TRANS_TAG, true);
@@ -18349,6 +21973,37 @@ public class ModMain {
             shell.getRemainingTicks(),
             true,
             0f, 0f, 0f));
+    }
+
+    /**
+     * 生物壳重新加载时，依据写在实体持久化数据里的变形数据把内存表 {@code LIVING_SHELLS} 重建回来。
+     * <p>
+     * 为什么需要它：{@code LIVING_SHELLS} 只活在内存里，退出存档即丢；而生物壳是普通的生物实体，
+     * 没法像 {@link PlayerShellEntity} 那样自带字段存 NBT，所以数据写在它的 PersistentData 里
+     * （见 {@code performMobShellTransmutation}）。没有这一步，重进存档后对它丢变形解药就无从复原原生生物。
+     * <p>
+     * 血量按"当前/最大"重新取一次实体实时值：壳在存档前掉过血也能正确还原成原生物的比例血量。
+     * 到期时刻用的是绝对刻（{@code SHELL_DEADLINE_TAG}），所以跨存档的剩余时间不会因为每次重进而重置。
+     */
+    private static void reconstructMobShell(LivingEntity shell) {
+        if (LIVING_SHELLS.containsKey(shell.getUUID())) return;
+        CompoundTag data = shell.getPersistentData();
+        // 旧存档没写过这些数据：无从恢复，维持现状
+        if (!data.contains(SHELL_ORIGIN_NBT_TAG) || !data.contains(SHELL_DEADLINE_TAG)) return;
+        long remaining = data.getLong(SHELL_DEADLINE_TAG) - shell.level().getGameTime();
+        if (remaining < 0) return; // 已到期，交给原有的到期逻辑处理
+        UUID playerUuid = data.hasUUID(SHELL_ORIGIN_PLAYER_TAG) ? data.getUUID(SHELL_ORIGIN_PLAYER_TAG) : null;
+        UUID killerUuid = data.hasUUID(SHELL_ORIGIN_KILLER_TAG)
+            ? data.getUUID(SHELL_ORIGIN_KILLER_TAG) : new UUID(0, 0);
+        LIVING_SHELLS.put(shell.getUUID(), new LivingShellData(
+            data.getCompound(SHELL_ORIGIN_NBT_TAG).copy(),
+            playerUuid,
+            killerUuid,
+            (int) remaining,
+            false,
+            data.getFloat(SHELL_ORIGINAL_MAX_HEALTH_TAG),
+            shell.getMaxHealth(),
+            shell.getHealth()));
     }
 
     // 生物壳/玩家空壳被杀死：连带杀死原生物（玩家/宠物/普通生物）
@@ -18386,6 +22041,10 @@ public class ModMain {
     // 重建原生物并击杀；宠物用对应“体验卡”自定义伤害，普通生物用通用伤害
     private static void handleLivingShellKillCredit(ServerLevel level, CompoundTag originNbt,
             UUID killerUuid, BlockPos pos, DamageSource petDamageSource) {
+        // 主人空壳已经没了：产物本身就已经被判销毁，不必再"重建本体再击杀"（那会多出一次死亡播报）
+        if (cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.isNbtOrphaned(originNbt)) {
+            return;
+        }
         // 女巫Boss 自变形形态（生物壳）被杀：按比例扣血而非秒杀，并阶段1→阶段2
         if (witchBossSelfFormDestroyed(level, originNbt, pos, killerUuid)) {
             return;
@@ -18455,6 +22114,19 @@ public class ModMain {
             Map.Entry<UUID, LivingShellData> entry = it.next();
             UUID uuid = entry.getKey();
             LivingShellData data = entry.getValue();
+            // 主人空壳已经没了：这具"生物/玩家壳"产物是召唤物变形来的，当场收掉，也不复原。
+            // 它要是正待在没加载的区块里，条目就留着（已带标记）——等它加载回来再由本循环收掉。
+            if (cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.isNbtOrphaned(data.entityNbt())) {
+                for (ServerLevel l : server.getAllLevels()) {
+                    Entity orphan = l.getEntity(uuid);
+                    if (orphan != null) {
+                        orphan.discard();
+                        it.remove();
+                        break;
+                    }
+                }
+                continue;
+            }
             // 跨维度查找壳体：壳体可能位于任意维度（玩家/生物可能被传送）
             ServerLevel shellLevel = null;
             Entity shell = null;
@@ -18483,7 +22155,7 @@ public class ModMain {
             float liveHealth = (shell instanceof net.minecraft.world.entity.LivingEntity leS)
                 ? leS.getHealth() : data.currentHealth();
             LivingShellData nd = new LivingShellData(data.entityNbt(), data.playerUuid(),
-                data.killerUuid(), data.remainingTicks() - 1, data.isPlayerShell(),
+                data.killerUuid(), data.remainingTicks() - transmutationTickStep(), data.isPlayerShell(),
                 data.originalMaxHealth(), data.shellMaxHealth(), liveHealth);
             entry.setValue(nd);
             if (nd.remainingTicks() <= 0) {
@@ -18498,6 +22170,11 @@ public class ModMain {
     // 复原玩家空壳/生物壳：玩家恢复游玩模式并传送回来，普通生物重新生成回原形态。
     // 返回复原出的生物实体（若为普通生物），供解药解除女巫Boss自变形形态时计数。
     private static net.minecraft.world.entity.LivingEntity revertLivingShell(ServerLevel level, LivingShellData data, BlockPos pos) {
+        // 主人空壳已经没了（见 destroyMorphedSummonProducts）：这份变形作废，
+        // 无论走哪条路（倒计时到期、变形解药）都不再变回来
+        if (cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.isNbtOrphaned(data.entityNbt())) {
+            return null;
+        }
         if (data.playerUuid() != null) {
             ServerPlayer player = level.getServer().getPlayerList().getPlayer(data.playerUuid());
             if (player != null) {
@@ -18546,6 +22223,11 @@ public class ModMain {
                     leRev.setHealth(data.currentHealth() / data.shellMaxHealth()
                         * data.originalMaxHealth());
                 }
+                // 生物↔生物变形复原：重建出来的实体带回了原版"见谁打谁"的目标 goal
+                //（命令式的共享索敌不进存档），必须当场按标记重装，否则它回头就会去打那具空壳。
+                repairRebuiltPossessionSummon(revived);
+                // 复原的若是"附体主空壳"（boss 身体被变成生物后又变回来）：让核心重新认领它
+                relinkVesselAfterRebuild(level, revived);
                 return revived instanceof net.minecraft.world.entity.LivingEntity le ? le : null;
             } else {
             }
@@ -19035,6 +22717,25 @@ public class ModMain {
             handleTntStaffCreeperDeath(serverLevel, event.getEntity(), creeper);
         }
         // Him 权杖头颅击杀直接复用原版死亡消息（death.attack.herobrine.head），无需在此手动播报。
+        // 成就「知错就改」：击败**附体母体**（幸运核心附体真玩家时产生的那具 boss 空壳）。
+        // 只判母体（possessedOrbUuid != null，见 PlayerShellEntity#isPossessionVessel）：
+        // 刷怪蛋放出的、被同化产生的空壳都不算；附体超时/切创造模式/核心自己血量归零都走
+        // discard() 那种"正常收场"，根本不会走到死亡事件，所以也不会误触发。
+        if (event.getEntity() instanceof cn.autoforged.joes_addons_for_abmc.entity.PlayerShellEntity shell
+            && shell.isPossessionVessel()) {
+            ServerPlayer killer = killCreditPlayer(shell, event.getSource());
+            if (killer != null) {
+                awardAdvancement(killer, GET_RID_OF_GREED_ADV);
+            }
+        }
+        // 成就「见证奇迹」：末影龙/凋灵的最后一击出自"附体这一侧"时，
+        // 位于出手那具玩家空壳 50 格以内的在线玩家点亮<b>对应那一只</b>的条件
+        // （该成就要求末影龙、凋灵<b>各一次</b>，见 grantWitnessTheImpossible）。
+        // 凋灵要先排掉"己方召唤的凋灵"——那只死掉是我方损失，不是击败 boss。
+        if ((event.getEntity() instanceof EnderDragon || event.getEntity() instanceof WitherBoss)
+            && !cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.isSummon(event.getEntity())) {
+            grantWitnessTheImpossible(serverLevel, event.getEntity(), event.getSource());
+        }
         // /revive 机制：捕获被 /kill 命令（genericKill 伤害）杀死的非玩家生物，存档供 /revive 复活。
         // 使用 entity.save() 存储完整实体信息（含 id），与变形药水的存储格式一致。
         // 注意：变形物品被摧毁/被漏斗吸走时重建并击杀的原生物同样走 genericKill，但它们不是
@@ -19143,6 +22844,20 @@ public class ModMain {
     private static void onExplosionDetonate(ExplosionEvent.Detonate event) {
         if (!(event.getLevel() instanceof ServerLevel serverLevel)) return;
 
+        // 爆炸之箭：不伤及射出者 —— 把射箭的人从"受影响实体"里剔除。
+        // NeoForge 明确说明这个列表可以修改来改变结果；挪掉之后射手既不吃伤害、也不吃爆炸击退。
+        Entity explosionSource = event.getExplosion().getDirectSourceEntity();
+        if (explosionSource instanceof cn.autoforged.joes_addons_for_abmc.entity.ExplosiveArrow arrow) {
+            Entity shooter = arrow.getOwner();
+            if (shooter != null) {
+                event.getAffectedEntities().removeIf(e -> e == shooter);
+            }
+        }
+
+        // 幸运落石事件生成的下落/落地 TNT：被爆炸波及时立刻引爆（引信归零，无视自身引信）
+        cn.autoforged.joes_addons_for_abmc.block.LuckyFallingVolleyEvent.onExplosionDetonate(
+            serverLevel, event.getAffectedBlocks(), event.getAffectedEntities());
+
         // 附魔生物·火矢：带火焰爆炸的爆炸性弹射物，在其爆炸影响区域放火（参考下界床/主世界重生锚）。
         if (!FIRE_EXPLOSIVE_PROJECTILES.isEmpty()) {
             boolean foundFire = false;
@@ -19217,6 +22932,8 @@ public class ModMain {
         if (opt.isEmpty() || !(opt.get() instanceof Witch revived)) return true;
         revived.getPersistentData().putBoolean(TRANSMUTATION_REKILL_TAG, true); // 避免 /kill 存档膨胀
         revived.getPersistentData().putBoolean(WITCH_BOSS_TAG, true);
+        // 成就「让你惹Techno！」：摧毁女巫自变形方块/物品的玩家计入参战名单（任意阶段）
+        recordWitchBossFighter(revived, destroyerUuid);
         revived.setPos(x, y, z);
         // 已损失 10% 最大生命（下限保留 1）
         double maxHp = revived.getMaxHealth();
@@ -19295,6 +23012,29 @@ public class ModMain {
     // 也会用通用伤害击杀，以保证被命名的宠物仍能播报“体验卡过期”与原版死亡消息。
     private static void handleTransmutationKillCredit(ServerLevel serverLevel, TransmutationData data,
             BlockPos pos, UUID destroyerUuid) {
+        // 主人空壳已经没了：这份变形已被判销毁，别再"重建本体再击杀"（见 destroyMorphedSummonProducts）
+        if (cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.isNbtOrphaned(data.entityNbt)) {
+            return;
+        }
+        // 【压制式变形】原实体没有被移除、而是被压制后留在原地（泰坦类）：
+        // 产物被摧毁 == 打它本体。走"解除压制 + 用 titan_attack 施加有效致命伤害"，
+        // 绝不能照 NBT 重建（原实体还在，重建就会多出一只 = 复制）。
+        if (data.entityNbt().getBoolean(TITAN_SUPPRESSED_TAG)) {
+            UUID originUuid = data.entityNbt().hasUUID("UUID") ? data.entityNbt().getUUID("UUID") : null;
+            ServerPlayer killer = destroyerUuid != null && !destroyerUuid.equals(new UUID(0, 0))
+                ? serverLevel.getServer().getPlayerList().getPlayer(destroyerUuid) : null;
+            if (originUuid == null) return;
+            // 用 unsuppressTitanEntity 的返回值拿实体：它内部会处理"直接引用失效"的情况
+            // （存放区块卸载后实体对象会被换新），比在这里自己查可靠。
+            LivingEntity le = unsuppressTitanEntity(serverLevel, originUuid);
+            if (le != null && le.level() instanceof ServerLevel leLevel) {
+                hurtTitanLethally(leLevel, le, killer);
+            } else {
+                LOGGER.warn("[transmute][SUPPRESS] 产物被摧毁，但没能取回被压制的原实体（uuid={}），跳过结算",
+                    originUuid);
+            }
+            return;
+        }
         // 女巫Boss 自变形形态（方块/物品）被摧毁：按比例扣血而非秒杀，并阶段1→阶段2
         if (witchBossSelfFormDestroyed(serverLevel, data.entityNbt, pos, destroyerUuid)) {
             return;
@@ -19364,6 +23104,16 @@ public class ModMain {
         }
     }
 
+    /** 在任意已加载维度里按 UUID 找实体（被压制的原实体可能被传送到了别的维度）。 */
+    private static Entity findEntityAnyLevel(net.minecraft.server.MinecraftServer server, @Nullable UUID uuid) {
+        if (server == null || uuid == null) return null;
+        for (ServerLevel l : server.getAllLevels()) {
+            Entity e = l.getEntity(uuid);
+            if (e != null) return e;
+        }
+        return null;
+    }
+
     // 与“物品/方块体验卡过期”死亡消息绑定的自定义伤害来源
     private static net.minecraft.world.damagesource.DamageSource transmutationDamage(
             ServerLevel level, boolean isBlock) {
@@ -19374,6 +23124,23 @@ public class ModMain {
     }
 
     private static net.minecraft.world.entity.LivingEntity respawnTransmutedEntity(ServerLevel level, TransmutationData data, BlockPos pos) {
+        // 主人空壳已经没了（见 destroyMorphedSummonProducts）：这份变形作废 —— 到点不复原，
+        // 变形解药也对它无效（"不会变回去"就是靠这个判空返回实现的）
+        if (cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.isNbtOrphaned(data.entityNbt())) {
+            return null;
+        }
+        // 【压制式变形】原实体没被移除、只是被压制（泰坦类）：到点做的是"解除压制"，
+        // 绝不能照 NBT 重建 —— 原实体还在世界里，重建就会多出一只（复制）。
+        if (data.entityNbt().getBoolean(TITAN_SUPPRESSED_TAG)) {
+            UUID originUuid = data.entityNbt().hasUUID("UUID") ? data.entityNbt().getUUID("UUID") : null;
+            Entity suppressed = findEntityAnyLevel(level.getServer(), originUuid);
+            if (suppressed instanceof LivingEntity le && le.level() instanceof ServerLevel leLevel) {
+                unsuppressTitanEntity(leLevel, le.getUUID());
+            } else if (originUuid != null) {
+                SUPPRESSED_ENTITIES.remove(originUuid);
+            }
+            return null;
+        }
         CompoundTag entityNbt = data.entityNbt.copy();
         if (!entityNbt.contains("id")) return null;
 
@@ -19401,6 +23168,18 @@ public class ModMain {
             Entity resurrected = optEntity.get();
             resurrected.setPos(spawnX, spawnY, spawnZ);
             level.addFreshEntity(resurrected);
+            // 玩家空壳刚被解除变形：记下"刚刚变回来"（变形解药特攻会零帧起手），
+            // 并按用户指定<b>移除它对变形药水的免疫</b>（此后它能被再次变形）。
+            if (resurrected instanceof PlayerShellEntity shell) {
+                shell.markUntransmuted();
+            } else {
+                // 附体召唤物被变形又变回来：从 NBT 重建的新实例带回了原版"见谁打谁"的目标 goal
+                //（命令式的共享索敌不进存档），必须当场按标记重装 —— 否则它转头就会去打最近的活体，
+                // 而那通常就是那具附体空壳。详见 repairRebuiltPossessionSummon。
+                repairRebuiltPossessionSummon(resurrected);
+            }
+            // 复原本体就是"附体主空壳"（boss 身体被变形药水变成物品/方块后又变回来）：让核心重新认领它
+            relinkVesselAfterRebuild(level, resurrected);
             registerWitchBossAfterRebuild(resurrected); // 女巫Boss 还原后重新登记血条跟踪（新 UUID）
             purgeWitchBossTracking(oldBossUuid); // 摘除旧 UUID 血条（非女巫生物的 UUID 本就未跟踪，no-op）
             return resurrected instanceof net.minecraft.world.entity.LivingEntity le ? le : null;
@@ -20047,7 +23826,7 @@ public class ModMain {
             Map.Entry<UUID, Integer> e = it.next();
             ServerPlayer sp = server.getPlayerList().getPlayer(e.getKey());
             if (sp == null) continue; // 离线：保留剩余计时，等回归后再倒计时
-            int remain = e.getValue() - 1;
+            int remain = e.getValue() - transmutationTickStep();
             if (remain > 0) {
                 e.setValue(remain);
             } else {
@@ -21004,6 +24783,17 @@ public class ModMain {
             TransmutationData data = entry.getValue();
             Entity entity = level.getEntity(uuid);
 
+            // 主人空壳已经没了：这份"变形体验卡"作废 —— 产物就地销毁（无掉落），也不复原
+            // （变形解药同样无效）。产物还没加载时留着条目，等它加载后本循环会再判一次。
+            if (cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.isNbtOrphaned(data.entityNbt())) {
+                if (entity != null) {
+                    entity.discard();
+                    it.remove();
+                    ITEM_TRANSMUTATION_POSITIONS.remove(uuid);
+                }
+                continue;
+            }
+
             if (entity == null) {
                 // 区块卸载期间实体不在关卡内：等重新加载后继续倒计时。
                 // 若所在区块仍加载却找不到实体，说明物品已被摧毁（烧掉/消失），按破坏结算。
@@ -21059,7 +24849,7 @@ public class ModMain {
                     continue;
                 }
                 makeTransmutedFollowPlayer(entity, player);
-                TransmutationData nd = new TransmutationData(data.entityNbt, data.remainingTicks - 1,
+                TransmutationData nd = new TransmutationData(data.entityNbt, data.remainingTicks - transmutationTickStep(),
                     data.killerPlayerUuid(), data.itemType, data.playerUuid());
                 ITEM_TRANSMUTATIONS.put(uuid, nd);
                 if (nd.remainingTicks() <= 0) {
@@ -21072,7 +24862,7 @@ public class ModMain {
                 continue;
             }
 
-            TransmutationData newData = new TransmutationData(data.entityNbt, data.remainingTicks - 1,
+            TransmutationData newData = new TransmutationData(data.entityNbt, data.remainingTicks - transmutationTickStep(),
                 data.killerPlayerUuid(), data.itemType, data.playerUuid());
             ITEM_TRANSMUTATIONS.put(uuid, newData);
 
@@ -21248,6 +25038,12 @@ public class ModMain {
             // 对同一个位置上的每条生物数据逐条倒计时，满足条件的一条条复原
             for (int i = list.size() - 1; i >= 0; i--) {
                 TransmutationData data = list.get(i);
+                // 主人空壳已经没了：这个"方块形态"作废 —— 直接从表里摘掉，
+                // 这一格上的数据全空之后，下方原有的 level.destroyBlock(pos, false) 会把它毁掉（无掉落）
+                if (cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.isNbtOrphaned(data.entityNbt())) {
+                    list.remove(i);
+                    continue;
+                }
                 // 玩家变身为方块时不会进入本分支（下落方块在 FALLING_TRANSMUTATIONS 内跟随玩家，
                 // 永不落地成放置方块）。此处仅作兜底：离线则暂停倒计时等待其回归。
                 if (data.playerUuid() != null) {
@@ -21257,7 +25053,7 @@ public class ModMain {
                     }
                     player.fallDistance = 0.0F;
                 }
-                TransmutationData newData = new TransmutationData(data.entityNbt, data.remainingTicks - 1,
+                TransmutationData newData = new TransmutationData(data.entityNbt, data.remainingTicks - transmutationTickStep(),
                     data.killerPlayerUuid(), data.itemType, data.playerUuid());
                 list.set(i, newData);
                 if (newData.remainingTicks <= 0) {

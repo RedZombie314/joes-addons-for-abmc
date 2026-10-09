@@ -1,0 +1,7 @@
+{
+  "type": "joes_addons_for_abmc:lucky_temple",
+  "biomes": "minecraft:plains",
+  "step": "surface_structures",
+  "terrain_adaptation": "none",
+  "spawn_overrides": {}
+}

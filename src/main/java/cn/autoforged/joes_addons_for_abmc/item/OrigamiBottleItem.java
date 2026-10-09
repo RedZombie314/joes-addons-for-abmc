@@ -1,5 +1,6 @@
 package cn.autoforged.joes_addons_for_abmc.item;
 
+import cn.autoforged.joes_addons_for_abmc.ModMain;
 import cn.autoforged.joes_addons_for_abmc.entity.EnchantedOrigamiEntity;
 import cn.autoforged.joes_addons_for_abmc.entity.ModEntities;
 import net.minecraft.core.BlockPos;
@@ -8,6 +9,7 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionResult;
@@ -86,6 +88,10 @@ public class OrigamiBottleItem extends Item {
 
         // 只生成成功时才清空瓶内数据（避免残留）
         serverLevel.addFreshEntity(origami);
+        // 成就「给我好好地骚扰他们去！」：成功放生出属于自己（或首次被自己收容）的千纸鹤
+        if (player instanceof ServerPlayer sp) {
+            ModMain.awardAdvancement(sp, ModMain.ORIGAMI_RELEASED_ADV);
+        }
         serverLevel.playSound(null, spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5,
             SoundEvents.BAT_TAKEOFF, SoundSource.NEUTRAL, 0.5F, 1.2F);
 

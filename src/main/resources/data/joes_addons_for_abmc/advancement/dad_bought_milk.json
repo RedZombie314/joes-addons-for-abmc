@@ -1,0 +1,31 @@
+{
+  "parent": "joes_addons_for_abmc:movement",
+  "display": {
+    "icon": {
+      "id": "joes_addons_for_abmc:staff",
+      "components": {
+        "joes_addons_for_abmc:blocktype": "bedrock"
+      }
+    },
+    "title": {
+      "translate": "advancements.joes_addons_for_abmc.dad_bought_milk.title"
+    },
+    "description": {
+      "translate": "advancements.joes_addons_for_abmc.dad_bought_milk.description"
+    },
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": true,
+    "hidden": false
+  },
+  "criteria": {
+    "watch_them_fly": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "requirements": [
+    [
+      "watch_them_fly"
+    ]
+  ]
+}

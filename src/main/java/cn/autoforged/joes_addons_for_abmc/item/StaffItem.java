@@ -329,6 +329,14 @@ public class StaffItem extends Item {
         if ("note_block".equals(blockType)) {
             return UseAnim.BOW;
         }
+        // 蜂巢权杖：长按右键吸收附近蜜蜂，同样用拉弓动画表示"长按"
+        if ("bee_nest".equals(blockType)) {
+            return UseAnim.BOW;
+        }
+        // 工作台权杖：整合成过程（吸收 → 逐件合成 → 喷发）都用拉弓动画表示"正在进行"
+        if ("crafting_table".equals(blockType)) {
+            return UseAnim.BOW;
+        }
         return UseAnim.BLOCK;
     }
 
@@ -365,6 +373,39 @@ public class StaffItem extends Item {
                 ModMain.executeFurnaceStaffAbility(player, stack, hand);
             }
             return InteractionResultHolder.sidedSuccess(stack, level.isClientSide());
+        }
+        // 工作台权杖：吸收范围内掉落物 → 每 2 刻合成一件 → 连同剩余物一起喷出（见 CraftingStaffCrafting）
+        // 整段过程播放拉弓动画：客户端先按"范围内有掉落物"预测并进入"使用中"状态
+        // （使用状态是客户端预测的，只让服务端 startUsingItem 玩家自己看不到姿势）。
+        // 会话进行中再次右键 → 继续吸收新掉落物（不重置遍历），会话结束后由它 stopUsingItem 收弓。
+        if ("crafting_table".equals(blockType)) {
+            if (level.isClientSide()) {
+                if (cn.autoforged.joes_addons_for_abmc.craftingstaff.CraftingStaffCrafting
+                    .hasItemInRange(level, player)) {
+                    player.startUsingItem(hand);
+                    return InteractionResultHolder.consume(stack);
+                }
+                return InteractionResultHolder.pass(stack);
+            }
+            if (player instanceof net.minecraft.server.level.ServerPlayer serverPlayer) {
+                // 会话进行中：重新打开吸收阶段补充材料，遍历进度（已做过的配方 / 品质门槛）保持不变
+                if (cn.autoforged.joes_addons_for_abmc.craftingstaff.CraftingStaffCrafting.hasSession(serverPlayer)) {
+                    if (cn.autoforged.joes_addons_for_abmc.craftingstaff.CraftingStaffCrafting
+                        .hasItemInRange(level, player)) {
+                        cn.autoforged.joes_addons_for_abmc.craftingstaff.CraftingStaffCrafting
+                            .absorbMore(serverPlayer);
+                        player.startUsingItem(hand);
+                        return InteractionResultHolder.consume(stack);
+                    }
+                    return InteractionResultHolder.pass(stack);
+                }
+                if (cn.autoforged.joes_addons_for_abmc.craftingstaff.CraftingStaffCrafting.start(serverPlayer)) {
+                    player.startUsingItem(hand);
+                    return InteractionResultHolder.consume(stack);
+                }
+            }
+            // 范围内没有掉落物：这次右键什么都不做
+            return InteractionResultHolder.pass(stack);
         }
         if ("bedrock".equals(blockType)) {
             if (!level.isClientSide()) {
@@ -528,6 +569,11 @@ public class StaffItem extends Item {
             }
             return InteractionResultHolder.sidedSuccess(stack, level.isClientSide());
         }
+        if ("bee_nest".equals(blockType)) {
+            // 蜂巢权杖：长按右键吸收附近 50 格的蜜蜂进入权杖（拉弓动画），由 onUseTick 每刻驱动。
+            player.startUsingItem(hand);
+            return InteractionResultHolder.consume(stack);
+        }
         return InteractionResultHolder.pass(stack);
     }
 
@@ -589,6 +635,13 @@ public class StaffItem extends Item {
             }
             return;
         }
+        if ("bee_nest".equals(blockType)) {
+            // 蜂巢权杖：每刻吸收 50 格内的蜜蜂进入权杖（仅服务端）。
+            if (livingEntity instanceof net.minecraft.server.level.ServerPlayer sp) {
+                cn.autoforged.joes_addons_for_abmc.BeehiveStaffHelper.absorbTick(sp);
+            }
+            return;
+        }
         if (!"herobrine_head".equals(blockType)) return;
         // 仅远程模式持续发射；近战模式不进入使用状态，此分支不会触发。
         if (!ModMain.isHerobrineRanged(player)) return;
@@ -613,6 +666,12 @@ public class StaffItem extends Item {
         }
         if (!(livingEntity instanceof Player player)) return;
         String blockType = stack.getOrDefault(ModDataComponents.BLOCKTYPE.get(), "empty");
+        // 工作台权杖：松开右键 → 不再继续吸收新掉落物，直接用已吸收的材料进入合成阶段
+        // （合成流程本身不可中断；这条放在"无效化"判断之前，保证任何情况下松手都能停止吸收）
+        if ("crafting_table".equals(blockType)) {
+            cn.autoforged.joes_addons_for_abmc.craftingstaff.CraftingStaffCrafting.stopAbsorbing(player);
+            return;
+        }
         // 无效化（非豁免）期间松开右键同样不执行收尾逻辑（如传送/吸收恢复）。
         if (ModMain.isStaffNullified(player)
             && !("minecraft_game_icon".equals(blockType) || "omega".equals(blockType) || "cobweb".equals(blockType))) {

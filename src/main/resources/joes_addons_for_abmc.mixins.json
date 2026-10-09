@@ -26,7 +26,25 @@
     "ItemNetherWartMixin",
     "LivingEntityLightningImmunityMixin",
     "EntityThunderHitImmunityMixin",
-    "ExperienceOrbAccessor"
+    "ExperienceOrbAccessor",
+    "ItemBeehiveUseMixin",
+    "ItemEntityBeehiveMixin",
+    "BeeFriendlyOwnerMixin",
+    "BeeCrushImmunityMixin",
+    "BeeBossMixin",
+    "WardenDarkCloneMixin",
+    "WitherBossDarkCloneMixin",
+    "ContainerOrbLockMixin",
+    "ServerLevelLuckySpawnMixin",
+    "NetherWartPersistenceMixin",
+    "EnderDragonMixin",
+    "WitherBossSummonBossBarMixin",
+    "WitchTransmutedPoisonMixin",
+    "MobPersistenceAccessor",
+    "EntityAirSwimMixin",
+    "MobLuckyDespawnMixin",
+    "MobLuckySunBurnMixin",
+    "EnderManTakeBlockMixin"
   ],
   "client": [
     "ClientLevelMixin",
@@ -37,7 +55,13 @@
     "EntityRenderDispatcherMixin",
     "GuiEffectIconFilterMixin",
     "EffectPanelIconFilterMixin",
-    "KeyboardHandlerMixin"
+    "KeyboardHandlerMixin",
+    "DarkCloneRenderTypeMixin",
+    "DarkCloneTextureOverrideMixin",
+    "AdvancementWidgetLineMixin",
+    "LuckySunMixin",
+    "LocalPlayerOrbLockMixin",
+    "LivingEntityScaleInterpolationMixin"
   ],
   "injectors": {
     "defaultRequire": 1

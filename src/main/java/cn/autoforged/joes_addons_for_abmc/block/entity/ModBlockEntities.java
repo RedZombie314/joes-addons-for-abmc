@@ -34,6 +34,17 @@ public class ModBlockEntities {
                 ModBlocks.JOB_FROSTED_ICE.get()
             ).build(null));
 
+    /**
+     * 支援幸运方块：装着"操控送出"的生物/物品，出现 5 秒后自己碎裂把内容爆出来
+     * （见 {@link SupportLuckyBlockEntity} 与 {@link cn.autoforged.joes_addons_for_abmc.block.SupportGift}）。
+     */
+    public static final Supplier<BlockEntityType<SupportLuckyBlockEntity>> SUPPORT_LUCKY_BLOCK_ENTITY =
+        BLOCK_ENTITY_TYPES.register("support_lucky_block_entity",
+            () -> BlockEntityType.Builder.of(
+                SupportLuckyBlockEntity::new,
+                ModBlocks.SUPPORT_LUCKY_BLOCK.get()
+            ).build(null));
+
     public static void register(IEventBus eventBus) {
         BLOCK_ENTITY_TYPES.register(eventBus);
     }

@@ -1,0 +1,28 @@
+{
+  "parent": "joes_addons_for_abmc:avm_mobs",
+  "display": {
+    "icon": {
+      "id": "joes_addons_for_abmc:orb_of_luck"
+    },
+    "title": {
+      "translate": "advancements.joes_addons_for_abmc.greed.title"
+    },
+    "description": {
+      "translate": "advancements.joes_addons_for_abmc.greed.description"
+    },
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": true,
+    "hidden": false
+  },
+  "criteria": {
+    "get_possessed": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "requirements": [
+    [
+      "get_possessed"
+    ]
+  ]
+}

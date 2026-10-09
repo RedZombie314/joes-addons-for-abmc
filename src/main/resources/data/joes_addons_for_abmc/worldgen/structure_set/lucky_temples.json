@@ -1,0 +1,19 @@
+{
+  "structures": [
+    {
+      "structure": "joes_addons_for_abmc:lucky_temple",
+      "weight": 1
+    }
+  ],
+  "placement": {
+    "type": "minecraft:random_spread",
+    "spread_type": "linear",
+    "spacing": 34,
+    "separation": 8,
+    "salt": 20250921,
+    "exclusion_zone": {
+      "other_set": "minecraft:villages",
+      "chunk_count": 8
+    }
+  }
+}

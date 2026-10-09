@@ -1,0 +1,28 @@
+{
+  "display": {
+    "icon": {
+      "id": "joes_addons_for_abmc:witch_boss_spawn_egg"
+    },
+    "title": {
+      "translate": "advancements.joes_addons_for_abmc.avm_mobs.title"
+    },
+    "description": {
+      "translate": "advancements.joes_addons_for_abmc.avm_mobs.description"
+    },
+    "background": "minecraft:textures/block/sandstone_top.png",
+    "frame": "task",
+    "show_toast": false,
+    "announce_to_chat": false,
+    "hidden": true
+  },
+  "criteria": {
+    "page_header": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "requirements": [
+    [
+      "page_header"
+    ]
+  ]
+}
