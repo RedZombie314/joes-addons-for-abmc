@@ -53,23 +53,37 @@ import java.util.UUID;
  * - 默认 20 点生命值，可被击杀；由变形药水创造时，被杀死会连带杀死原生物。
  * - 皮肤由 SkinTexture 决定（客户端渲染时从网上拉取对应玩家皮肤）。
  * <p>
+ * <b>这具空壳是"哪个入口"造出来的，一律显式记在 {@link ShellOrigin} 里</b>（随存档持久化，见
+ * {@link #getShellOrigin()}）：<b>附体事件</b>造的是 {@link ShellOrigin#POSSESSION}，
+ * <b>同化事件 / 刷怪蛋</b>造的是 {@link ShellOrigin#ASSIMILATION} / {@link ShellOrigin#SPAWN_EGG}
+ * —— 前者与后者是两套必须分开处理的口径；变形药水造的临时壳是 {@link ShellOrigin#TRANSMUTED}，
+ * 不属于"由幸运核心支撑"的那一类。判来源<b>只看这一个字段</b>，不再靠"身上有没有核心 UUID /
+ * 有没有头顶光球 / 有没有同化标记"去反推（那套反推分不清"无核心的同化壳"与"刷怪蛋壳"）。
+ * <p>
  * <b>"由幸运核心支撑"的那几具</b>（附体主空壳、被同化的、刷怪蛋放出来的）会额外被
- * {@link #configureAsPossessedShell()} / {@link #applyCoreBackedStats()} 配置成核心的"体外生命"：
+ * {@link #configureAsPossessionVessel} / {@link #configureAsAssimilatedShell} /
+ * {@link #configureAsSpawnEggShell} 配置成核心的"体外生命"：
  * <b>生命上限 = 被附体/同化前那位玩家的最大生命值</b>（没有来源玩家时退回
  * {@link #CORE_BACKED_MAX_HEALTH} = 20）+ <b>自带 20 护甲、12 护甲韧性</b> +
  * <b>自带保护 16 状态效果</b>，
  * 并且是<b>唯一</b>承伤方 —— 核心本体在附体阶段没有碰撞箱、也不再承伤（见
  * {@link OrbOfLuckEntity#isInvulnerableTo}）。空壳血量归零 = 这次附体被击败。
  * <p>
- * 另外它还会<b>吃附魔金苹果</b>：生成时先吃一个（不论有没有索敌目标），之后血量低于
- * {@link #appleHealThreshold()}（<b>生命上限的 50%</b>）就再吃一个，两次之间至少隔
+ * 另外<b>只有附体事件那一具</b>还会<b>吃附魔金苹果</b>：生成时先吃一个（不论有没有索敌目标），
+ * 之后血量低于 {@link #appleHealThreshold()}（<b>生命上限的 50%</b>）就再吃一个，两次之间至少隔
  * {@link #APPLE_COOLDOWN_TICKS} 刻
- * （两分钟）。食用走原版流程（时长减半：{@link #APPLE_EAT_SECONDS} 秒），
+ * （两分钟）。食用走原版流程（<b>食用时长也是正常的 1.6 秒</b>，见 {@link #createEatingApple()}），
  * 所以照样有咀嚼音效和附魔金苹果那四个效果；食物碎屑粒子由本类自己发
  * （原版的粒子调用在服务端是空实现，见 {@link #spawnEatParticles}）。
  * <p>
+ * <b>附体专属的那几手</b>（吃附魔金苹果、针对特定生物的特攻、反制重锤、反制变形药水、吃熟猪排）
+ * 只有附体事件那一具具备，同化事件 / 刷怪蛋放出来的空壳不具备 —— 判定收口在
+ * {@link #hasPossessionExclusiveAbilities()} 一处；其余行为（紫颂果、落地水/末影珍珠、
+ * 丢奶桶自救……）三种来源一视同仁。
+ * <p>
  * 它<b>没有</b>被动回血：原本那条"每 10 游戏刻回 2 点"（照搬核心的自回血）已经移除，
- * 受伤后只能靠上面这口苹果恢复（核心本体那条自回血保持不变）。
+ * 附体那一具受伤后只能靠上面这口苹果恢复（核心本体那条自回血保持不变）；
+ * 同化 / 刷怪蛋那两具则只剩"靠饥饿值的自然回复"这一条路。
  */
 public class PlayerShellEntity extends PathfinderMob {
     private static final EntityDataAccessor<String> DATA_SKIN_TEXTURE =
@@ -82,17 +96,80 @@ public class PlayerShellEntity extends PathfinderMob {
     private static final String TAG_ORB_ATTACHED = "OrbAttached";
     private static final String TAG_POSSESSED_ORB = "PossessedOrb";
 
+    /** NBT 键：这具空壳的来源（{@link ShellOrigin} 的 {@code name()}）。 */
+    private static final String TAG_SHELL_ORIGIN = "ShellOrigin";
+
     /**
      * 是否在头顶渲染一颗幸运核心光球（同步字段）。
      * <p>
-     * 供"附体"形态使用：{@link OrbOfLuckEntity} 在 POSSESSING 阶段生成一具本实体当外观，
-     * 自己则不渲染光球形态。渲染见 {@link PlayerShellRenderer}。
+     * 三种"由幸运核心支撑"的空壳都会点亮它（附体事件 / 同化事件 / 刷怪蛋，见 {@link ShellOrigin}）；
+     * 变形药水造的临时壳不会。渲染见 {@link PlayerShellRenderer}。
      */
     private static final EntityDataAccessor<Boolean> DATA_ORB_ATTACHED =
         SynchedEntityData.defineId(PlayerShellEntity.class, EntityDataSerializers.BOOLEAN);
 
     /** 附体来源的核心实体 UUID（仅服务端）。 */
     private UUID possessedOrbUuid;
+
+    /**
+     * <b>这具空壳的来源</b>：它是"哪个入口"造出来的。
+     * <p>
+     * 用户要求把<b>两类</b>分开：<b>附体事件</b>产生的（{@link #POSSESSION}）与
+     * <b>同化事件 / 刷怪蛋</b>产生的（{@link #ASSIMILATION} / {@link #SPAWN_EGG}）——
+     * 以前这件事是靠"身上有没有 {@code possessedOrbUuid}、有没有头顶光球、有没有同化标记"
+     * 反推的，散在十几个调用点上；而且<b>无核心的同化壳</b>（被刷怪蛋空壳同化的那名受害者
+     * 留下的那一具）根本反推不出来 —— 它身上既没有核心 UUID、也没有"属于哪颗核心"的标记，
+     * 只能与刷怪蛋壳混为一谈。现在来源在生成那一刻<b>显式写入</b>、随存档持久化，
+     * 判定只看这一个字段（见 {@link PlayerShellEntity#getShellOrigin()}）。
+     * <p>
+     * <b>仅服务端</b>使用、不跨端同步：客户端仍旧只看 {@link PlayerShellEntity#isOrbAttached()}
+     * 那个渲染用的头顶光球标记。
+     */
+    public enum ShellOrigin {
+        /** 变形药水造的临时空壳：不是"由幸运核心支撑"的那一类，也不能同化别人。 */
+        TRANSMUTED,
+        /** <b>附体事件</b>：幸运核心附体真玩家时，在玩家原地站起的那具 boss 身体（核心骑在它身上）。 */
+        POSSESSION,
+        /** <b>同化事件</b>：一具核心空壳把别的玩家"打死"时，在受害者原地留下的那一具。 */
+        ASSIMILATION,
+        /** <b>「幸运核心玩家刷怪蛋」</b>放出来的那一具：没有来源玩家，背后也没有核心。 */
+        SPAWN_EGG;
+
+        /** 是不是"由幸运核心支撑"的那一类（附体 / 同化 / 刷怪蛋）；变形药水造的临时壳不算。 */
+        public boolean isCoreBacked() {
+            return this != TRANSMUTED;
+        }
+
+        /** 是不是<b>附体事件</b>产生的那一具（= {@link PlayerShellEntity#isPossessionVessel()}）。 */
+        public boolean isPossessionEvent() {
+            return this == POSSESSION;
+        }
+
+        /** 是不是<b>同化事件 / 刷怪蛋</b>产生的那一具 —— 与 {@link #isPossessionEvent()} 互补。 */
+        public boolean isAssimilationOrSpawnEgg() {
+            return this == ASSIMILATION || this == SPAWN_EGG;
+        }
+
+        /** 按 {@link #name()} 反查；认不出来（旧存档没有这个字段 / 名字被改过）返回 null。 */
+        @Nullable
+        private static ShellOrigin byName(String name) {
+            for (ShellOrigin origin : values()) {
+                if (origin.name().equals(name)) {
+                    return origin;
+                }
+            }
+            return null;
+        }
+    }
+
+    /**
+     * 这具空壳的来源（见 {@link ShellOrigin}）。
+     * <p>
+     * <b>null = 还没判定</b>：新造的壳由各自的生成入口显式写入；旧存档身上没有这个字段，
+     * 于是第一次被问到时按当年的旧标记推断一次并记住（见 {@link #getShellOrigin()}）。
+     */
+    @Nullable
+    private ShellOrigin shellOrigin;
 
     /**
      * 附体形态的 <b>boss 血条</b>（仅服务端持有；由原版 HUD 渲染）。
@@ -261,7 +338,13 @@ public class PlayerShellEntity extends PathfinderMob {
         return super.getBoundingBoxForCulling().inflate(0.75D);
     }
 
-    /** 头顶是否挂一颗幸运核心光球（附体形态用）。 */
+    /**
+     * 头顶是否挂一颗幸运核心光球（"由幸运核心支撑"那三类都会挂，见 {@link ShellOrigin}）。
+     * <p>
+     * <b>它是个渲染标记，只该给客户端看</b>（{@code ShellHeadOrbLayer}）：服务端判断
+     * "这具壳属于哪一类"请用 {@link #getShellOrigin()} / {@link #isCoreBackedShell()} /
+     * {@link #isPossessionVessel()} —— 那些才是权威，而且能分清"附体事件"与"同化事件 / 刷怪蛋"。
+     */
     public void setOrbAttached(boolean value) {
         this.entityData.set(DATA_ORB_ATTACHED, value);
     }
@@ -278,9 +361,16 @@ public class PlayerShellEntity extends PathfinderMob {
      * <p>
      * <b>它不再是"伤害转发标记"</b>：承伤方就是这具空壳自己
      * （曾经的实现是把伤害全转给核心的 100 点血池，现已改掉 —— 见 {@link #hurt}）。
+     * <p>
+     * <b>顺带把来源钉成 {@link ShellOrigin#POSSESSION}</b>：这个方法只有"附体事件"会调
+     * （核心生成 boss 身体、以及变形复原后重新认领），所以"记着核心"与"来源是附体"
+     * 永远同步，不会各说各话。
      */
     public void setPossessedOrb(UUID orbUuid) {
         this.possessedOrbUuid = orbUuid;
+        if (orbUuid != null) {
+            this.shellOrigin = ShellOrigin.POSSESSION;
+        }
     }
 
     public UUID getPossessedOrb() {
@@ -288,14 +378,106 @@ public class PlayerShellEntity extends PathfinderMob {
     }
 
     /**
+     * <b>这具空壳的来源</b>（哪个入口造出来的），见 {@link ShellOrigin}。
+     * <p>
+     * 旧存档身上没有这个字段（那时还没有"来源"这个概念），于是这里就地把当年的旧标记
+     * 推断一次并记住，顺序即优先级：
+     * <ol>
+     *   <li>记着 {@code PossessedOrb} → <b>附体事件</b>（那正是"我是那颗核心的附体主空壳"的标记）；</li>
+     *   <li>带同化标记（{@link OrbAssimilation#isAssimilationShell}）→ <b>同化事件</b>；</li>
+     *   <li>头顶挂着核心光球（{@link #isOrbAttached()}）→ <b>刷怪蛋</b>（"核心支撑"里只剩这一档）；</li>
+     *   <li>其余 → <b>变形药水</b>造的临时壳。</li>
+     * </ol>
+     * 推断放在"第一次被问到时"、而不是 {@code readAdditionalSaveData} 里，是因为第 2 条要看
+     * {@code persistentData}，而它的读取顺序由原版 / NeoForge 的 {@code Entity#load} 决定 ——
+     * 等真有人问来源时，实体一定已经把档读完了。
+     */
+    public ShellOrigin getShellOrigin() {
+        if (this.shellOrigin == null) {
+            this.shellOrigin = this.inferShellOrigin();
+        }
+        return this.shellOrigin;
+    }
+
+    /** 显式指定来源（见 {@link ShellOrigin}）；由各个生成入口调用。 */
+    public void setShellOrigin(ShellOrigin origin) {
+        this.shellOrigin = origin;
+    }
+
+    /** 旧存档兼容：按"当年的那些标记"推断来源（顺序即优先级，见 {@link #getShellOrigin()}）。 */
+    private ShellOrigin inferShellOrigin() {
+        if (this.possessedOrbUuid != null) {
+            return ShellOrigin.POSSESSION;
+        }
+        if (OrbAssimilation.isAssimilationShell(this)) {
+            return ShellOrigin.ASSIMILATION;
+        }
+        return this.isOrbAttached() ? ShellOrigin.SPAWN_EGG : ShellOrigin.TRANSMUTED;
+    }
+
+    /**
+     * 这具空壳是不是"<b>由幸运核心支撑</b>"的那一类（附体事件 / 同化事件 / 刷怪蛋）——
+     * 变形药水造的临时壳、以及普通生物壳都不算。
+     * <p>
+     * 这是服务端逻辑该用的那一条（同化能力、血条、战斗 AI、各种"自己人"判定……）；
+     * {@link #isOrbAttached()} 只是它同步给客户端的那份"头顶光球"渲染标记，别拿它当判据。
+     */
+    public boolean isCoreBackedShell() {
+        return this.getShellOrigin().isCoreBacked();
+    }
+
+    /** 这具空壳是不是<b>同化事件</b>产生的那一具（受害者原地留下的那具壳体）。 */
+    public boolean isAssimilatedShell() {
+        return this.getShellOrigin() == ShellOrigin.ASSIMILATION;
+    }
+
+    /** 这具空壳是不是<b>「幸运核心玩家刷怪蛋」</b>放出来的那一具。 */
+    public boolean isSpawnEggShell() {
+        return this.getShellOrigin() == ShellOrigin.SPAWN_EGG;
+    }
+
+    /** 这具空壳是不是<b>同化事件 / 刷怪蛋</b>产生的那一类（与 {@link #isPossessionVessel()} 互补）。 */
+    public boolean isAssimilationOrSpawnEggShell() {
+        return this.getShellOrigin().isAssimilationOrSpawnEgg();
+    }
+
+    /**
      * 这具空壳是不是"附体主空壳"—— 也就是幸运核心附体<b>真玩家</b>时产生的那具 boss 身体
      * （核心骑在它身上、玩家在旁边旁观）。
      * <p>
-     * 与由变形药水造出来的临时空壳、以及"被同化"的空壳区分开：
-     * 后两者身上没有 {@code possessedOrbUuid}（见 {@link OrbAssimilation}）。
+     * 与"<b>同化事件 / 刷怪蛋</b>产生的那两种"区分开：它们分别是
+     * {@link ShellOrigin#ASSIMILATION} 与 {@link ShellOrigin#SPAWN_EGG}，
+     * 与变形药水造的临时壳（{@link ShellOrigin#TRANSMUTED}）一起，都可以从
+     * {@link #getShellOrigin()} 一次看清。
      */
     public boolean isPossessionVessel() {
-        return this.possessedOrbUuid != null;
+        return this.getShellOrigin() == ShellOrigin.POSSESSION;
+    }
+
+    /**
+     * <b>附体专属的那几手</b>对它生不生效（用户指定：<b>只有附体事件那一具</b>具备）。
+     * <p>
+     * 归它管的五件事：
+     * <ol>
+     *   <li><b>吃附魔金苹果</b>——生成时那一口，以及血量低于上限一半时再吃一个
+     *       （见 {@link #applyCoreBackedStats(double)} / {@link #tryEatAppleWhenHurt()}）；</li>
+     *   <li><b>针对特定生物的特攻</b>——{@code OrbPossessedAttackEvents#MATCHUPS} 那一整张表
+     *       （亡灵用西瓜刀、对监守者/苦力怕/铁傀儡/卫道士/女巫保持距离、末影人/潜影贝/旋风人的专属池……），
+     *       连它顺带决定的走位（"必须一直走位"）一起；</li>
+     *   <li><b>反制重锤</b>——目标手持重锤且身上没缓降时丢缓降药水（含那条绕过抽签的应急出手）；</li>
+     *   <li><b>反制变形药水</b>——10 格内出现变形药水时朝天上抛变形解药；</li>
+     *   <li><b>吃熟猪排</b>（见 {@link #tryEatFoodWhenNeeded()}）。</li>
+     * </ol>
+     * 同化事件（{@link ShellOrigin#ASSIMILATION}）与刷怪蛋（{@link ShellOrigin#SPAWN_EGG}）
+     * 放出来的空壳<b>不具备</b>上面任何一条；<b>不在这个开关管辖内</b>的一律照旧，
+     * 例如：吃紫颂果（含窒息 / 被载着走两种逃命用法）、落地水与落地末影珍珠、
+     * 丢奶桶解凋灵/中毒、飞行与重锤那两张低概率签、跟着玩家蹲起、自然回复与饥饿那一套。
+     * <p>
+     * 为什么收成一个方法而不是在各处写 {@link #isPossessionVessel()}：这几手以后要是再增减，
+     * 改这一处就够；读代码时也能一眼看出"这条是附体专属"。
+     */
+    public boolean hasPossessionExclusiveAbilities() {
+        return this.isPossessionVessel();
     }
 
     /**
@@ -319,6 +501,12 @@ public class PlayerShellEntity extends PathfinderMob {
      */
     @Override
     public void remove(Entity.RemovalReason reason) {
+        // 区块票据：这具空壳要离开世界了（打死、清场、变形换形态、区块卸载、跨维度搬家都一样），
+        // 名下那一整片"载入票 + 计时票"必须撤掉 —— 票据不撤，那片区块就永远不卸载（见 ShellChunkLoader）。
+        // 放在最前面：下面几条分支都可能提前 return/跳过，撤票不该受它们影响。
+        if (this.level() instanceof ServerLevel shellLevel) {
+            ShellChunkLoader.release(shellLevel, this.getUUID());
+        }
         // 血条：这具空壳要没了（被打死、被清场、变形换形态……）就先把它收掉 ——
         // 客户端那边是靠"移除包"把血条抹掉的，漏掉这一步屏幕上会冻结一条血条
         this.hideShellBossBar();
@@ -401,6 +589,9 @@ public class PlayerShellEntity extends PathfinderMob {
         if (this.possessedOrbUuid != null) {
             tag.putUUID(TAG_POSSESSED_ORB, this.possessedOrbUuid);
         }
+        // 来源（哪个入口造出来的）：这是"附体事件 / 同化事件 / 刷怪蛋"三者的唯一权威标记，
+        // 必须落盘 —— 读档后"我是哪一类空壳"全靠它（见 getShellOrigin）
+        tag.putString(TAG_SHELL_ORIGIN, this.getShellOrigin().name());
         // 饥饿/饱和度也进存档：它是这具身体的"体力"，读档后不该白送一份满状态
         tag.putInt(TAG_FOOD_LEVEL, this.foodLevel);
         tag.putFloat(TAG_SATURATION, this.saturation);
@@ -439,6 +630,10 @@ public class PlayerShellEntity extends PathfinderMob {
             ? tag.getInt(TAG_REMAINING_TICKS) : -1;
         this.setOrbAttached(tag.getBoolean(TAG_ORB_ATTACHED));
         this.possessedOrbUuid = tag.hasUUID(TAG_POSSESSED_ORB) ? tag.getUUID(TAG_POSSESSED_ORB) : null;
+        // 来源：这里直接写字段（不走 setPossessedOrb，那条会把来源钉成附体事件）。
+        // 旧存档没有这个字段 → 读出来是空串 → 保持 null，等第一次被问到时按旧标记推断
+        // （见 getShellOrigin / inferShellOrigin）。
+        this.shellOrigin = ShellOrigin.byName(tag.getString(TAG_SHELL_ORIGIN));
         this.foodLevel = tag.contains(TAG_FOOD_LEVEL) ? tag.getInt(TAG_FOOD_LEVEL) : 20;
         this.saturation = tag.contains(TAG_SATURATION) ? tag.getFloat(TAG_SATURATION) : 5.0F;
         this.exhaustion = tag.contains(TAG_EXHAUSTION) ? tag.getFloat(TAG_EXHAUSTION) : 0.0F;
@@ -644,13 +839,13 @@ public class PlayerShellEntity extends PathfinderMob {
      *
      * <h2>哪些空壳有血条</h2>
      * 三种"由幸运核心支撑的空壳"都有（附体主空壳、被同化的那一具、刷怪蛋放出来的那一具）——
-     * 它们用的是同一套配置；变形药水造出来的临时空壳没有（{@link #isOrbAttached()} 为假）。
+     * 它们用的是同一套配置；变形药水造出来的临时空壳没有（{@link #isCoreBackedShell()} 为假）。
      */
     private void tickShellBossBar() {
         if (!(this.level() instanceof ServerLevel serverLevel) || serverLevel.getServer() == null) {
             return;
         }
-        if (!this.isOrbAttached() || !this.isAlive()) {
+        if (!this.isCoreBackedShell() || !this.isAlive()) {
             this.hideShellBossBar();
             return;
         }
@@ -870,13 +1065,6 @@ public class PlayerShellEntity extends PathfinderMob {
     }
 
     /**
-     * 这个敌人是不是"必须无视距离一直保持走位"的那一类（目前只有监守者）。
-     * <p>
-     * 判据与特攻表（{@code OrbPossessedAttackEvents#MATCHUPS}）保持一致：那边监守者那条
-     * 就是按 {@code EntityType.WARDEN} 匹配的。以后若还有"贴脸必死、只能放风筝"的敌人，
-     * 往这里加一条即可 —— 效果是"对它永远不摆近战架势，贴脸也继续环绕后退"。
-     */
-    /**
      * 这个敌人是不是"必须无视距离一直保持走位"的那一类。
      * <p>
      * 两类：
@@ -887,10 +1075,18 @@ public class PlayerShellEntity extends PathfinderMob {
      *       绝不主动靠近，所以近战架势必须一并关掉，否则会站住不动被打。</li>
      * </ul>
      * 表现为 {@link #isHoldingForMelee()} 对它们一律返回 false。
+     * <p>
+     * <b>整套都是附体专属</b>（用户指定）：它本来就是"特攻表"顺带决定的走位，
+     * 所以来源不是附体事件的空壳对谁都是普通打法（见 {@link #hasPossessionExclusiveAbilities()}）——
+     * 不这么收口的话会剩下一个半截状态：{@code prefersRanged} 已经不再要求保持距离，
+     * 却仍然不摆近战架势，变成"冲上去但站着不摆架势"。
      */
-    private static boolean mustAlwaysKite(LivingEntity target) {
+    private boolean mustAlwaysKite(LivingEntity target) {
+        if (!this.hasPossessionExclusiveAbilities()) {
+            return false;
+        }
         return target.getType() == net.minecraft.world.entity.EntityType.WARDEN
-            || OrbPossessedAttackEvents.prefersRanged(target);
+            || OrbPossessedAttackEvents.prefersRanged(this, target);
     }
 
     /**
@@ -1362,12 +1558,19 @@ public class PlayerShellEntity extends PathfinderMob {
     public static final float CHORUS_FRUIT_THRESHOLD_FRACTION = 8.0F / 20.0F;
 
     /**
-     * 吃这颗苹果用多少秒：<b>原版 1.6 秒的一半</b>（原版 32 刻，这里 16 刻）。
+     * <b>每吃完一颗紫颂果，给这具空壳 5 秒发光</b>（用户指定）。
      * <p>
-     * 1.21.1 的食用时长写在 {@code FoodProperties.eatSeconds} 里，所以见
-     * {@link #createEatingApple()}：复制一份食物数据、把秒数减半即可。
+     * 五秒 = {@code 5 * 20} 刻。挂在 {@link #completeUsingItem()} 这个<b>唯一的进食结算点</b>上，
+     * 所以"三条路"全都算：<b>垫肚子</b>（血量掉到紫颂果线以下时当普通食物吃）、
+     * <b>窒息自救</b>与<b>被载着逃命</b>（两种逃命紫颂果，见
+     * {@link #tryEscapeSuffocationWithChorusFruit()} / {@link #tryEscapeRidingWithChorusFruit()}）。
+     * 换句话说：只要它啃了果子，就会亮起来 —— 发光会让轮廓穿墙可见，
+     * "啃果子脱身"因此不是无代价的隐身逃走。
+     * <p>
+     * 用"先移除再挂"的写法（与 {@link #applyAppleEffects()} 同理）：保证每次都是<b>正好 5 秒</b>，
+     * 不受之前残留的时长影响。粒子参数给 {@code false}：只留轮廓，不冒那圈药水粒子。
      */
-    public static final float APPLE_EAT_SECONDS = 0.8F;
+    public static final int CHORUS_FRUIT_GLOW_TICKS = 5 * 20;
 
     /**
      * 两次吃附魔金苹果之间的最小间隔（游戏刻）：<b>两分钟</b>。
@@ -1385,20 +1588,18 @@ public class PlayerShellEntity extends PathfinderMob {
     public static final int FOOD_COOLDOWN_TICKS = 200;
 
     /**
-     * <b>窒息自救</b>：两次啃"逃命紫颂果"之间的最小间隔（刻）：1 秒
+     * <b>逃命</b>：两次啃"逃命紫颂果"之间的最小间隔（刻）：1 秒
      * （原版给玩家的紫颂果冷却也是 1 秒）。
-     * <p>一次啃完如果随机传送没能把它送出方块（周围全是实心），下一秒再啃一颗，不会被卡死。
+     * <p>两种逃命共用这一个冷却、也共用同一个计时字段（{@link #possessionNextEscapeFruitTick}）——
+     * 都只是"啃一颗果子"，没有同时啃两口的道理。各自的作用：
+     * <ul>
+     *   <li><b>窒息</b>（{@link #tryEscapeSuffocationWithChorusFruit}）：一次啃完如果随机传送没能把它送出方块
+     *       （四周全是实心），下一秒再啃一颗，直到出去为止，不会被卡死；</li>
+     *   <li><b>被当成乘客载着走</b>（{@link #tryEscapeRidingWithChorusFruit}）：原版这一口<b>必定</b>先下车
+     *       再传送，所以一颗就够；这个冷却用来兜住"刚下车又被挂上去"（例如有人每刻把它往载具上塞）。</li>
+     * </ul>
      */
-    private static final int SUFFOCATION_ESCAPE_COOLDOWN_TICKS = 20;
-
-    /**
-     * <b>窒息自救</b>用的紫颂果食用时长（秒）：<b>0.5 秒（10 刻）</b>，比原版那 1.6 秒快得多。
-     * <p>
-     * 理由很直白：卡在方块里是<b>每刻 1 点</b>窒息伤害（原版 {@code LivingEntity#baseTick} 里
-     * {@code isInWall() → hurt(inWall, 1)}），原版那 1.6 秒够它掉 30 多点血、基本必死；
-     * 压到 0.5 秒才叫"能自救"。数值照 {@link #createEatingApple()} 那套改食物数据。
-     */
-    private static final float SUFFOCATION_FRUIT_EAT_SECONDS = 0.5F;
+    private static final int ESCAPE_FRUIT_COOLDOWN_TICKS = 20;
 
     /** 咀嚼期间每把碎屑的颗数（对齐原版 {@code triggerItemUseEffects(…, 5)}）。 */
     private static final int EAT_PARTICLES_PER_BURST = 5;
@@ -1550,6 +1751,48 @@ public class PlayerShellEntity extends PathfinderMob {
     }
 
     /**
+     * <b>本刻游戏刻是否在真正流逝</b> —— 直接问原版 {@code TickRateManager#runsNormally()}。
+     *
+     * <p>为什么空壳需要自己问这一句：{@code /tick freeze} 期间原版只冻"不是玩家、也没载着玩家"的实体
+     * （{@code TickRateManager#isEntityFrozen} 第 63-65 行：{@code !runsNormally() && !(entity instanceof Player)
+     * && entity.countPlayerPassengers() <= 0}），而 <b>{@code ServerLevel#tick} 的实体循环根本不对乘客做这个判断</b>
+     * —— 乘客是由载具的 {@code tickPassenger} 驱动的（{@code ServerLevel.java:403-429} 与 {@code :787-803}）：
+     * 只要载具"载着玩家"而没被冻住（玩家骑的船/矿车就是这种），挂在它上面的空壳就照样每刻 tick。
+     * 于是进食决策（在 {@link #tick()} 里）与进食进度（原版 {@code LivingEntity#updatingUsingItem}）
+     * 两条都跟着这套 tick 走 —— 表现就是"冻结期间空壳还在吃东西"。</p>
+     *
+     * <p>各种情形用这一句判断都自动正确：</p>
+     * <ul>
+     *   <li>{@code /tick freeze} → false：不起手新的进食（见 {@link #tryStartEating}），
+     *       已经在吃的那一口也被 {@link #holdEatingWhileFrozen()} 按住；</li>
+     *   <li>{@code /tick step N} 的每一步 → true：走一步吃一刻，正合直觉；</li>
+     *   <li>{@code /tick rate 5}（降速）→ 仍为 true，但每秒的游戏刻变少
+     *       → <b>进食按刻数自然变慢</b>；{@code /tick sprint}（加速）同理变快。</li>
+     * </ul>
+     */
+    private boolean gameTickRunning() {
+        return this.level().tickRateManager().runsNormally();
+    }
+
+    /**
+     * 冻结期间把"正在吃的这一口"按住：把原版本刻要自减的那一格先补上
+     * （为什么冻结时它还会 tick 见 {@link #gameTickRunning()}）。
+     *
+     * <p><b>为什么用"补一格"而不是 {@code stopUsingItem()}</b>：后者会把这一口整个作废，
+     * 而 {@code possessionNextAppleTick} / {@code possessionNextFoodTick} 的冷却是"开始吃"那一刻就记下的 ——
+     * 冻结时正啃着附魔金苹果的话，就会变成"苹果白扔 + 两分钟冷却"。补一格则是纯暂停，
+     * 解冻后从原进度接着吃。只按住"吃"（{@code isEatingFood}/{@code isEatingApple}），
+     * 拉弓、举矛那类使用状态不归这条管。</p>
+     */
+    private void holdEatingWhileFrozen() {
+        if (!this.isUsingItem() || !(this.isEatingFood() || this.isEatingApple())) {
+            return;
+        }
+        // useItemRemaining 在 LivingEntity 里是 protected，子类可以直接改：+1 抵消 updatingUsingItem 里的 --。
+        this.useItemRemaining++;
+    }
+
+    /**
      * 开始吃一样东西 —— 走<b>原版食用流程</b>：东西拿在主手 → {@code startUsingItem}，
      * 到点由原版自己 {@code completeUsingItem} 结算（吃掉物品、挂上该食物的效果）。
      * <p>
@@ -1562,7 +1805,13 @@ public class PlayerShellEntity extends PathfinderMob {
      * @return 是否真的开始吃了
      */
     private boolean tryStartEating(ItemStack food) {
-        if (this.level().isClientSide || !this.isOrbAttached()) {
+        if (this.level().isClientSide || !this.isCoreBackedShell()) {
+            return false;
+        }
+        // 游戏刻没在走（/tick freeze）：一律不起手。所有进食都收口在这里
+        // —— 附魔金苹果、熟猪排/紫颂果、以及两种"逃命紫颂果"（见 tryEscapeSuffocationWithChorusFruit /
+        // tryEscapeRidingWithChorusFruit），所以这一道闸门就够。
+        if (!this.gameTickRunning()) {
             return false;
         }
         if (this.isUsingItem()) {
@@ -1572,6 +1821,17 @@ public class PlayerShellEntity extends PathfinderMob {
         if (this.isUsingItem()) {
             this.stopUsingItem();   // 兜底：起手事件没把自己收回使用状态的，这里强制收
         }
+        // 关键：光 cancelPossessionWindUp() 只把"起手"取消掉，possessionDrawnEvent 这一签还留着。
+        // 起手取消后 possessionWindUpEndTick 变回 -1，tick() 里那个"起手完成 → 出手"的分支就拦不住它了，
+        // 冷却一好就会走 tick() 末尾的 drawn.run() —— 而那时手里是"吃剩的空手"
+        // （这里发的食物都是 new ItemStack(...) 只有一个，原版吃完就把主手清空）。
+        // 于是 PrismarineBowEvent 会把 EMPTY 当作"发射它的武器"塞进箭的构造器，而原版 AbstractArrow
+        // 对"非 null 但为空"的武器是直接抛 IllegalArgumentException("Invalid weapon firing an arrow") 的，
+        // 表现就是空壳在战斗中吃口东西、过一会儿服务器崩在 "Ticking entity" 上。
+        // 所以把签一并作废：吃完之后 tick() 会重新抽签，届时自然 clearPossessionHands + beginWindUp 重新拿武器。
+        // （食用期间 tick() 在 isEatingFood() 处就 return 了，不会跑抽签，因此不会把刚拿起的食物抢掉。）
+        this.possessionDrawnEvent = null;
+        this.possessionHoldingMelee = false;
         this.clearPossessionHands();
         this.setItemInHand(InteractionHand.MAIN_HAND, food);
         this.startUsingItem(InteractionHand.MAIN_HAND);
@@ -1583,8 +1843,14 @@ public class PlayerShellEntity extends PathfinderMob {
      * <p>
      * 由 {@link #tick()} 每刻调用（在索敌与普通食物之前），所以有目标没目标都会吃；
      * 和普通食物撞车时<b>附魔金苹果优先</b>。
+     * <p>
+     * <b>附体专属</b>（用户指定）：同化 / 刷怪蛋那一类不吃附魔金苹果，这里直接不触发
+     * （见 {@link #hasPossessionExclusiveAbilities()}）。
      */
     private void tryEatAppleWhenHurt() {
+        if (!this.hasPossessionExclusiveAbilities()) {
+            return;
+        }
         if (this.getHealth() >= this.appleHealThreshold()) {
             return;
         }
@@ -1598,9 +1864,11 @@ public class PlayerShellEntity extends PathfinderMob {
      * 该吃普通食物了就去吃：
      * <ul>
      *   <li><b>饥饿值 ≤ 19 且血量 &gt; 8</b> → {@link Items#COOKED_PORKCHOP 熟猪排}
-     *       （+8 饥饿 / +12.8 饱和度）；</li>
+     *       （+8 饥饿 / +12.8 饱和度）；<b>附体专属</b>（用户指定），其余来源的空壳不吃猪排，
+     *       这种情况下就什么都不吃（见 {@link #hasPossessionExclusiveAbilities()}）；</li>
      *   <li><b>否则</b>（已经吃饱所以猪排吃不下、或者血太少想先垫一口）→
-     *       {@link Items#CHORUS_FRUIT 紫颂果}（+4 饥饿 / +2.4 饱和度，原版"随时可吃"）。</li>
+     *       {@link Items#CHORUS_FRUIT 紫颂果}（+4 饥饿 / +2.4 饱和度，原版"随时可吃"）——
+     *       这一条<b>不分来源</b>，三种核心支撑的空壳都保留。</li>
      * </ul>
      * 只在"真需要"时才掏东西：
      * <ul>
@@ -1629,9 +1897,11 @@ public class PlayerShellEntity extends PathfinderMob {
         // 这条线是<b>生命上限的 40%</b>（原来是写死的 8 点，见 CHORUS_FRUIT_THRESHOLD_FRACTION）。
         // 注意不能写成"饿了且血多就猪排、否则紫颂果"：那样吃饱了（饥饿 20）但掉了一点血时
         // 会去啃紫颂果，而紫颂果随时可吃 —— 表现就是"血量在线以上还在吃紫颂果"。
+        // <b>猪排那一支是附体专属</b>（用户指定）：别的来源走到这里就什么都不吃，
+        // 但紫颂果那一支照旧（逃命/垫肚子不归那个开关管）。
         ItemStack food;
         float chorusLine = this.chorusFruitThreshold();
-        if (this.foodLevel <= 19 && this.getHealth() > chorusLine) {
+        if (this.hasPossessionExclusiveAbilities() && this.foodLevel <= 19 && this.getHealth() > chorusLine) {
             food = new ItemStack(Items.COOKED_PORKCHOP);
         } else if (this.getHealth() <= chorusLine) {
             food = new ItemStack(Items.CHORUS_FRUIT);
@@ -1660,7 +1930,19 @@ public class PlayerShellEntity extends PathfinderMob {
      * <h2>吃完之后</h2>
      * 原版 {@code ChorusFruitItem#finishUsingItem} 会试最多 16 次随机传送（±8 格）——
      * 成功就出去了；16 次全失败（四周全是实心）说明还在墙里，
-     * {@link #SUFFOCATION_ESCAPE_COOLDOWN_TICKS} 之后会再啃一颗，直到出去为止。
+     * {@link #ESCAPE_FRUIT_COOLDOWN_TICKS} 之后会再啃一颗，直到出去为止。
+     *
+     * <h2>食用时长（用户指定：与正常进食一致）</h2>
+     * 这一口走的就是普通紫颂果的原版时长 <b>1.6 秒（32 刻）</b>，见 {@link #createEscapeChorusFruit()}。
+     * 早先为"卡在墙里少挨几口伤害"把它压到 0.5 秒的写法已按需求取消 —— 而事后核对发现
+     * <b>那个优化本来就几乎没价值</b>：窒息伤害看着是"每刻 1 点"，实际受无敌帧限制，
+     * 只有每 <b>10 刻（0.5 秒）</b>才真的结算 1 点（{@code LivingEntity#hurt} 里
+     * {@code invulnerableTime > 10} 那一段：等额伤害被整段丢弃；命中后计时置 20 刻、
+     * 每刻自减、掉到 10 才允许下一次命中）。所以 0.5 秒窗口里大约只挨 1 点，
+     * 1.6 秒窗口里约 3~4 点 —— 两种时长的差别只有 2~3 点血。
+     * <p>要单独把这一口调快/调慢的话：照原版 {@code FoodProperties.Builder} 造一份、
+     * 用 {@code eatSeconds(...)}（默认 1.6，{@code fast()} = 0.8）改掉秒数，写回
+     * {@link DataComponents#FOOD} 即可 —— 参考 {@link #createEatingApple()} 的旧写法。</p>
      *
      * @return 是否真的开始啃了（调用方据此 return，本刻不再做别的）
      */
@@ -1685,26 +1967,79 @@ public class PlayerShellEntity extends PathfinderMob {
         if (!this.tryStartEating(createEscapeChorusFruit())) {
             return false;
         }
-        this.possessionNextEscapeFruitTick = this.level().getGameTime() + SUFFOCATION_ESCAPE_COOLDOWN_TICKS;
+        this.possessionNextEscapeFruitTick = this.level().getGameTime() + ESCAPE_FRUIT_COOLDOWN_TICKS;
         cn.autoforged.joes_addons_for_abmc.ModMain.LOGGER.info(
             "[附体] 空壳被卡在方块里（窒息），啃紫颂果逃命: #{}", this.getId());
         return true;
     }
 
     /**
-     * 造一颗"吃得快"的紫颂果：只把食用时长压到 {@link #SUFFOCATION_FRUIT_EAT_SECONDS}，
-     * 营养/饱和度/随时可吃/用后转化物全部照旧（写法与 {@link #createEatingApple()} 一致）。
-     * <p>吃的时长是这套自救的关键：原版 1.6 秒够它在墙里掉 30 多点血，0.5 秒才救得回来。
+     * <b>被当成乘客载着走（riding）时的自救（用户指定）：啃一颗紫颂果逃出去。</b>
+     *
+     * <h2>判据</h2>
+     * 就是 {@link #isPassenger()}：<b>空壳自己是乘客</b>（被塞进船/矿车、挂到别的载具上、被 {@code /ride} 装上……）。
+     * 要与"核心骑在空壳头上"区分开 —— 那是核心当乘客、空壳是载具，{@code isPassenger()} 为假，不会误触发
+     * （附体主空壳的常态正是后者，见 {@code OrbOfLuckEntity#startRiding(vessel, true)}）。
+     *
+     * <h2>为什么一颗紫颂果就能脱身</h2>
+     * 原版 {@code ChorusFruitItem#finishUsingItem} 在随机传送<b>之前</b>会先
+     * {@code entityLiving.stopRiding()}（{@code ChorusFruitItem.java:38-47}），所以这一口下去必定下车，
+     * 随后才是那次 ±8 格随机传送 —— 两层保障：哪怕四周全是实心、传送失败，也已经不是乘客了。
+     *
+     * <h2>优先级（用户指定：高于其攻击行为）</h2>
+     * 调用点在 {@link #tick()} 里排在<b>所有攻击行为之前</b>：反重锤应急、重锤动作、索敌抽签与出手都在它后面
+     * （见那里的注释）。为它保留的例外只有两类，都不是攻击行为：
+     * <ul>
+     *   <li>正在啃<b>紫颂果</b> → 让它啃完（这一口本来就会下车，重开反而更慢）；</li>
+     *   <li>正在吃<b>饭或附魔金苹果</b> → 让这一口吃完，下一 tick 再逃。</li>
+     * </ul>
+     * 其余"使用中"（拉弓、举矛、举刀这些攻击起手）一律打断。
+     *
+     * @return 是否真的开始啃了（调用方据此 return，本刻不再做别的）
+     */
+    private boolean tryEscapeRidingWithChorusFruit() {
+        // 死亡动画期间不动嘴：本轮 tick 里那条死亡闸门排在这一段之后，所以这里要单独判一次
+        if (this.isDeadOrDying() || !this.isPassenger()) {
+            return false;
+        }
+        if (this.possessionNextEscapeFruitTick >= 0L
+            && this.level().getGameTime() < this.possessionNextEscapeFruitTick) {
+            return false;
+        }
+        if (this.isUsingItem()) {
+            if (this.getUseItem().is(Items.CHORUS_FRUIT)
+                || this.isEatingFood() || this.isEatingApple()) {
+                return false;
+            }
+            // 攻击起手（拉弓/举矛/举刀）：直接打断 ——
+            // tryStartEating 有一条"已经在用别的东西就不打断"的前置判断，所以必须先主动停。
+            this.stopUsingItem();
+        }
+        if (!this.tryStartEating(createEscapeChorusFruit())) {
+            return false;
+        }
+        this.possessionNextEscapeFruitTick = this.level().getGameTime() + ESCAPE_FRUIT_COOLDOWN_TICKS;
+        cn.autoforged.joes_addons_for_abmc.ModMain.LOGGER.info(
+            "[附体] 空壳成了载具乘客（riding），啃紫颂果逃脱: #{} 载具={}",
+            this.getId(), this.getVehicle() == null ? "-" : this.getVehicle().getType().toShortString());
+        return true;
+    }
+
+    /**
+     * 逃命用的那一颗紫颂果：<b>就是普通紫颂果</b>（食用时长与正常进食完全一致）。
+     *
+     * <p><b>食用时长照常</b>（用户指定）：原版 {@code FoodProperties} 的默认值就是
+     * {@code eatSeconds = 1.6F}（32 刻，见 {@code FoodProperties.DEFAULT_EAT_SECONDS}），
+     * 与空壳平时吃饭走的是同一套（{@link #tryEatFoodWhenNeeded} 里同样直接
+     * {@code new ItemStack(Items.CHORUS_FRUIT)}）。</p>
+     *
+     * <p>早先这里复制了一份食物数据、把 {@code eatSeconds} 压到 <b>0.5 秒</b>
+     * （想让它卡在墙里时少挨几口窒息伤害），现已按需求取消。若以后要单独调这一口，
+     * 照原版 {@code FoodProperties.Builder} 造一份、用 {@code eatSeconds(...)} 改掉秒数，
+     * 写回 {@link DataComponents#FOOD} 即可（附魔金苹果那边曾经就是这么做的）。</p>
      */
     private static ItemStack createEscapeChorusFruit() {
-        ItemStack fruit = new ItemStack(Items.CHORUS_FRUIT);
-        FoodProperties food = fruit.get(DataComponents.FOOD);
-        if (food != null) {
-            fruit.set(DataComponents.FOOD, new FoodProperties(
-                food.nutrition(), food.saturation(), food.canAlwaysEat(),
-                SUFFOCATION_FRUIT_EAT_SECONDS, food.usingConvertsTo(), food.effects()));
-        }
-        return fruit;
+        return new ItemStack(Items.CHORUS_FRUIT);
     }
 
     // ====================== 跟玩家一起蹲起（T-bag，用户指定） ======================
@@ -1798,7 +2133,7 @@ public class PlayerShellEntity extends PathfinderMob {
 
         // ---- 没在跟：看看要不要开始 ----
         // 条件：没有索敌目标 + 会飞的状态下不掺和（躺平滑翔时蹲不了）+ 附近有正在蹲起的玩家
-        if (this.getTarget() != null || !this.isOrbAttached() || this.isFallFlying()) {
+        if (this.getTarget() != null || !this.isCoreBackedShell() || this.isFallFlying()) {
             return;
         }
         ServerPlayer partner = CrouchMimic.randomTBaggingPlayer(this);
@@ -1862,6 +2197,11 @@ public class PlayerShellEntity extends PathfinderMob {
      * 这具空壳的战斗节奏本来就归抽签管，再叠一层饿死没有意义。
      */
     private void tickFoodAndNaturalRegen() {
+        // 游戏刻被冻结（/tick freeze）：消化与自然回复也一起停 —— 与进食同一条判据，
+        // 免得出现"不吃东西但饥饿/饱和度照掉、还在回血"这种半冻结状态（见 gameTickRunning）。
+        if (!this.gameTickRunning()) {
+            return;
+        }
         if (this.exhaustion > 4.0F) {
             this.exhaustion -= 4.0F;
             if (this.saturation > 0.0F) {
@@ -1911,21 +2251,19 @@ public class PlayerShellEntity extends PathfinderMob {
     }
 
     /**
-     * 造一颗"吃得快"的附魔金苹果：食用时长压到 {@link #APPLE_EAT_SECONDS}
-     * （原版 1.6 秒 → 这里 0.8 秒 = 16 刻）。
+     * 造一颗附魔金苹果：<b>就是原版那一颗，食用时长是正常的 1.6 秒（32 刻）</b>。
      * <p>
-     * 做法就是复制原版的食物数据组件、只改秒数：营养、效果、是否随时可吃、
-     * 用后转化物全部照旧（效果时长由 {@link #applyAppleEffects()} 另行钉死）。
+     * 早先这里复制了一份食物数据、把 {@code eatSeconds} 压到 <b>0.8 秒</b>（原版的一半，
+     * 想让它"吃得快一点好赶紧回去打"），现已按用户要求<b>改回正常食用时长</b>，
+     * 所以这里不再改任何组件 —— 营养、效果、是否随时可吃全部照原版
+     * （那四个效果的时长另由 {@link #applyAppleEffects()} 钉死）。
+     * <p>
+     * 若以后要单独调这一口的快慢：原版 {@code FoodProperties.Builder} 的 {@code eatSeconds}
+     * 默认就是 1.6，另有 {@code fast()} = 0.8；照这个值造一份 {@code FoodProperties} 写回
+     * {@link DataComponents#FOOD} 即可。
      */
     private static ItemStack createEatingApple() {
-        ItemStack apple = new ItemStack(Items.ENCHANTED_GOLDEN_APPLE);
-        FoodProperties food = apple.get(DataComponents.FOOD);
-        if (food != null) {
-            apple.set(DataComponents.FOOD, new FoodProperties(
-                food.nutrition(), food.saturation(), food.canAlwaysEat(),
-                APPLE_EAT_SECONDS, food.usingConvertsTo(), food.effects()));
-        }
-        return apple;
+        return new ItemStack(Items.ENCHANTED_GOLDEN_APPLE);
     }
 
     /**
@@ -1994,6 +2332,14 @@ public class PlayerShellEntity extends PathfinderMob {
             // 玩家吃任何东西都会补饥饿/饱和度（Player#eat），空壳走的是 LivingEntity#eat，这里补上
             this.eatFood(food);
         }
+        // <b>紫颂果：吃完给 5 秒发光</b>（用户指定，见 {@link #CHORUS_FRUIT_GLOW_TICKS}）。
+        // 这里是全模组唯一的"进食结算点"，所以垫肚子的那一颗与两种逃命紫颂果都会被算上。
+        // 写法与 applyAppleEffects 的 forceEffect 同理：先移除再挂，保证每次正好 5 秒。
+        if (used.is(Items.CHORUS_FRUIT)) {
+            this.removeEffect(net.minecraft.world.effect.MobEffects.GLOWING);
+            this.addEffect(new MobEffectInstance(net.minecraft.world.effect.MobEffects.GLOWING,
+                CHORUS_FRUIT_GLOW_TICKS, 0, false, false));
+        }
         if (apple) {
             this.applyAppleEffects();
             this.spawnEatParticles(used, EAT_PARTICLES_ON_FINISH);
@@ -2001,33 +2347,59 @@ public class PlayerShellEntity extends PathfinderMob {
     }
 
     /**
-     * 把这具空壳配置成"由幸运核心支撑"的形态：
-     * <ul>
-     *   <li>解除 {@code noAi}、装上骷髅式走位与抽签攻击（{@link #enablePossessionCombat()}）；</li>
-     *   <li>头顶渲染幸运核心光球（{@link #setOrbAttached}）；</li>
-     *   <li>核心同款体质（见 {@link #applyCoreBackedStats()}）+ 附魔金苹果回血
-     *       （生成时先吃一个，之后血量低于上限的 50% 再吃）；</li>
-     *   <li>不自然消失。</li>
-     * </ul>
-     * 被<b>同化</b>产生的那一具（{@link OrbAssimilation}）与刷怪蛋放出来的那一具都走这里，
-     * 保证它们和附体主空壳除了"玩家外观 / 同化关系"之外完全一致
-     * （附体主空壳由 {@code OrbOfLuckEntity#spawnVessel} 直接调 {@link #applyCoreBackedStats()}，
-     * 不走这里 —— 它不需要再设一遍"头顶光球 + 属于哪颗核心"）。
+     * <b>「幸运核心玩家刷怪蛋」入口</b>：放下一具"由幸运核心支撑"的空壳。
+     * <p>
+     * 它没有来源玩家，所以生命上限走默认那档 {@link #CORE_BACKED_MAX_HEALTH}（20 点），
+     * 背后也没有核心（没人可以报账）。见 {@code OrbPlayerShellSpawnEggItem}。
      */
-    public void configureAsPossessedShell() {
-        this.configureAsPossessedShell(CORE_BACKED_MAX_HEALTH);
+    public void configureAsSpawnEggShell() {
+        this.configureAsCoreBacked(ShellOrigin.SPAWN_EGG, CORE_BACKED_MAX_HEALTH);
     }
 
     /**
-     * 同上，但<b>生命上限按调用方给的值</b>（= 被附体/同化前那位玩家的最大生命值，用户指定）。
-     * <p>
-     * 用于"有明确来源玩家"的两条路：附体（{@code OrbOfLuckEntity#spawnVessel}）与
-     * 同化（{@link OrbAssimilation#assimilate}）。刷怪蛋没有来源玩家，走无参那条。
+     * <b>同化事件入口</b>：一具核心空壳把玩家"打死"时，在受害者原地留下的那一具。
+     *
+     * @param playerMaxHealth 被同化<b>之前</b>那位玩家的最大生命值（这具壳的生命上限照它来）
      */
-    public void configureAsPossessedShell(double playerMaxHealth) {
+    public void configureAsAssimilatedShell(double playerMaxHealth) {
+        this.configureAsCoreBacked(ShellOrigin.ASSIMILATION, playerMaxHealth);
+    }
+
+    /**
+     * <b>附体事件入口</b>：幸运核心附体<b>真玩家</b>时，在玩家原地站起的那具 boss 身体
+     * （核心随即骑上去）。
+     * <p>
+     * 与上面两个入口的差别在于它<b>有</b>背后的核心：{@code orbUuid} 一并记下
+     * （见 {@link #setPossessedOrb}，它同时把来源钉成 {@link ShellOrigin#POSSESSION}）。
+     *
+     * @param playerMaxHealth 被附体<b>之前</b>那位玩家的最大生命值（这具壳的生命上限照它来）
+     */
+    public void configureAsPossessionVessel(UUID orbUuid, double playerMaxHealth) {
+        this.configureAsCoreBacked(ShellOrigin.POSSESSION, playerMaxHealth);
+        this.setPossessedOrb(orbUuid);
+    }
+
+    /**
+     * 三个"由幸运核心支撑"的入口<b>共用</b>的那一段配置：
+     * <ul>
+     *   <li><b>写来源</b>（{@link ShellOrigin}，见 {@link #getShellOrigin()}）；</li>
+     *   <li>头顶渲染幸运核心光球（{@link #setOrbAttached}）；</li>
+     *   <li>解除 {@code noAi}、装上骷髅式走位与抽签攻击（{@link #enablePossessionCombat()}）；</li>
+     *   <li>核心同款体质（见 {@link #applyCoreBackedStats(double)}）；</li>
+     *   <li>不自然消失。</li>
+     * </ul>
+     * 三具除了"来源 / 玩家外观 / 同化关系 / 背后有没有核心"、以及<b>附体专属的那几手</b>
+     * （见 {@link #hasPossessionExclusiveAbilities()}）之外完全一致。
+
+     * <p>
+     * 来源<b>先写</b>：后面那些配置项是这一类共有的，而来源决定了往后各处逻辑按哪一类对待它
+     * （例如"是不是附体主空壳""能不能同化别人"）。
+     */
+    private void configureAsCoreBacked(ShellOrigin origin, double playerMaxHealth) {
+        this.shellOrigin = origin;
+        this.setOrbAttached(true);
         this.enablePossessionCombat();
         this.setPersistenceRequired();
-        this.setOrbAttached(true);
         this.applyCoreBackedStats(playerMaxHealth);
     }
 
@@ -2042,15 +2414,17 @@ public class PlayerShellEntity extends PathfinderMob {
      *       {@code minecraft:protection}，见 {@code ModMain#handleEnchantEffectsOnHit}），
      *       全类型减伤 {@code min(20, 等级) / 25}（16 级 = 64%）。</li>
      *   <li><b>生成时立刻吃一个附魔金苹果</b>（见 {@link #startEatingApple()}）——
-     *       不论此刻有没有索敌目标，吃完才开始索敌。</li>
+     *       不论此刻有没有索敌目标，吃完才开始索敌。<b>只有附体事件那一具会挂这一口</b>
+     *       （用户指定，见 {@link #hasPossessionExclusiveAbilities()}）。</li>
      * </ul>
      * 幂等：重复调用只是把属性/血量/效果刷成同一套值，不会叠加。
      * <p>
      * 属性与效果都会随实体存档走，读档后不需要重新配置。
      * <p>
-     * <b>三个生成入口都走这里</b>（附体主空壳见 {@code OrbOfLuckEntity#spawnVessel}，
-     * 被同化的与刷怪蛋放的走 {@link #configureAsPossessedShell()}），
-     * 所以"无论生成方式都先吃一口"是自动成立的。
+     * <b>三个生成入口都走这里</b>（{@link #configureAsPossessionVessel}、
+     * {@link #configureAsAssimilatedShell}、{@link #configureAsSpawnEggShell}），
+     * 所以体质那一套是三者共有的；"先吃一口"则只对附体那一具成立（调用方都先写好来源，
+     * 这里读得到）。
      */
     public void applyCoreBackedStats() {
         this.applyCoreBackedStats(CORE_BACKED_MAX_HEALTH);
@@ -2101,7 +2475,10 @@ public class PlayerShellEntity extends PathfinderMob {
         }
         // 生成时的那一口附魔金苹果：这里只挂个标记，真正的"开始吃"放在第一刻 tick 里
         // （食用走的是原版物品使用流程，让它在实体已经进世界之后再开始更稳妥）。
-        this.possessionSpawnApplePending = true;
+        // <b>吃附魔金苹果是附体专属</b>（用户指定）：只有附体事件那一具挂这个标记，
+        // 同化 / 刷怪蛋放出来的空壳生成时不啃苹果，后面"血线到了再吃一个"也不触发
+        // （见 hasPossessionExclusiveAbilities）。调用方已先写好来源，所以这里读得到。
+        this.possessionSpawnApplePending = this.hasPossessionExclusiveAbilities();
     }
 
     /**
@@ -2112,7 +2489,7 @@ public class PlayerShellEntity extends PathfinderMob {
      * 只补这一个效果：不回血、不动别的效果 —— 免得变成"用奶桶回满血"的漏洞。
      */
     private void ensureCoreBackedProtection() {
-        if (!this.isOrbAttached() || this.hasEffect(ModMobEffects.PROTECTION)) {
+        if (!this.isCoreBackedShell() || this.hasEffect(ModMobEffects.PROTECTION)) {
             return;
         }
         this.addEffect(new MobEffectInstance(ModMobEffects.PROTECTION, Integer.MAX_VALUE,
@@ -2337,6 +2714,26 @@ public class PlayerShellEntity extends PathfinderMob {
         }
     }
 
+    /**
+     * 上报"<b>刚刚有效使用了一次核心</b>"：母体的附体倒计时直接减掉一段
+     * （见 {@link OrbOfLuckEntity#onCoreUsed()}）。
+     *
+     * <p>用户指定：<b>幸运维度里一次 −0.5 秒、其他维度一次 −2 秒</b>。幸运维度里那条 20 分钟倒计时
+     * 本来是暂停的，这条规则让它"暂停但不是免费"：核心每被真的用一次仍要付一点时间。
+     *
+     * <p>调用点在"签真的打出去了"那两处（起手完成出手 / 无需起手直接出手，都在 {@link #tick()} 里）。<b>抽到但没出手</b>（目标跑了、冷却没好、被
+     * {@code topPriorityWaiting} 作废）不算——这就是需求里那个"有效"。
+     * <p>
+     * 两种空壳都报（与索敌那两条一致）：附体主空壳的归属在自己字段里，被同化的那一具记在
+     * 持久化数据里，都通过 {@link #motherOrb()} 找到同一颗母体。
+     */
+    private void reportCoreUse() {
+        OrbOfLuckEntity orb = this.motherOrb();
+        if (orb != null) {
+            orb.onCoreUsed();
+        }
+    }
+
     @Override
     public void tick() {
         // 落地保护必须抢在 super.tick() <b>之前</b>做完：摔落伤害是在 super.tick() 内部的
@@ -2345,16 +2742,30 @@ public class PlayerShellEntity extends PathfinderMob {
         // （ultrawarm 维度里这一步是"每刻清零坠落距离"，落地交给丢出去的末影珍珠。）
         // 起手判定也一并放到移动之前：这样"判断要救 + 铺好水"能在同一 tick 里做完。
         if (!this.level().isClientSide) {
-            if (this.possessionMaceState == null && this.isOrbAttached() && this.canPossessAttack()) {
+            if (this.possessionMaceState == null && this.isCoreBackedShell() && this.canPossessAttack()) {
                 OrbPossessionMaceAttack.tryStartEmergencyWaterSave(this);
             }
             if (this.possessionMaceState != null) {
                 OrbPossessionMaceAttack.preMoveStep(this);
             }
         }
+        // <b>游戏刻被冻结时，把"正在吃的这一口"按住</b>（见 {@link #holdEatingWhileFrozen()}）。
+        // 必须抢在 super.tick() <b>之前</b>补那一格：原版的进食自减与"吃完结算"都在
+        // LivingEntity#tick → updatingUsingItem 里（{@code --useItemRemaining <= 0 → completeUsingItem}），
+        // 放到它之后就只能等它吃完再补，等于没按住。
+        if (!this.level().isClientSide && !this.gameTickRunning()) {
+            this.holdEatingWhileFrozen();
+        }
         super.tick();
         if (this.level().isClientSide) {
             return;
+        }
+        // 像真人玩家一样加载/保留区块（见 {@link ShellChunkLoader}）。
+        // <b>必须放在下面所有 return 之前</b>：这一趟之后有好几条"没挂核心就直接 return"、
+        // "NoAI 就直接 return"的早退分支，而"加载区块"这件事与它有没有核心、有没有 AI 一点关系都没有
+        // （变形壳、被冻住的壳同样是长期存在的实体，一样要保住脚下那片区块不被卸载）。
+        if (this.level() instanceof ServerLevel shellLevel) {
+            ShellChunkLoader.tick(shellLevel, this.getUUID(), this.chunkPosition());
         }
         // 被弹射物"打落"的计时放在这里（<b>早于</b>下面那条"没挂核心就直接 return"）：
         // 那具空壳万一在被打落的这几秒里失去了核心（附体结束等），计时也得照走到点，
@@ -2374,12 +2785,14 @@ public class PlayerShellEntity extends PathfinderMob {
         // 就算这一秒里核心没了，该摘的地狱疣也得摘掉。
         this.tickWartStrip();
         // 附体 boss 血条：①本体血量（紫、居中）+ ②伤害吸收那段（黄、右侧）。
-        // 放在下面两条 return <b>之前</b>：① 没了核心的壳要把血条收掉（isOrbAttached 为假时收），
+        // 放在下面两条 return <b>之前</b>：① 没了核心的壳要把血条收掉（isCoreBackedShell 为假时收），
         // ② 被 NoAI 冻住的壳照样该看得见血条（它不是攻击行为）。
         this.tickShellBossBar();
-        // "由幸运核心支撑"的空壳：受伤后只能靠附魔金苹果回血（见下面的苹果逻辑），
-        // 原本那条"每 10 刻回 2 点"的被动回血已经移除。
-        if (!this.isOrbAttached()) {
+        // "由幸运核心支撑"的空壳：受伤后没有被动回血（原本那条"每 10 刻回 2 点"已经移除）——
+        // 附体事件那一具靠附魔金苹果回血（见下面的苹果逻辑），
+        // 同化 / 刷怪蛋那两具只剩"靠饥饿值的自然回复"这一条路（它们不吃苹果，见
+        // hasPossessionExclusiveAbilities）。
+        if (!this.isCoreBackedShell()) {
             return;
         }
         // 索敌冷却的"有活干就不算冷却"判定：每刻上报手上还有没有活的目标（见方法注释）。
@@ -2419,6 +2832,12 @@ public class PlayerShellEntity extends PathfinderMob {
         if (!Double.isNaN(this.possessionSmashImpactY)
             && (this.onGround() || this.tickCount > this.possessionSmashImpactExpireTick)) {
             this.possessionSmashImpactY = Double.NaN;
+        }
+        // <b>被当成乘客载着走（riding）→ 先啃紫颂果逃出去</b>（用户指定：优先级高于其攻击行为）。
+        // 位置特意选在这里：反重锤应急、重锤动作、索敌抽签与出手<b>全在它后面</b> ——
+        // 位置被别人（载具）决定的时候，打什么都没意义。详见 tryEscapeRidingWithChorusFruit。
+        if (this.tryEscapeRidingWithChorusFruit()) {
+            return;
         }
         // <b>「反重锤」应急出手</b>：目标带着重锤往下掉时，<b>哪怕空壳此刻正忙</b>
         // （自己那套"冲天→俯冲→砸→落地水"要好几秒、正在啃附魔金苹果、大招还在起手……）
@@ -2470,9 +2889,12 @@ public class PlayerShellEntity extends PathfinderMob {
 
         // 生成时的那一口附魔金苹果（不论此刻有没有索敌目标）：
         // 这是"生成 → 先吃完一个 → 随后再开始索敌"的实现点，因为下面就是进食/索敌与抽签。
+        // 标记只有"附体事件"那一具会被挂上（见 applyCoreBackedStats），这里再判一次是双保险。
         if (this.possessionSpawnApplePending) {
             this.possessionSpawnApplePending = false;
-            this.startEatingApple();
+            if (this.hasPossessionExclusiveAbilities()) {
+                this.startEatingApple();
+            }
         }
         // <b>被卡在方块里（窒息）→ 先啃紫颂果逃命</b>（用户指定）。
         // 位置是所有进食之前的<b>最优先</b>：卡在墙里是每刻 1 点伤害，连"正在吃的东西"也打断
@@ -2562,6 +2984,8 @@ public class PlayerShellEntity extends PathfinderMob {
                 if (winding.canRun(this, target) && this.isAttackReady(winding, gameTime)) {
                     winding.run(this, target);
                     this.markAttackUsed(winding, gameTime);
+                    // 有效使用了一次核心：附体倒计时按维度扣（幸运维度 0.5 秒 / 其它 2 秒）
+                    this.reportCoreUse();
                 }
                 winding.endWindUp(this);
             }
@@ -2615,6 +3039,8 @@ public class PlayerShellEntity extends PathfinderMob {
         if (drawn.canRun(this, target) && this.isAttackReady(drawn, gameTime)) {
             drawn.run(this, target);
             this.markAttackUsed(drawn, gameTime);
+            // 有效使用了一次核心：附体倒计时按维度扣（幸运维度 0.5 秒 / 其它 2 秒）
+            this.reportCoreUse();
         }
     }
 
@@ -2851,7 +3277,7 @@ public class PlayerShellEntity extends PathfinderMob {
                 && e.isAlive()
                 && !isUntouchablePlayer(e)
                 && !this.isExcludedForRelationRule(e, protectedPlayer)
-                && !(e instanceof PlayerShellEntity shell && shell.isOrbAttached())
+                && !(e instanceof PlayerShellEntity shell && shell.isCoreBackedShell())
                 && !OrbPossessionSummons.isSummon(e)
                 && !(e instanceof OrbOfLuckEntity));
         // <b>先按距离排序，再由近到远逐个做视线判定、命中第一个就收工</b>：
@@ -2881,7 +3307,7 @@ public class PlayerShellEntity extends PathfinderMob {
      *   <li>他<b>饲养的宠物</b>（原版可驯服动物 + 车万女仆）—— 也属于"不攻击"的范围。</li>
      * </ol>
      * 注意：<b>其它普通生物照打</b>（用户澄清：这具壳"会正常索敌其他生物"），
-     * 只有"被附体空壳"这一类在正常索敌里本来就被排除（上面那条 {@code isOrbAttached}）。
+     * 只有"被附体空壳"这一类在正常索敌里本来就被排除（上面那条 {@code isCoreBackedShell}）。
      * 不是特例壳、或那位玩家不在线时，{@code protectedPlayer} 为 null，这里一律不排除。
      */
     private boolean isExcludedForRelationRule(LivingEntity candidate, @Nullable ServerPlayer protectedPlayer) {
@@ -2905,7 +3331,7 @@ public class PlayerShellEntity extends PathfinderMob {
         LivingEntity best = null;
         double bestScore = Double.MAX_VALUE;
         for (LivingEntity candidate : this.level().getEntitiesOfClass(LivingEntity.class, area,
-                e -> e instanceof PlayerShellEntity shell && shell != this && shell.isOrbAttached()
+                e -> e instanceof PlayerShellEntity shell && shell != this && shell.isCoreBackedShell()
                     && shell.isAlive() && !isUntouchablePlayer(shell))) {
             PlayerShellEntity other = (PlayerShellEntity) candidate;
             int rank = OrbAdversaryRelations.relationRank(protectedPlayer, other);
@@ -2953,15 +3379,33 @@ public class PlayerShellEntity extends PathfinderMob {
     }
 
     /**
-     * 摔落伤害：只要这具空壳<b>刚用重锤砸中过目标</b>，这次坠落的摔落伤害<b>整个免掉</b>。
-     * <p>触发点是 {@code OrbPossessionMaceAttack#smash}（砸中那一刻调 {@link #noteSmashImpact()}）。
-     * <p>原版 {@code Player#causeFallDamage} 的做法是"把冲击点以上的落差截掉、只结算以下那一小段"
-     * （配合 {@code MaceItem#hurtEnemy} 记下的 {@code currentImpulseImpactPos}），
-     * 但按需求这里直接<b>全免</b> —— 砸中就是砸中，落地不该再掉血。
-     * <p>没砸中过就完全走原版：空壳现在<b>不免疫</b>摔落伤害，没砸中的话摔下来照常疼（那正是落水自救存在的意义）。
+     * 摔落伤害。规则从上到下三条：
+     * <ol>
+     *   <li><b>飞行形态（有翅膀）→ 全免</b>（用户指定）。这就是原版给"会飞的玩家"的待遇：
+     *       {@code Player#causeFallDamage} 第一行便是 {@code if (this.mayFly()) return false;} ——
+     *       判据是"有飞行能力"这件事本身，而不是"落地时轻不轻"。本模组的翅膀走的也正是 mayfly 那一套
+     *       （见 {@code ModMain#handleWingsTick}），所以真人玩家穿着翅膀落地不疼，空壳也该一样；
+     *       何况飞控的下降本来就是<b>主动缓降</b>（见 {@code OrbPossessionFlightAI}），更不该按自由落体结算。</li>
+     *   <li><b>刚用重锤砸中过目标</b> → 这次坠落的摔落伤害整个免掉。
+     *       触发点是 {@code OrbPossessionMaceAttack#smash}（砸中那一刻调 {@link #noteSmashImpact()}）。
+     *       原版 {@code Player#causeFallDamage} 的做法是"把冲击点以上的落差截掉、只结算以下那一小段"
+     *       （配合 {@code MaceItem#hurtEnemy} 记下的 {@code currentImpulseImpactPos}），
+     *       但按需求这里直接<b>全免</b> —— 砸中就是砸中，落地不该再掉血。</li>
+     *   <li>其余照原版：<b>不免疫</b>。被弹射物打落之后的自由落体照常疼 —— 那正是落水 / 末影珍珠
+     *       落地自救存在的意义（见 {@code OrbPossessionMaceAttack#tryStartEmergencyWaterSave}）。</li>
+     * </ol>
+     * <p><b>为什么第 1 条判 {@link #isFlightMode()} 而不是 {@link #hasFlightAbility()}</b>：
+     * 前者还要求"此刻没被打落"。按需求，被打落期间是<b>暂时退回"不会飞的壳"</b>
+     * （走位、抽签、姿势全都跟着退回地面那套，见 {@code isFlightMode()} 的注释），
+     * 那段落体本来就该疼；而重锤动作也只在 {@code !isFlightMode()} 时才会起手
+     * （{@code OrbPossessionMaceAttack#begin} 第一行就把它挡掉），所以第 1、2 条不会互相干扰。
      */
     @Override
     public boolean causeFallDamage(float fallDistance, float multiplier, DamageSource source) {
+        if (this.isFlightMode()) {
+            this.fallDistance = 0.0F;
+            return false;
+        }
         if (!Double.isNaN(this.possessionSmashImpactY)) {
             this.possessionSmashImpactY = Double.NaN;
             this.fallDistance = 0.0F;
@@ -2979,11 +3423,13 @@ public class PlayerShellEntity extends PathfinderMob {
      * <p>
      * 唯一保留的减伤是"自己人的远程攻击"：苦力弹爆炸与铁砧雨从这具身体手上打出去，
      * 贴脸/被逼到墙角时会波及自己。这两个减免原来写在核心的 {@code hurt} 里，
-     * 承伤方换成空壳后跟着搬过来（数值仍在核心那边定义）。
+     * 承伤方换成空壳后跟着搬过来（数值仍在核心那边定义）；<b>只有附体事件那具</b>
+     * （{@link ShellOrigin#POSSESSION}）需要它们 —— 同化事件 / 刷怪蛋那两具背后不一定有核心，
+     * 也不是这些招式的发射者。
      */
     @Override
     public boolean hurt(DamageSource source, float amount) {
-        if (this.possessedOrbUuid != null) {
+        if (this.isPossessionVessel()) {
             if (source.getDirectEntity() instanceof TntStaffCreeper flying && flying.isFlying()) {
                 amount *= 1.0F - OrbOfLuckEntity.CREEPER_BLAST_RESISTANCE;
             } else if (OrbAnvilRain.isRainAnvil(source.getDirectEntity())
@@ -3010,9 +3456,9 @@ public class PlayerShellEntity extends PathfinderMob {
         }
         // 不是母体的附体空壳（刷怪蛋放出来的、被同化的那一具）：击败奖励 = 100 点经验
         // （母体那份奖励由核心自己发，见 OrbOfLuckEntity#grantDefeatRewards）。
-        // 判据用头顶光球：三种"由幸运核心支撑的空壳"都会点亮它（configureAsPossessedShell /
-        // spawnVessel），而变形药水造出来的临时空壳不会 —— 那些不该发这个奖励。
-        if (this.possessedOrbUuid == null && this.isOrbAttached()
+        // 判据用来源：只有"由幸运核心支撑"这一类的**非附体事件**壳（同化事件 / 刷怪蛋）有这份奖励
+        // （见 ShellOrigin），变形药水造出来的临时空壳不算。
+        if (this.isAssimilationOrSpawnEggShell()
             && this.level() instanceof ServerLevel serverLevel) {
             ExperienceOrb.award(serverLevel, this.position(), NON_MOTHER_DEFEAT_EXPERIENCE);
             ModMain.LOGGER.info("[附体] 击败非母体空壳: id={} 掉落 {} 点经验 @({}, {}, {})",

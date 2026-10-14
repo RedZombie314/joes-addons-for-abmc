@@ -53,9 +53,9 @@ import java.util.List;
  * 不做"往上找空位"的抬高；因为它无重力，出生后靠飞行逻辑里"低于地表就往上抬"自己爬升出来，
  * 漫游中心点也正好是这颗幸运方块的位置，所以它就在方块附近乱飞。
  *
- * <p>登记：本事件在 {@link LuckyEvents#registerAll()} 里注册；它<b>不在</b> debug 池里
- * （6.5.5 时曾是 latest，6.5.6 起 latest 换成"debug 池"、由 {@link LuckyEvents#markDebug} 显式登记，
- * 池里的 8 个事件见那里）。
+ * <p>登记：本事件在 {@link LuckyEvents#registerAll()} 里注册，和所有默认子事件一样会出现在
+ * {@code /jafa luckyblockresult} 的候选表里（见 {@link LuckyOutcomeCatalog}）；当年那个
+ * "debug 池"已经在 6.8.9 改成"指定单项"的写法。
  */
 public final class LuckySkeletonKnightEvent {
     /** 目标点相对出生点的水平漫游半径（格）。 */

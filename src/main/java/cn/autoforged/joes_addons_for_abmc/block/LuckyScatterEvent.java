@@ -34,7 +34,7 @@ public final class LuckyScatterEvent {
 
     /**
      * 注册到幸运事件表（由 {@link LuckyEvents#registerAll()} 调用），返回注册后的事件对象 ——
-     * 调用方据此决定要不要把它登记进 debug 池（见 {@link LuckyEvents#markDebug}）。
+     * 调用方拿到它就能继续做别的登记（例如 {@link LuckyOutcomeCatalog} 把它算进候选表）。
      */
     public static LuckyEvent register() {
         LuckyEvent event = LuckyEvent.of(LuckyEvents.id("item/gem_scatter"), LuckyEventCategory.LUCKY_ITEM,

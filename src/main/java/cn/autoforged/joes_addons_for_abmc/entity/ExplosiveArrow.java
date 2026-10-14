@@ -33,15 +33,29 @@ public class ExplosiveArrow extends AbstractArrow {
     }
 
     public ExplosiveArrow(Level level, LivingEntity shooter, ItemStack pickupItemStack, ItemStack firedFromWeapon) {
-        super(ModEntities.EXPLOSIVE_ARROW.get(), shooter, level, pickupItemStack, firedFromWeapon);
+        super(ModEntities.EXPLOSIVE_ARROW.get(), shooter, level, pickupItemStack, sanitizeWeapon(firedFromWeapon));
         this.pickup = Pickup.DISALLOWED;
     }
 
     /** 发射器发射时用的构造（位置 + 弹药，没有射击者）。 */
     public ExplosiveArrow(Level level, double x, double y, double z, ItemStack pickupItemStack,
                           ItemStack firedFromWeapon) {
-        super(ModEntities.EXPLOSIVE_ARROW.get(), x, y, z, level, pickupItemStack, firedFromWeapon);
+        super(ModEntities.EXPLOSIVE_ARROW.get(), x, y, z, level, pickupItemStack, sanitizeWeapon(firedFromWeapon));
         this.pickup = Pickup.DISALLOWED;
+    }
+
+    /**
+     * 把"武器"参数里的空栈折算成 {@code null}（与 {@code PrismarineArrow} 同款防护）。
+     * <p>
+     * 原版 {@code AbstractArrow} 的构造器对<b>非 null 但为空</b>的武器栈会直接抛
+     * {@code IllegalArgumentException("Invalid weapon firing an arrow")}（服务端路径）。
+     * 目前两条调用路径（弓/弩发射时给的是弓本身、发射器给的是 {@code null}）都不会踩到，
+     * 但把"手上那件东西"当武器传进来是个很容易复现的写法，这里先兜住，
+     * 免得哪天又多一条"空手射箭把服务器打崩"的路。空栈折算成 null 语义上也对：
+     * 没有武器就没有武器附魔可继承。
+     */
+    private static ItemStack sanitizeWeapon(ItemStack weapon) {
+        return weapon == null || weapon.isEmpty() ? null : weapon;
     }
 
     @Override

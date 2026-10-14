@@ -115,7 +115,7 @@ public class WartOnAStickItem extends Item {
                                                   InteractionHand hand) {
         // 被幸运核心/幸运方块附体的玩家空壳：走另一条路 —— 它只"僵一秒"，然后自己把地狱疣甩掉。
         // <b>头盔栏里已经有别的东西时完全不生效</b>（用户指定）：不挂地狱疣、不僵住 AI、也不扣耐久。
-        if (target instanceof PlayerShellEntity shell && shell.isOrbAttached()) {
+        if (target instanceof PlayerShellEntity shell && shell.isCoreBackedShell()) {
             if (!shell.getItemBySlot(EquipmentSlot.HEAD).isEmpty()) {
                 return InteractionResult.PASS;
             }

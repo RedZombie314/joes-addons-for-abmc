@@ -168,8 +168,23 @@ public class LuckySelectorEntity extends PathfinderMob {
     }
 
     // ===== 抓取流程 =====
-    /** 1 格 = 16 像素（配置里的高度都用像素表示）。 */
+    /** 1 格 = 16 像素（悬停/抬起的距离都用像素表示）。 */
     private static final double PIXELS_PER_BLOCK = 16.0D;
+
+    /**
+     * 寻物时悬停在掉落物正上方的高度（像素）。
+     * <p>
+     * <b>以前是配置项</b>（{@code lucky_selector.seek_hover_px}，默认 16）；用户指定"幸运选择器那几项
+     * 配置可以移除"，于是把当时的默认值固化成常量，连同另外两个抬升距离一起从配置里删掉了。
+     */
+    private static final double SEEK_HOVER_PX = 16.0D;
+
+    /** 寻物时把掉落物向上抬起的距离（像素）。以前是配置项（默认 24）。 */
+    private static final double SEEK_LIFT_PX = 24.0D;
+
+    /** 送物时携带物在 0~0.5 时间码里向上的距离（像素）。以前是配置项（默认 24）。 */
+    private static final double SEND_LIFT_PX = 24.0D;
+
     /** 搜索掉落物的半径（格）。 */
     private static final double SEEK_ITEM_RANGE = 32.0D;
     /** 搜索可抓生物的半径（格）。 */
@@ -1167,7 +1182,7 @@ public class LuckySelectorEntity extends PathfinderMob {
             return null;
         }
         return new Vec3(item.getX(),
-            item.getY() + ModConfig.SELECTOR_SEEK_HOVER_PX.get() / PIXELS_PER_BLOCK, item.getZ());
+            item.getY() + SEEK_HOVER_PX / PIXELS_PER_BLOCK, item.getZ());
     }
 
     /** 已经锁定的目标还在不在（STRETCH 阶段用）。 */
@@ -1370,7 +1385,7 @@ public class LuckySelectorEntity extends PathfinderMob {
             return false;
         }
         if (this.seekTicks == LIFT_START_TICKS) {
-            double lift = ModConfig.SELECTOR_SEEK_LIFT_PX.get() / PIXELS_PER_BLOCK;
+            double lift = SEEK_LIFT_PX / PIXELS_PER_BLOCK;
             this.seekLiftFrom = display.position();
             this.seekLiftTo = this.seekLiftFrom.add(0.0D, lift, 0.0D);
         }
@@ -1725,7 +1740,7 @@ public class LuckySelectorEntity extends PathfinderMob {
         this.carriedDisplay = display;
         this.sendRiseFrom = display.position();
         this.sendRiseTo = this.sendRiseFrom.add(
-            0.0D, ModConfig.SELECTOR_SEND_LIFT_PX.get() / PIXELS_PER_BLOCK, 0.0D);
+            0.0D, SEND_LIFT_PX / PIXELS_PER_BLOCK, 0.0D);
         this.sendPhase = SendPhase.RISE;
         this.sendTicks = 0;
         this.requestAnimation(SelectorAnimation.SEND);
@@ -1746,7 +1761,7 @@ public class LuckySelectorEntity extends PathfinderMob {
         mob.stopRiding();
         this.sendRiseFrom = mob.position();
         this.sendRiseTo = this.sendRiseFrom.add(
-            0.0D, ModConfig.SELECTOR_SEND_LIFT_PX.get() / PIXELS_PER_BLOCK, 0.0D);
+            0.0D, SEND_LIFT_PX / PIXELS_PER_BLOCK, 0.0D);
         this.sendPhase = SendPhase.RISE;
         this.sendTicks = 0;
         this.requestAnimation(SelectorAnimation.SEND);

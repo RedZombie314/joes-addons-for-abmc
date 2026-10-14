@@ -103,7 +103,7 @@ import java.util.function.Predicate;
  * 将来再加召唤物，只要在生成处 mark 一下即可。
  *
  * <h2>流程：先抽签，再由抽到的事件自己决定怎么打</h2>
- * 被附体的玩家空壳（{@link PlayerShellEntity#isOrbAttached()}）在<b>有索敌目标</b>时，
+ * 被附体的玩家空壳（{@link PlayerShellEntity#isCoreBackedShell()}）在<b>有索敌目标</b>时，
  * 每隔 1~2 秒（随机）调用一次 {@link #drawUsable} <b>抽签</b>，抽到谁，这段时间就按谁的方式来：
  * <ul>
  *   <li>远程事件：走位照旧（骷髅式环绕/拉开距离），冷却好了就朝目标开火；</li>
@@ -272,13 +272,29 @@ public final class OrbPossessedAttackEvents {
         RANGED_GHAST_FIREBALL);
 
     /**
-     * 旋风人用的远程池：把<b>爆炸性实体与爆炸弹全部剔除</b>
-     * （召唤苦力怕/爆裂猫/爆裂僵尸、恶魂火球 —— 旋风人会把飞行物弹回来，扔这些纯亏），
-     * 其余远程照旧。
+     * 旋风人用的远程池：<b>只留"召唤爆炸性实体 + 铁砧雨"</b>（用户指定）。
+     * <p>
+     * 原版旋风人会把<b>任何</b>弹射物原路弹回来：{@code Breeze#deflection(Projectile)}
+     * 对除风弹以外的弹射物一律返回 {@code ProjectileDeflection.REVERSE}
+     * （Breeze.java:189-193），而走这条判定的是所有 {@code Projectile}——
+     * 箭、三叉戟、雪球、药水，以及<b>烟花火箭</b>（{@code FireworkRocketEntity#tick} 同样调
+     * {@code hitTargetOrDeflectSelf}，FireworkRocketEntity.java:155）。
+     * 所以对它的特攻<b>一律不发射弹射物</b>：箭 / 海晶弓 / 三叉戟 / 闪烁西瓜刀 /
+     * 爆炸性烟花火箭 / 守卫者光波 / 恶魂火球 / 凋灵之首全部剔除，
+     * 只保留"丢过去就炸、就砸"的那两类：五种爆炸性召唤物
+     * （苦力怕弹、爆裂猫、爆裂僵尸、爆裂史莱姆、爆裂骷髅 —— 它们是 {@code Mob} 实体、不是弹射物，
+     * 见 {@link TntStaffCreeper} / {@link OrbExplosiveCat} / {@link OrbExplosiveZombie} /
+     * {@link OrbExplosiveSlime} / {@link OrbExplosiveSkeleton}）与
+     * {@link AnvilRainEvent 铁砧雨}（砸下来的是下落方块实体，也不是弹射物）。
+     * 近战照旧（{@link Matchup#alwaysMelee} 为 true，贴身必定出刀），
+     * 合起来正好是用户要的"爆炸性实体 + 铁砧 + 近战，不发射弹射物"。
+     * <p>
+     * 用白名单逐项列出（而不是从 {@link #RANGED} 里过滤）是为了避开类初始化顺序：
+     * 这个字段要排在 {@link #RANGED} 之前，那时 {@code RANGED} 还没构造出来。
      */
     private static final List<PossessedAttackEvent> BREEZE_RANGED = List.of(
-        RANGED_ARROW, RANGED_PRISMARINE_BOW, RANGED_TRIDENT, RANGED_KNIFE_THROW,
-        RANGED_KNIGHT, RANGED_ANVIL_RAIN, RANGED_WITHER);
+        RANGED_CREEPER, RANGED_CAT, RANGED_ZOMBIE, RANGED_SLIME, RANGED_SKELETON,
+        RANGED_ANVIL_RAIN);
 
     /**
      * 暮色九头蛇用的远程池：默认远程池<b>减去"召唤己方凋灵"</b>，其余照旧。
@@ -340,8 +356,8 @@ public final class OrbPossessedAttackEvents {
             // 潜影贝：尽量走近战（贴身必近战）；真要用远程也只挑爆炸性实体。
             new Matchup(e -> e.getType() == EntityType.SHULKER,
                 SHULKER_RANGED, null, null, 0.0F, null, 0.0F, true),
-            // 旋风人：它会弹开飞行物，所以尽量贴身近战（贴身必近战）；
-            // 远程池里把爆炸性实体/爆炸弹全剃掉（扔过去只会被弹回来）。
+            // 旋风人：它会弹开飞行物，所以尽量贴身近战（贴身必近战），
+            // 远程只用"召唤爆炸性实体 + 铁砧雨"，一颗弹射物都不发射（用户指定，见 BREEZE_RANGED）。
             new Matchup(e -> e.getType() == EntityType.BREEZE,
                 BREEZE_RANGED, null, null, 0.0F, null, 0.0F, true),
             // 苦力怕 / 铁傀儡 / 卫道士 / 女巫：贴身的代价太高（爆炸、重击、以及女巫的贴脸药水），
@@ -584,13 +600,22 @@ public final class OrbPossessedAttackEvents {
      * "最高优先级特攻"此刻是不是真的可用：条件成立<b>且</b>冷却已好。
      * 供空壳在 tick 里决定要不要插队（见 {@code PossessedAttackEvent#highestPriority()}）。
      * <p>
-     * 目前有两张这种签：<b>丢奶桶解毒</b>（{@link #MILK_BUCKET}）与<b>丢缓降药水</b>
+     * 目前有三张这种签：<b>丢奶桶解毒</b>（{@link #MILK_BUCKET}）、
+     * <b>抛变形解药</b>（{@link #TRANSMUTATION_ANTIDOTE}）、<b>丢缓降药水</b>
      * （{@link #SLOW_FALLING_POTION}）。抽签时优先奶桶（先自救）。
+     * <p>
+     * <b>奶桶之外那两张是附体专属</b>（用户指定）：来源不是附体事件的空壳这里直接按"不可用"算，
+     * 于是既不会插队、也不会被抽到（它们本来也不在任何池子里）。
      */
     public static boolean highestPriorityReady(PlayerShellEntity attacker, LivingEntity target) {
         long gameTime = attacker.level().getGameTime();
-        return (MILK_BUCKET.canRun(attacker, target) && attacker.isAttackReady(MILK_BUCKET, gameTime))
-            || (TRANSMUTATION_ANTIDOTE.canRun(attacker, target)
+        if (MILK_BUCKET.canRun(attacker, target) && attacker.isAttackReady(MILK_BUCKET, gameTime)) {
+            return true;
+        }
+        if (!attacker.hasPossessionExclusiveAbilities()) {
+            return false;
+        }
+        return (TRANSMUTATION_ANTIDOTE.canRun(attacker, target)
                 && attacker.isAttackReady(TRANSMUTATION_ANTIDOTE, gameTime))
             || (SLOW_FALLING_POTION.canRun(attacker, target)
                 && attacker.isAttackReady(SLOW_FALLING_POTION, gameTime));
@@ -1182,6 +1207,11 @@ public final class OrbPossessedAttackEvents {
         if (shell.level().isClientSide) {
             return false;
         }
+        // "反制重锤"是附体专属（用户指定）：来源不是附体事件的空壳（同化 / 刷怪蛋）
+        // 连这条绕过抽签的应急出手也不给。
+        if (!shell.hasPossessionExclusiveAbilities()) {
+            return false;
+        }
         long gameTime = shell.level().getGameTime();
         // 候选①：当前索敌目标（正常就该泼他，零延迟）
         LivingEntity locked = shell.getTarget();
@@ -1297,9 +1327,19 @@ public final class OrbPossessedAttackEvents {
         return true;
     }
 
-    /** 对面的特攻行为；没有匹配返回 null。 */
+    /**
+     * 对面的特攻行为；没有匹配返回 null。
+     * <p>
+     * <b>特攻表是附体专属</b>（用户指定）：只有来源为附体事件的那一具
+     * （{@code PlayerShellEntity#hasPossessionExclusiveAbilities()}，即核心附体真玩家时产生的 boss 身体）
+     * 才有针对特定生物的偏好；同化事件 / 刷怪蛋放出来的空壳这里一律返回 null，
+     * 于是走位与抽签都退回默认池子（照普通打法打）。
+     */
     @Nullable
-    private static Matchup matchupFor(LivingEntity target) {
+    private static Matchup matchupFor(PlayerShellEntity attacker, LivingEntity target) {
+        if (!attacker.hasPossessionExclusiveAbilities()) {
+            return null;
+        }
         for (Matchup matchup : MATCHUPS) {
             if (matchup.condition().test(target)) {
                 return matchup;
@@ -1318,9 +1358,12 @@ public final class OrbPossessedAttackEvents {
      * <p>
      * 判定是<b>每次现算</b>的：像"满血巫妖"这种条件，一旦它掉血、条目不再匹配，这里立刻回到 false，
      * 空壳马上恢复正常走位（该贴脸就贴脸）。
+     * <p>
+     * 同 {@link #matchupFor}：<b>特攻表只对附体事件那一具生效</b>，
+     * 所以同化 / 刷怪蛋放出来的空壳这里恒为 false（照普通打法，不刻意保持距离）。
      */
-    public static boolean prefersRanged(LivingEntity target) {
-        Matchup matchup = matchupFor(target);
+    public static boolean prefersRanged(PlayerShellEntity attacker, LivingEntity target) {
+        Matchup matchup = matchupFor(attacker, target);
         return matchup != null && !matchup.alwaysMelee();
     }
 
@@ -1333,14 +1376,18 @@ public final class OrbPossessedAttackEvents {
      * <ol>
      *   <li><b>最高优先级特攻</b>（都不属于任何池子，只有对应情况才会被调用）：
      *       自己中凋灵/中毒 → 往脚下丢奶桶（{@link #MILK_BUCKET}）；
-     *       10 格内有变形药水 → 朝天上抛变形解药（{@link #TRANSMUTATION_ANTIDOTE}）；
-     *       目标手持重锤且没有缓降 → 丢缓降药水（{@link #SLOW_FALLING_POTION}）；</li>
+     *       10 格内有变形药水 → 朝天上抛变形解药（{@link #TRANSMUTATION_ANTIDOTE}）<b>〔附体专属〕</b>；
+     *       目标手持重锤且没有缓降 → 丢缓降药水（{@link #SLOW_FALLING_POTION}）<b>〔附体专属〕</b>；</li>
      *   <li>目标在 {@link #MELEE_RANGE} 格内且该敌人要求"贴身走近战" → 从该敌人的近战池里抽
      *       （默认 {@link #MELEE}；监守者只有 Bob 一张签），偏好事件按概率优先；</li>
      *   <li>其余情况从该敌人的远程池里抽（默认 {@link #RANGED_WITH_OTHER} = 远程池 + 其它攻击；
      *       末影人只剩召唤爆炸物+铁砧雨），偏好事件按概率优先；</li>
      *   <li>两边都抽不出可用事件时，用 {@link #OTHER} 兜底（它同时也在上一条的池子里）。</li>
      * </ol>
+     * <b>整张特攻表（{@link #MATCHUPS}）对来源不是附体事件的空壳一律不生效</b>（用户指定），
+     * 那两处带"〔附体专属〕"的最高优先级签同理 —— 它们会落到默认池子里照普通打法打，
+     * 见 {@code PlayerShellEntity#hasPossessionExclusiveAbilities()}。
+     * <p>
      * 冷却（{@link PossessedAttackEvent#cooldownTicks()}）不参与筛选：抽到的事件若还在冷却里，
      * 这个窗口就只是继续走位，不会改抽别的、也不会因为冷却去重抽。
      * <b>唯一的例外</b>是上面那条最高优先级特攻 —— 它在返回之前就查了冷却，
@@ -1352,16 +1399,20 @@ public final class OrbPossessedAttackEvents {
         // 0c) 最高优先级特攻③：目标手持重锤且没有缓降 → 丢缓降药水。
         //     这些都不在任何池子里、别的场合也不会被调用；冷却没好就跳过，照常走下面的池子。
         long gameTime = attacker.level().getGameTime();
+        // 紧接着这三张里，<b>变形解药与缓降药水是附体专属</b>（用户指定）：只有附体事件那一具
+        // 丢得出它们，同化事件 / 刷怪蛋放出来的空壳一张都不抽。奶桶那条<b>不</b>受此限制 ——
+        // 它是通用的自救，不在用户点名的那几手里，三种来源一视同仁。
+        boolean exclusive = attacker.hasPossessionExclusiveAbilities();
         if (MILK_BUCKET.canRun(attacker, target) && attacker.isAttackReady(MILK_BUCKET, gameTime)) {
             return MILK_BUCKET;
         }
-        if (TRANSMUTATION_ANTIDOTE.canRun(attacker, target)
+        if (exclusive && TRANSMUTATION_ANTIDOTE.canRun(attacker, target)
             && attacker.isAttackReady(TRANSMUTATION_ANTIDOTE, gameTime)) {
             // 记一次"看到变形药水了"：这一轮若是首次发现，本次按零帧起手（见 windUpTicks(attacker)）
             attacker.noteTransmutationPotionSighting(gameTime);
             return TRANSMUTATION_ANTIDOTE;
         }
-        if (SLOW_FALLING_POTION.canRun(attacker, target)
+        if (exclusive && SLOW_FALLING_POTION.canRun(attacker, target)
             && attacker.isAttackReady(SLOW_FALLING_POTION, gameTime)) {
             return SLOW_FALLING_POTION;
         }
@@ -1370,7 +1421,8 @@ public final class OrbPossessedAttackEvents {
         //     它的身体整段免疫伤害、只有头的碰撞箱吃伤害，而张嘴那一刻头基本不动、最好打。
         //     不是时机就返回 null —— 空壳抽签分支里 `drawnEvent == null` 是每刻都成立的，
         //     所以它会<b>每刻重抽</b>，嘴一张开就立刻打出去，不会白等一个 1~2 秒的窗口。
-        if (OptionalMods.isTwilightForestLoaded() && TwilightForestCompat.isHydra(target)
+        //     同属"针对特定生物的特攻"，所以同样只对附体事件那一具生效。
+        if (exclusive && OptionalMods.isTwilightForestLoaded() && TwilightForestCompat.isHydra(target)
             && !TwilightForestCompat.isHydraMouthOpen(target)) {
             return null;
         }
@@ -1394,7 +1446,7 @@ public final class OrbPossessedAttackEvents {
             return MELEE_MACE;
         }
 
-        Matchup matchup = matchupFor(target);
+        Matchup matchup = matchupFor(attacker, target);
         boolean inMeleeRange = attacker.distanceToSqr(target) <= MELEE_RANGE * MELEE_RANGE;
         boolean wantMelee = inMeleeRange && (matchup == null || matchup.alwaysMelee());
         // 会飞之后：默认<b>只抽远程</b>（走位也改成"空中保持距离"，见 OrbPossessionFlightAI）。
@@ -1712,13 +1764,55 @@ public final class OrbPossessedAttackEvents {
     /**
      * 当前强制模式（{@code volatile}：命令在主线程改，空壳 tick 也读，保证可见性即可）。
      * <p>
-     * <b>不落盘</b>：它是个调试开关，重启游戏就回到 {@link ForcedAttack#NONE}。
+     * <b>落盘</b>（用户指定）：值存在 {@link cn.autoforged.joes_addons_for_abmc.block.DebugOverrides} 里，
+     * 退出重进存档还在；这里这个静态字段只是它的<b>内存副本</b>（省得每刻去查存档数据），
+     * 由 {@link #loadPersistedOverrides(net.minecraft.server.MinecraftServer)} 在服务端 tick 时
+     * 每台服务器读一次，{@link #setForcedAttack} 写入时两边一起改。
      */
     private static volatile ForcedAttack forcedAttack = ForcedAttack.NONE;
 
-    /** 设置强制模式（见 {@link ForcedAttack}）；传 null 等于取消。 */
-    public static void setForcedAttack(@Nullable ForcedAttack mode) {
-        forcedAttack = mode == null ? ForcedAttack.NONE : mode;
+    /** 已经把落盘开关读进内存的那台服务器（换服务器/换存档要重读）。 */
+    @Nullable
+    private static net.minecraft.server.MinecraftServer overridesLoadedFor;
+
+    /**
+     * 把落盘的调试开关读进内存（由服务端 tick 钩子每刻调用；代价只是一次引用比较）。
+     * <p>
+     * 为什么要这一步：空壳 tick 里读 {@link #forcedAttack} 是热路径，不能每刻去
+     * {@code getDataStorage().computeIfAbsent(...)} 查存档数据，所以给每台服务器读一次、
+     * 存成静态副本。换存档／重开服务器时 {@code MinecraftServer} 是另一个实例，会自动重读。
+     */
+    public static void loadPersistedOverrides(net.minecraft.server.MinecraftServer server) {
+        if (overridesLoadedFor == server) {
+            return;
+        }
+        overridesLoadedFor = server;
+        String saved = cn.autoforged.joes_addons_for_abmc.block.DebugOverrides.get(server).forcedAttack();
+        ForcedAttack mode = saved == null ? ForcedAttack.NONE : ForcedAttack.parse(saved);
+        if (mode == null) {
+            // 存档里写着一个现在不认识的模式（改过名字/删过枚举项）：当作没设，并留一条日志
+            cn.autoforged.joes_addons_for_abmc.ModMain.LOGGER.warn(
+                "[附体] 存档里的强制攻击模式无法识别：{}，已按未设置处理", saved);
+            mode = ForcedAttack.NONE;
+        }
+        forcedAttack = mode;
+        if (mode != ForcedAttack.NONE) {
+            cn.autoforged.joes_addons_for_abmc.ModMain.LOGGER.info(
+                "[附体] 已从存档恢复强制攻击模式：{}（{}）", mode.commandName(), mode.description());
+        }
+    }
+
+    /**
+     * 设置强制模式（见 {@link ForcedAttack}）；传 null 等于取消。
+     * <p>同时写进存档（{@link cn.autoforged.joes_addons_for_abmc.block.DebugOverrides}），
+     * 所以退出重进之后仍然生效（用户指定）。
+     */
+    public static void setForcedAttack(net.minecraft.server.MinecraftServer server, @Nullable ForcedAttack mode) {
+        ForcedAttack next = mode == null ? ForcedAttack.NONE : mode;
+        forcedAttack = next;
+        overridesLoadedFor = server;   // 已经是最新的了，别让下一刻又从存档里读回旧值
+        cn.autoforged.joes_addons_for_abmc.block.DebugOverrides.get(server)
+            .setForcedAttack(next == ForcedAttack.NONE ? null : next.commandName());
     }
 
     /** 当前强制模式。 */

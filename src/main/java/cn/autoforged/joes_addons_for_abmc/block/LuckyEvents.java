@@ -38,34 +38,6 @@ public final class LuckyEvents {
     /** 已注册的子事件（按分类）。 */
     private static final Map<LuckyEventCategory, List<LuckyEvent>> REGISTERED = new EnumMap<>(LuckyEventCategory.class);
 
-    /**
-     * <b>debug 池</b>：{@code ModConfig.DEBUG_MODE} 打开时，破坏幸运方块（或 {@code /jafa lucky event}）
-     * 会从这里的子事件里<b>等概率</b>抽一个执行，方便直接验证子事件。
-     *
-     * <p>池子有两个来源：
-     * <ol>
-     *   <li>写死的事件：在 {@link #registerAll()} 里用 {@link #markDebug(LuckyEvent...)} 登记
-     *       （登记几个就是几选一）；</li>
-     *   <li><b>物品池里的某几件物品</b>：由 {@link #DEBUG_POOL_ITEM_IDS} 按物品 id 声明 ——
-     *       它们的子事件是运行时惰性注册的，所以是"建出来的时候顺手进池"。
-     *       <b>当前 debug 池就是这一种</b>：默认是铁抓钩 {@code iron_hook} 与地狱疣生成器
-     *       {@code wart_on_a_stick}，另外可以用命令（见下）在游戏里随时增删。</li>
-     * </ol>
-     *
-     * <p><b>运行时可改（6.7.3 起）</b>：{@code /jafa luckyblockresult <物品名>} 往池里加一件物品、
-     * {@code /jafa luckyblockclear} 清空这份物品列表 —— 不用重编译、不用重启游戏就能改
-     * "debug 模式下能开出什么"。加几件就是几选一（等概率），与 {@link #addDebugItem(Item)}
-     * 与 {@link #clearDebugItems()} 是同一套逻辑。
-     *
-     * <p>历史：6.5.5 之前是单个 {@code latest} 字段（debug 下必定触发它，一次只能验一个），
-     * 6.5.6 改成这个可以放多个、等概率抽的池子。
-     *
-     * <p><b>等概率与权重无关</b>：抽的时候不看 {@link LuckyEvent#weight()}，纯粹按下标均匀取。
-     *
-     * <p>池子为空时（比如声明的物品都不在标签里）debug 模式退回"按名单 / 随机抽"，不会开出空事件。
-     */
-    private static final List<LuckyEvent> DEBUG_POOL = new ArrayList<>();
-
     static {
         for (LuckyEventCategory category : LuckyEventCategory.values()) {
             REGISTERED.put(category, new ArrayList<>());
@@ -77,54 +49,35 @@ public final class LuckyEvents {
     }
 
     /**
-     * 把子事件登记进 <b>debug 池</b>（{@link #DEBUG_POOL}），debug 模式下从池里等概率抽一个。
+     * <b>被指定的幸运方块产物</b>（{@code /jafa luckyblockresult <选项>} 设置，落盘见
+     * {@link DebugOverrides}）。
      *
-     * <p><b>它不负责注册</b>事件本身：注册仍由各事件类的 {@code register()} 完成，
-     * 所以调用点写成 {@code markDebug(LuckySomethingEvent.register())}。
+     * <p>语义（用户指定 6.8.9 起）：<b>不再是"往池子里塞几件、等概率抽"</b>，而是<b>指定哪一个就只开出哪一个</b>。
+     * 候选只围绕默认能开出的东西展开（物品 / 生物 / 结构），见 {@link LuckyOutcomeCatalog}。
      *
-     * <p>去重<b>按子事件 id</b>：同一个 id 只算一次，否则会变相提高它被抽到的概率。
-     * （按 id 而不是按对象去重是有原因的：命令 {@code /jafa luckyblockresult} 可能在那个物品的
-     * 正式子事件被惰性注册<b>之前</b>就先建了一个"临时副本"，两者 id 相同、对象不同。）
-     */
-    public static void markDebug(LuckyEvent... events) {
-        for (LuckyEvent event : events) {
-            if (event == null || hasDebugEvent(event.id())) {
-                continue;
-            }
-            DEBUG_POOL.add(event);
-        }
-    }
-
-    /** debug 池里是否已经有这个 id 的子事件（按 id 去重，见 {@link #markDebug}）。 */
-    private static boolean hasDebugEvent(ResourceLocation eventId) {
-        for (LuckyEvent event : DEBUG_POOL) {
-            if (event.id().equals(eventId)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** debug 池的当前内容（只读副本，命令/调试输出用）。 */
-    public static List<LuckyEvent> debugPool() {
-        return List.copyOf(DEBUG_POOL);
-    }
-
-    /** 这个子事件是不是 debug 池成员（{@code /jafa lucky list} 的标记用）。按 id 判定，理由见 {@link #markDebug}。 */
-    public static boolean isDebugEvent(LuckyEvent event) {
-        return hasDebugEvent(event.id());
-    }
-
-    /**
-     * 从 debug 池里<b>等概率</b>抽一个（池空返回 {@code null}）。
-     * <p>用下标均匀取，<b>不看权重</b>：需求要的是"这些事件在 debug 模式下概率相同"。
+     * <p><b>只在 debug 模式打开时生效</b>：那个开关本来就是调试用的，关掉 debug 就等于把它搁置
+     * —— 存档里仍然留着（命令的查询会提示"当前未生效"），重新打开 debug 立刻又按它开。
+     *
+     * @return 指定的子事件；没指定 / debug 关着 / 那个 id 已经不存在（改过 id、事件被删）都返回
+     *         {@code null}，调用方退回"幸运名单 / 随机抽取"
      */
     @Nullable
-    public static LuckyEvent debugEvent(RandomSource random) {
-        if (DEBUG_POOL.isEmpty()) {
+    public static LuckyEvent forcedEvent(ServerLevel level) {
+        if (!cn.autoforged.joes_addons_for_abmc.config.ModConfig.DEBUG_MODE.get()) {
             return null;
         }
-        return DEBUG_POOL.get(random.nextInt(DEBUG_POOL.size()));
+        String raw = DebugOverrides.get(level).luckyBlockResult();
+        if (raw == null) {
+            return null;
+        }
+        ResourceLocation parsed = ResourceLocation.tryParse(raw);
+        return parsed == null ? null : byId(parsed);
+    }
+
+    /** 当前指定的产物 id 文本（命令显示用；未指定返回 null）。 */
+    @Nullable
+    public static String forcedEventId(net.minecraft.server.MinecraftServer server) {
+        return DebugOverrides.get(server).luckyBlockResult();
     }
 
     /** 注册一个子事件（启动时调用；将来也可以做成数据包/配置驱动）。 */
@@ -165,8 +118,8 @@ public final class LuckyEvents {
         // 幸运物品：英雄药水（一瓶）+ 英雄套装（一件，四件等概率，权重 4 = 原先四件之和）
         LuckyHeroEvents.registerAll();
         // ===== 6.5.5 新增的 12 个子事件（需求 1~12）=====
-        // 注：这 12 个在 6.5.5~6.5.7 期间曾被登记进 debug 池；6.5.8 起 debug 池改绑到
-        //     "铁抓钩 + 地狱疣生成器"（见 DEBUG_POOL_ITEM_IDS），所以这里都只是普通注册。
+        // 注：这 12 个在 6.5.5~6.5.7 期间曾被登记进当年的"debug 池"；6.8.9 起改用
+        //     /jafa luckyblockresult 指定单项（见 DebugOverrides），所以这里都只是普通注册。
         // 幸运实体：有概率开出一只远古守卫者
         LuckyElderGuardianEvent.register();
         // 幸运实体：骑着鸡的兔子
@@ -195,15 +148,11 @@ public final class LuckyEvents {
         // 已经登记进幸运生物池（见 LuckyMobSpawner#CREATURE_POOL_IDS），所以幸运维度会直接把它们刷出来。
         // 幸运物品：爆炸之箭（16~64 支，硬编码数量；池内同名 id 会被跳过，不会重复注册）
         LuckyExplosiveArrowEvent.register();
-        // ★ debug 池：6.5.8 起绑定"铁抓钩 iron_hook + 地狱疣生成器 wart_on_a_stick"（各 1/2），
-        //   这两件都是幸运物品池里的物品，子事件在 registerPoolItemEvents(level) 里惰性注册，
-        //   所以登记写在 DEBUG_POOL_ITEM_IDS 上，不在这里。
-        //   6.7.3 起这份名单还能在游戏里随时改：/jafa luckyblockresult <物品名> 加、
-        //   /jafa luckyblockclear 清空（见 debugPoolItemIds / addDebugItem / clearDebugItems）。
         // 幸运物品：幸运物品池（#joes_addons_for_abmc:lucky_items）里的每个物品，各自成为一个
         //   "给一件该物品"的独立子事件，权重与其它子事件相同（都是 1）。
         //   注意：标签属于数据包内容，只有拿到 ServerLevel 才能解析，所以这里注册不了，
         //   由 registerPoolItemEvents(level) 在抽取 / 列表时惰性补齐（见该方法注释）。
+        //   （"debug 下只开出指定那一项"改用 /jafa luckyblockresult + DebugOverrides，见该类注释。）
     }
 
     /** 幸运物品池里每个物品的子事件一次给多少个（"给一件该物品"）。 */
@@ -213,41 +162,12 @@ public final class LuckyEvents {
     private static final java.util.Set<ResourceLocation> REGISTERED_POOL_ITEMS = new java.util.HashSet<>();
 
     /**
-     * <b>debug 池里"由物品构成"的那一份名单</b>（按<b>物品 id</b> 记；有序、去重）。
-     *
-     * <p>两个来源：
-     * <ol>
-     *   <li><b>代码里的默认值</b>：<b>铁抓钩</b> {@code iron_hook} 与 <b>地狱疣生成器</b>
-     *       {@code wart_on_a_stick}（6.5.8 的需求：debug 下反复拿这两件东西测功能）；</li>
-     *   <li><b>命令</b>（6.7.3 新增）：{@code /jafa luckyblockresult <物品名>} 往里加、
-     *       {@code /jafa luckyblockclear} 清空 —— 池子内容可在游戏里随时改，不用重编译也不用重启。</li>
-     * </ol>
-     *
-     * <p>为什么不能像写死事件那样在 {@link #registerAll()} 里直接 {@code markDebug(...)}：
-     * 池内物品的子事件是 {@link #registerPoolItemEvents(ServerLevel)} 在<b>运行时</b>按标签惰性注册的
-     * （标签是数据包内容，类初始化时拿不到，也不该在那时候去碰物品注册表）。
-     * 所以这里只记下物品 id，等那个物品的子事件真的被建出来时，顺手把它塞进 debug 池。
-     *
-     * <p>命令加进来的物品：本来就在幸运物品池里的，复用那个已注册的子事件（与默认值同一条路）；
-     * 不在池里的，由 {@link #addDebugItem(Item)} 现场建一个<b>只属于 debug 池</b>的子事件
-     * （不注册进常规事件表，免得悄悄改掉不开 debug 时的正常抽取概率）。
-     *
-     * <p>注意这个名单是<b>内存态</b>：重启游戏会回到上面那条默认值，命令加的会丢。
-     */
-    private static final java.util.Set<ResourceLocation> DEBUG_POOL_ITEM_IDS =
-        new java.util.LinkedHashSet<>(List.of(
-            ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "iron_hook"),
-            ResourceLocation.fromNamespaceAndPath(ModMain.MODID, "wart_on_a_stick")));
-
-    /**
      * 把幸运物品池（{@code #joes_addons_for_abmc:lucky_items}）里的每个物品注册成<b>独立</b>的子事件
      * （"给一件该物品"，分类为幸运物品，权重 1 —— 与其它子事件一样）。
      *
      * <p>标签是数据包内容，只有拿到 {@link ServerLevel} 才能解析（数据包还可以随时增删成员），
      * 所以不能在 {@link #registerAll()} 里静态注册；改为在抽取 / 列表时调用本方法惰性补齐，
      * 用 {@link #REGISTERED_POOL_ITEMS} 去重，重复调用是安全的。
-     *
-     * <p>{@link #DEBUG_POOL_ITEM_IDS} 里的物品在这里被建出来之后会<b>顺手进 debug 池</b>。
      */
     public static void registerPoolItemEvents(ServerLevel level) {
         for (Item item : LuckyBlockEvents.luckyPoolItems(level)) {
@@ -256,74 +176,8 @@ public final class LuckyEvents {
             // 已经有了同 id 的子事件（例如爆炸之箭：需要随机的发放数量，所以自己硬编码注册了）
             // → 不重复注册，避免同一件物品出现两个子事件、变相提高它的权重。
             if (hasEventWithId(id("item/" + itemId.getPath()))) continue;
-            LuckyEvent event = registerItemReward(item, POOL_ITEM_COUNT);
-            if (event != null && DEBUG_POOL_ITEM_IDS.contains(itemId)) {
-                markDebug(event);
-            }
+            registerItemReward(item, POOL_ITEM_COUNT);
         }
-    }
-
-    /** debug 池里当前"由物品构成"的那份名单（按加入顺序的物品 id；命令输出用）。 */
-    public static List<ResourceLocation> debugPoolItemIds() {
-        return List.copyOf(DEBUG_POOL_ITEM_IDS);
-    }
-
-    /**
-     * 把一件物品加进 <b>debug 池</b>（命令 {@code /jafa luckyblockresult <物品名>} 用）。
-     *
-     * <p>加几件就是几选一（{@link #debugEvent} 按下标等概率抽，不看权重），可反复输入把想测的物品
-     * 一件件凑进来。
-     *
-     * <p><b>子事件优先复用</b>：这件物品本来就有同 id 的子事件时（例如它就在幸运物品池
-     * {@code #joes_addons_for_abmc:lucky_items} 里，或像爆炸之箭那样自己硬编码注册过），直接用那一个 ——
-     * 不会出现两个子事件、也不会变相提高它的概率；否则现场建一个"给一件该物品"的子事件，
-     * 这个子事件<b>只进 debug 池、不进常规事件表</b>（理由见 {@link #DEBUG_POOL_ITEM_IDS}）。
-     *
-     * <p>重复加同一件物品不会重复计数（名单按 id 去重）。
-     *
-     * @return 放进池里的子事件；物品不在物品注册表里时返回 {@code null}
-     */
-    @Nullable
-    public static LuckyEvent addDebugItem(Item item) {
-        ResourceLocation itemId = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(item);
-        if (itemId == null) {
-            return null;
-        }
-        ResourceLocation eventId = id("item/" + itemId.getPath());
-        LuckyEvent event = byId(eventId); // 已经是正式子事件 → 复用，别再建一个同 id 的
-        if (event == null) {
-            event = buildItemReward(item, POOL_ITEM_COUNT);
-        }
-        if (event == null) {
-            return null;
-        }
-        DEBUG_POOL_ITEM_IDS.add(itemId);
-        if (!hasDebugEvent(event.id())) {
-            DEBUG_POOL.add(event);
-        }
-        return event;
-    }
-
-    /**
-     * 清空 debug 池里<b>由物品构成</b>的那部分（命令 {@code /jafa luckyblockclear} 用）：
-     * 把 {@link #DEBUG_POOL_ITEM_IDS} 名单与它们在 {@link #DEBUG_POOL} 里的子事件一起摘掉。
-     *
-     * <p>用 {@link #markDebug(LuckyEvent...)} 直接登记的<b>写死事件不动</b>：那些是代码里写死的，
-     * 清掉也会在下次启动时回来，硬清只会让人困惑。
-     *
-     * <p>清空后池子若为空，debug 模式就退回"幸运名单 / 随机抽取"（见 {@link #roll}）。
-     *
-     * @return 实际从 debug 池里移除的子事件个数
-     */
-    public static int clearDebugItems() {
-        java.util.Set<ResourceLocation> eventIds = new java.util.HashSet<>();
-        for (ResourceLocation itemId : DEBUG_POOL_ITEM_IDS) {
-            eventIds.add(id("item/" + itemId.getPath()));
-        }
-        int before = DEBUG_POOL.size();
-        DEBUG_POOL.removeIf(event -> eventIds.contains(event.id()));
-        DEBUG_POOL_ITEM_IDS.clear();
-        return before - DEBUG_POOL.size();
     }
 
     /** 事件表里是否已经存在该 id 的子事件（池内物品注册前的去重检查）。 */
@@ -380,25 +234,27 @@ public final class LuckyEvents {
      *
      * <p><b>优先级</b>（从高到低）：
      * <ol>
-     *   <li><b>debug 模式</b>（{@code ModConfig.DEBUG_MODE}）：不再按权重随机，而是从 <b>debug 池</b>
-     *       （{@link #DEBUG_POOL}，见 {@link #markDebug}）里<b>等概率</b>抽一个 —— 池里登记了几个就是几选一，
-     *       方便一次验证一批新事件。池子为空时退回下面两条。
-     *       它<b>永远压过幸运名单</b>（需求）：开着 debug 时开方块一定出自 debug 池，名单留着不动；</li>
+     *   <li><b>被指定的产物</b>（{@code /jafa luckyblockresult <选项>}，落盘，见 {@link #forcedEvent}）：
+     *       指定了哪一个，破坏幸运方块就<b>只</b>开出那一个 —— 用户指定 6.8.9 起的语义
+     *       （以前是"往 debug 池里塞几件、等概率抽"，那个池已经取消）。
+     *       候选只围绕默认能开出的东西展开，见 {@link LuckyOutcomeCatalog}。
+     *       它<b>只在 debug 模式打开时生效</b>、且<b>永远压过幸运名单</b>：名单留着不动；</li>
      *   <li><b>幸运名单</b>：名单（{@link LuckyRoster}）非空就从<b>队首</b>取一个元素放出来
      *       （FIFO，见 {@link LuckyRosterEvents}）——这是需求里的"优先从名单中选取元素"；</li>
      *   <li>正常随机抽取（{@link #draw}）。</li>
      * </ol>
+     *
+     * <p>注意：<b>光打开 debug 模式不再改变抽取结果</b> —— 它现在只负责"允许用那条命令指定产物"
+     * 与"创造模式破坏也触发事件"（见 {@code LuckyBlock}）。没指定产物时，debug 下走的也是
+     * 名单 / 正常随机，与不开 debug 一样。
      *
      * @return 实际触发的子事件（名单为空且事件表也为空时返回 {@code null}）
      */
     @Nullable
     public static LuckyEvent roll(ServerLevel level, net.minecraft.core.BlockPos pos, @Nullable Player player) {
         registerPoolItemEvents(level); // 幸运物品池里的物品子事件（标签要 ServerLevel 才能解析）
-        // 1) debug 模式：从 debug 池等概率抽一个，压倒一切（包括幸运名单）
-        LuckyEvent event = null;
-        if (cn.autoforged.joes_addons_for_abmc.config.ModConfig.DEBUG_MODE.get()) {
-            event = debugEvent(level.random);
-        }
+        // 1) 被指定的产物：只会开出它（只在 debug 模式打开时生效），压倒一切（包括幸运名单）
+        LuckyEvent event = forcedEvent(level);
         // 2) 名单优先
         if (event == null) {
             event = LuckyRosterEvents.next(level);
@@ -454,7 +310,7 @@ public final class LuckyEvents {
 
     /**
      * 便捷方法：把"给一件该物品"注册成"幸运物品"分类的子事件，并返回注册后的 {@link LuckyEvent}
-     * （调用方可能还要把它塞进 debug 池，见 {@link #registerPoolItemEvents}）。
+     * （幸运物品池里的物品走这条路，见 {@link #registerPoolItemEvents}）。
      */
     @Nullable
     public static LuckyEvent registerItemReward(Item item, int count) {
@@ -468,9 +324,8 @@ public final class LuckyEvents {
     /**
      * 只<b>构造</b>"给 N 个该物品"的子事件，<b>不注册</b>。
      *
-     * <p>给命令 {@code /jafa luckyblockresult} 用：命令临时加进来的物品只能进 debug 池，
-     * 不能顺手改掉正常游玩时的抽取概率（那要改幸运物品池标签，见 {@link #DEBUG_POOL_ITEM_IDS}）。
-     * 常规注册走 {@link #registerItemReward(Item, int)}。
+     * <p>常规注册走 {@link #registerItemReward(Item, int)}；这个"只造不注册"的版本留给
+     * 需要先看看事件长什么样的调用方（例如 {@link LuckyOutcomeCatalog} 的候选表）。
      */
     @Nullable
     public static LuckyEvent buildItemReward(Item item, int count) {

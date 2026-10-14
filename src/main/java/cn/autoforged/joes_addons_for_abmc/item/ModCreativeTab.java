@@ -8,11 +8,13 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.alchemy.Potion;
 import net.minecraft.world.item.alchemy.PotionContents;
+import net.minecraft.world.level.block.Blocks;
 import net.neoforged.neoforge.registries.DeferredRegister;
 
 import java.nio.charset.StandardCharsets;
@@ -173,40 +175,43 @@ public class ModCreativeTab {
                 // ===== 变形药水 =====
                 // 随机变形喷溅药水：未绑定固定目标，命中生物的瞬间从原版方块中随机选取一个作为变形目标
                 ItemStack randomPotion = splashPotion(ModPotions.TRANSMUTATION, 0x9370DB);
-                randomPotion.set(DataComponents.CUSTOM_NAME, Component.literal("变形为§krandom"));
+                randomPotion.set(DataComponents.CUSTOM_NAME, ModPotionNames.transmuteRandom());
                 output.accept(randomPotion);
 
-                // 喷溅型变形药水：骨头物品
+                // 喷溅型变形药水：骨头物品（目标名取自原版物品名 → 跟着客户端语言走）
                 ItemStack bonePotion = splashPotion(ModPotions.TRANSMUTATION, 0xE8E8E8);
                 bonePotion.set(ModDataComponents.ITEM_TYPE.get(), "minecraft:bone");
-                bonePotion.set(DataComponents.CUSTOM_NAME, Component.literal("变形为 骨头"));
+                bonePotion.set(DataComponents.CUSTOM_NAME, ModPotionNames.transmuteTo(Items.BONE.getDescription()));
                 output.accept(bonePotion);
 
                 // 喷溅型变形药水：黑石方块
                 ItemStack blackstonePotion = splashPotion(ModPotions.TRANSMUTATION, 0x2A2A2A);
                 blackstonePotion.set(ModDataComponents.ITEM_TYPE.get(), "minecraft:blackstone");
-                blackstonePotion.set(DataComponents.CUSTOM_NAME, Component.literal("变形为 黑石"));
+                blackstonePotion.set(DataComponents.CUSTOM_NAME,
+                    ModPotionNames.transmuteTo(Blocks.BLACKSTONE.getName()));
                 output.accept(blackstonePotion);
 
-                // 喷溅型变形药水：尸壳
+                // 喷溅型变形药水：尸壳（生物名同样由原版提供翻译）
                 ItemStack huskPotion = splashPotion(ModPotions.TRANSMUTATION, 0x8B4513);
                 huskPotion.set(ModDataComponents.ITEM_TYPE.get(), "mob_shell:minecraft:husk");
-                huskPotion.set(DataComponents.CUSTOM_NAME, Component.literal("变形为 尸壳"));
+                huskPotion.set(DataComponents.CUSTOM_NAME,
+                    ModPotionNames.transmuteTo(EntityType.HUSK.getDescription()));
                 output.accept(huskPotion);
 
-                // 喷溅型变形药水：Dream 玩家空壳
+                // 喷溅型变形药水：Dream 玩家空壳（玩家名不属于任何语言，用字面量）
                 ItemStack dreamPotion = splashPotion(ModPotions.TRANSMUTATION, 0x50C878);
                 String dreamEncoded = "player_shell:" + Base64.getEncoder()
                     .encodeToString("Dream".getBytes(StandardCharsets.UTF_8));
                 dreamPotion.set(ModDataComponents.ITEM_TYPE.get(), dreamEncoded);
-                dreamPotion.set(DataComponents.CUSTOM_NAME, Component.literal("变形为 Dream"));
+                dreamPotion.set(DataComponents.CUSTOM_NAME,
+                    ModPotionNames.transmuteTo(Component.literal("Dream")));
                 output.accept(dreamPotion);
 
                 // 变形解药（喷溅）：使被溅射到的变身方块/物品提前复原为生物形态
                 output.accept(splashPotion(ModPotions.TRANSMUTATION_ANTIDOTE, 0xE1AFB0));
 
                 // 仅保留随机传送药水（定点/定向需用命名地狱疣酿制获得）
-                addTransportPotion(output, "random", 0x808080, "随机传送");
+                addTransportPotion(output, "random", 0x808080);
             })
             .build()
     );
@@ -220,11 +225,11 @@ public class ModCreativeTab {
     }
 
     // 构造一种传送药水模式：基于传送药水，记录模式、配色并自定义命名
-    private static void addTransportPotion(CreativeModeTab.Output output,
-            String mode, int color, String name) {
+    // （命名统一走 {@link ModPotionNames}，不再在这里写死中文）
+    private static void addTransportPotion(CreativeModeTab.Output output, String mode, int color) {
         ItemStack stack = splashPotion(ModPotions.TRANSPORTATION, color);
         stack.set(ModDataComponents.TRANSPORT_MODE.get(), mode);
-        stack.set(DataComponents.CUSTOM_NAME, Component.literal(name + "药水"));
+        stack.set(DataComponents.CUSTOM_NAME, ModPotionNames.transportRandom());
         output.accept(stack);
     }
 }

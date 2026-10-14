@@ -24,8 +24,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * 2. 持有屏障权杖时，将 animateTick() 的采样循环次数放大 3 倍（667 -> 2001），使屏障
  *    贴图出现速度（渲染速度）比手持屏障物品时快 3 倍。
  *
- * 另外：Creeper Clan 维度强制绿色天空（#79B83F）。原版天空颜色由 ClientLevel.getSkyColor()
- * 依据生物群系 skyColor + 昼夜/天气计算；本维度需求固定天空色，故在该维度直接返回固定颜色。
+ * 另外：两个维度的天空色都在这里定死（原版天空颜色由 ClientLevel.getSkyColor()
+ * 依据生物群系 skyColor + 昼夜/天气计算，这两个维度都不要那套）：
+ * <ul>
+ *   <li><b>Creeper Clan</b>：固定绿色 #79B83F；</li>
+ *   <li><b>幸运维度</b>：两色渐变 —— <b>天顶</b>用高处色 #F4E8C1（这里返回），
+ *       <b>地平线</b>用低处色 #FFFCF1（地平线是"雾色"，由
+ *       {@code client/LuckyDimensionSky.Fog} 换掉）。</li>
+ * </ul>
  */
 @Mixin(net.minecraft.client.multiplayer.ClientLevel.class)
 public abstract class ClientLevelMixin {
@@ -50,11 +56,19 @@ public abstract class ClientLevelMixin {
     }
 
     @Inject(method = "getSkyColor", at = @At("HEAD"), cancellable = true)
-    private void jafa_creeperClanSkyColor(net.minecraft.world.phys.Vec3 pos, float partialTick,
-                                          CallbackInfoReturnable<net.minecraft.world.phys.Vec3> cir) {
+    private void jafa_dimensionSkyColor(net.minecraft.world.phys.Vec3 pos, float partialTick,
+                                        CallbackInfoReturnable<net.minecraft.world.phys.Vec3> cir) {
         net.minecraft.client.multiplayer.ClientLevel self = (net.minecraft.client.multiplayer.ClientLevel) (Object) this;
-        if (self.dimension().location().equals(ModDimensions.CREEPER_CLAN_DIM_LEVEL.location())) {
+        net.minecraft.resources.ResourceLocation dim = self.dimension().location();
+        if (dim.equals(ModDimensions.CREEPER_CLAN_DIM_LEVEL.location())) {
             cir.setReturnValue(CREEPER_CLAN_SKY);
+            return;
+        }
+        // 幸运维度：天顶用高处色 #F4E8C1；地平线那半是"雾色"，另由
+        // LuckyDimensionSky.Fog 监听 ViewportEvent.ComputeFogColor 换成低处色 #FFFCF1
+        //（天空盘是一张水平圆盘 + 柱面雾，越靠地平线雾越浓 —— 不换雾色地平线就还是原版蓝）。
+        if (dim.equals(ModDimensions.LUCKY_DIM_LEVEL.location())) {
+            cir.setReturnValue(cn.autoforged.joes_addons_for_abmc.client.LuckyDimensionSky.skyColor());
         }
     }
 }

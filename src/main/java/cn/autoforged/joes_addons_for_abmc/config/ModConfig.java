@@ -5,21 +5,58 @@ import net.neoforged.neoforge.common.ModConfigSpec;
 
 import java.util.List;
 
+/**
+ * 模组配置：<b>按"谁读它"拆成两份</b>。
+ *
+ * <h2>为什么两份</h2>
+ * 以前所有键全塞在一份 COMMON 里，于是专用服务器也会生成一堆<b>只有客户端才读</b>的视觉项
+ * （随机材质、HUD 文本偏移、客户端音效……）。现在：
+ * <ul>
+ *   <li>{@link #CLIENT_SPEC} —— {@code config/joes_addons_for_abmc-client.toml}：
+ *       只有客户端读的视觉 / 客户端音效 / HUD 微调；</li>
+ *   <li>{@link #COMMON_SPEC} —— {@code config/joes_addons_for_abmc-common.toml}：
+ *       玩法数值、服务端判定用到的值，以及<b>判定与渲染共用</b>的权杖偏移。</li>
+ * </ul>
+ *
+ * <h2>挪键之前必须查它到底谁在读</h2>
+ * 名字像"客户端"不代表真是：{@link #CONVERGE_OFFSET_X} 那组偏移是<b>发射点/汇聚点位置</b>，
+ * {@code ModMain#applyLineEmitterOffset} 在服务端算命中、在客户端算渲染 → 只能留 COMMON。
+ * 把服务端会读的键放进 CLIENT，专用服务器一读就抛异常。
+ * <p>
+ * 反过来也成立：想让某个开关进 CLIENT，就得先把<b>读它的那段代码</b>搬到客户端。
+ * {@link #COMMAND_FLY_SOUND} 就是这么做的 —— 它原本由服务端
+ * （{@code ModMain#handleCommandStaffFlight} 一边给玩家发飞行能力、一边播音效）读取，
+ * 现在音效部分搬到了客户端的 {@code CommandStaffFlySound}，开关随之进了 CLIENT。
+ *
+ * <h2>分区结构</h2>
+ * <ul>
+ *   <li><b>COMMON</b>：{@code gameplay}、{@code combat}、
+ *       {@code staff}（子分区 {@code line} / {@code third_person}）、{@code debug}</li>
+ *   <li><b>CLIENT</b>：{@code visual}、{@code sound}</li>
+ * </ul>
+ * 以前的 {@code start} 是个杂物袋（开局赠礼 / 变形强制第三人称 / HUD 文本 / 觉醒酿造台摆位
+ * 四件不相干的事挤在一起），已按语义拆到 {@code gameplay} 与 {@code visual}；
+ * {@code line_converge_offset} 名不副实（同时装着线偏移与第三人称偏移），改成
+ * {@code staff} 下的两个子分区。
+ * <p>
+ * 幸运选择器的三个像素值与觉醒酿造台的三瓶摆位<b>已经不再是配置</b>（用户指定移除）：
+ * 它们的取值固定在用它们的类里（{@code LuckySelectorEntity} / {@code AwakeningFallingBlockRenderer}）。
+ *
+ * <p><b>注意</b>：重命名/移除分区与键会让老配置文件里用户改成过的值失效 —— NeoForge 不做迁移，
+ * 旧键被忽略、新键写回默认值，旧文件会被它顺手存成 {@code *.bak}。
+ */
 public class ModConfig {
-    public static final ModConfigSpec SPEC;
+    /** 服务端与双端共用的一份（{@code Type.COMMON}）。 */
+    public static final ModConfigSpec COMMON_SPEC;
+    /** 只有客户端读的一份（{@code Type.CLIENT}）。 */
+    public static final ModConfigSpec CLIENT_SPEC;
+
+    // ====================== COMMON：combat ======================
 
     public static final ModConfigSpec.ConfigValue<List<? extends String>> SMALL_PROJECTILES;
     public static final ModConfigSpec.ConfigValue<List<? extends String>> LARGE_PROJECTILES;
 
-    public static final ModConfigSpec.BooleanValue LUCKY_DIMENSION_RANDOM_TEXTURES;
-
-    public static final ModConfigSpec.BooleanValue ENABLE_IMMERSIVE_PORTAL_RENDERING;
-
-    public static final ModConfigSpec.ConfigValue<String> NOTE_MUSIC_SOUND_SOURCE;
-
-    public static final ModConfigSpec.BooleanValue BELL_TINNITUS;
-    public static final ModConfigSpec.BooleanValue REDSTONE_LASER_SOUNDS;
-    public static final ModConfigSpec.BooleanValue COMMAND_FLY_SOUND;
+    // ====================== COMMON：staff（判定与渲染共用的偏移） ======================
 
     /** 线/汇聚点偏移：X(右)、Y(上)、Z(前)，作用于所有“发射线或具备汇聚点”的权杖。 */
     public static final ModConfigSpec.DoubleValue CONVERGE_OFFSET_X;
@@ -32,8 +69,7 @@ public class ModConfig {
     public static final ModConfigSpec.DoubleValue THIRD_PERSON_OFFSET_Y;
     public static final ModConfigSpec.DoubleValue THIRD_PERSON_OFFSET_Z;
 
-    /** 铁链（铁块）权杖：玩家上下摆头时，被抓取生物被提起/下放的最大垂直偏移（格）。 */
-    public static final ModConfigSpec.DoubleValue CHAIN_LIFT_STRENGTH;
+    // ====================== COMMON：gameplay ======================
 
     /** 开局（首次进入世界）是否赠送一把 blocktype 为 empty 的权杖。 */
     public static final ModConfigSpec.BooleanValue GIVE_STAFF_ON_START;
@@ -42,194 +78,130 @@ public class ModConfig {
      *  复原时自动恢复第一人称。 */
     public static final ModConfigSpec.BooleanValue FORCE_THIRD_PERSON_ON_TRANSMUTATION;
 
-    /** 权杖模式文本的垂直偏移（像素，负值上移）。用于与物品描述文本错开，避免重叠。 */
-    public static final ModConfigSpec.IntValue MODE_TEXT_Y_OFFSET;
+    /** 铁链（铁块）权杖：玩家上下摆头时，被抓取生物被提起/下放的最大垂直偏移（格）。 */
+    public static final ModConfigSpec.DoubleValue CHAIN_LIFT_STRENGTH;
 
-    /** 觉醒酿造台三瓶药水圆形排列的初始（旋转）角度（度）。0=正前朝玩家。 */
-    public static final ModConfigSpec.DoubleValue AWAKE_BREW_BOTTLES_ROTATION;
-
-    /** 觉醒酿造台药水瓶的渲染大小（倍率）。 */
-    public static final ModConfigSpec.DoubleValue AWAKE_BREW_BOTTLES_SCALE;
-
-    /** 觉醒酿造台药水瓶的渲染中心高度（块）。 */
-    public static final ModConfigSpec.DoubleValue AWAKE_BREW_BOTTLES_HEIGHT;
+    // ====================== COMMON：debug ======================
 
     /** 调试模式：开启后低概率事件以高概率发生。 */
     public static final ModConfigSpec.BooleanValue DEBUG_MODE;
 
-    /** 幸运方块选择器：寻物（{@code /jafa seek}）时悬停在掉落物正上方的高度（像素；16 像素 = 1 格）。 */
-    public static final ModConfigSpec.IntValue SELECTOR_SEEK_HOVER_PX;
+    // ====================== CLIENT：visual ======================
 
-    /** 幸运方块选择器：寻物时把掉落物向上抬起的距离（像素；16 像素 = 1 格）。 */
-    public static final ModConfigSpec.IntValue SELECTOR_SEEK_LIFT_PX;
+    public static final ModConfigSpec.BooleanValue LUCKY_DIMENSION_RANDOM_TEXTURES;
 
-    /** 幸运方块选择器：发送（{@code /jafa send}）时物品展示实体在 0~0.5 时间码里向上的距离（像素）。 */
-    public static final ModConfigSpec.IntValue SELECTOR_SEND_LIFT_PX;
+    /** 末地传送门框架权杖做出来的传送门是否渲染对侧视角。
+     *  <p><b>目前未实装</b>：这个键在代码里<b>没有任何读取点</b>，改它不会有任何效果；
+     *  留着是为了以后接上"沉浸式传送门"渲染（详见键上的注释）。 */
+    public static final ModConfigSpec.BooleanValue ENABLE_IMMERSIVE_PORTAL_RENDERING;
+
+    /** 权杖模式文本的垂直偏移（像素，负值上移）。用于与物品描述文本错开，避免重叠。 */
+    public static final ModConfigSpec.IntValue MODE_TEXT_Y_OFFSET;
+
+    // ====================== CLIENT：sound ======================
+
+    public static final ModConfigSpec.ConfigValue<String> NOTE_MUSIC_SOUND_SOURCE;
+
+    public static final ModConfigSpec.BooleanValue BELL_TINNITUS;
+    public static final ModConfigSpec.BooleanValue REDSTONE_LASER_SOUNDS;
+    public static final ModConfigSpec.BooleanValue COMMAND_FLY_SOUND;
 
     static {
-        ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
+        // =========================================================================
+        // COMMON：玩法 + 服务端判定用到的值 + 双端共用的偏移
+        // =========================================================================
+        ModConfigSpec.Builder common = new ModConfigSpec.Builder();
 
-        builder.translation("joes_addons_for_abmc.config.blocking").push("blocking");
-        SMALL_PROJECTILES = builder
+        common.translation("joes_addons_for_abmc.config.combat").push("combat");
+        SMALL_PROJECTILES = common
             .comment(
                 "Small projectiles that can be blocked. Blocking these does not cause the weapon to drop.",
                 "Format: entity type registry names, e.g. \"minecraft:arrow\"",
                 "Default: minecraft:small_fireball, minecraft:arrow, minecraft:shulker_bullet"
             )
-            .translation("joes_addons_for_abmc.config.blocking.small_projectiles")
+            .translation("joes_addons_for_abmc.config.combat.small_projectiles")
             .defineListAllowEmpty("small_projectiles",
                 List.of("minecraft:small_fireball", "minecraft:arrow", "minecraft:shulker_bullet"),
                 o -> o instanceof String);
-        LARGE_PROJECTILES = builder
+        LARGE_PROJECTILES = common
             .comment(
-                "Large projectiles that can be blocked. Blocking these has a 10%% chance (modified by Unbreaking) to drop the weapon.",
+                "Large projectiles that can be blocked. Blocking these has a 10% chance (modified by Unbreaking) to drop the weapon.",
                 "Format: entity type registry names, e.g. \"minecraft:trident\"",
                 "Default: minecraft:trident, minecraft:fireball"
             )
-            .translation("joes_addons_for_abmc.config.blocking.large_projectiles")
+            .translation("joes_addons_for_abmc.config.combat.large_projectiles")
             .defineListAllowEmpty("large_projectiles",
                 List.of("minecraft:trident", "minecraft:fireball"),
                 o -> o instanceof String);
-        builder.pop();
+        common.pop();
 
-        builder.translation("joes_addons_for_abmc.config.lucky_dimension_block").push("lucky_dimension_block");
-        LUCKY_DIMENSION_RANDOM_TEXTURES = builder
-            .comment(
-                "Whether lucky_dimension_block uses random textures from full cube blocks.",
-                "When enabled, the block changes appearance every 10 ticks (staggered per-block by position)",
-                "and draws only that random material. The 50% filter.png overlay is currently disabled;",
-                "its code is kept in both renderers and can be re-enabled by uncommenting the call sites.",
-                "When disabled, the block shows its own static texture without any overlay."
-            )
-            .translation("joes_addons_for_abmc.config.lucky_dimension_block.lucky_dimension_block_random_textures")
-            .define("lucky_dimension_block_random_textures", true);
-        builder.pop();
-
-        builder.translation("joes_addons_for_abmc.config.portal").push("portal");
-        ENABLE_IMMERSIVE_PORTAL_RENDERING = builder
-            .comment(
-                "Whether portals created by the End Portal Frame staff render the view from the linked portal.",
-                "When enabled, the portal shows what's on the other side (immersive portal effect).",
-                "When disabled, the portal renders as an end portal block face.",
-                "Default: false"
-            )
-            .translation("joes_addons_for_abmc.config.portal.enable_immersive_portal_rendering")
-            .define("enable_immersive_portal_rendering", false);
-        builder.pop();
-
-        builder.translation("joes_addons_for_abmc.config.note_music").push("note_music");
-        NOTE_MUSIC_SOUND_SOURCE = builder
-            .comment(
-                "The sound source/category used for the special looping music in the note block universe.",
-                "Valid values: " + java.util.Arrays.toString(SoundSource.values()),
-                "Set to 'records' (jukebox) so players who turn off the game music slider can still hear it.",
-                "Default: records"
-            )
-            .translation("joes_addons_for_abmc.config.note_music.note_music_sound_source")
-            .define("note_music_sound_source", "records");
-        builder.pop();
-
-        builder.translation("joes_addons_for_abmc.config.sound").push("sound");
-        BELL_TINNITUS = builder
-            .comment(
-                "Whether the Bell staff plays a tinnitus (ear ringing) sound when rung.",
-                "When disabled, ringing the bell still silences other sounds (the sound-dampening effect),",
-                "but no ear-ringing sound is played.",
-                "Default: false"
-            )
-            .translation("joes_addons_for_abmc.config.sound.bell_tinnitus")
-            .define("bell_tinnitus", false);
-        REDSTONE_LASER_SOUNDS = builder
-            .comment(
-                "Whether the Redstone Block staff plays laser sound effects (start / looping / end) when firing.",
-                "When disabled, the laser beam still renders but makes no sound.",
-                "Default: true"
-            )
-            .translation("joes_addons_for_abmc.config.sound.redstone_laser_sounds")
-            .define("redstone_laser_sounds", true);
-        COMMAND_FLY_SOUND = builder
-            .comment(
-                "Whether the Command Block staff plays a flight sound while the player is flying with it.",
-                "Default: true"
-            )
-            .translation("joes_addons_for_abmc.config.sound.command_fly_sound")
-            .define("command_fly_sound", true);
-        builder.pop();
-
-        builder.translation("joes_addons_for_abmc.config.line_converge_offset").push("line_converge_offset");
-        CONVERGE_OFFSET_X = builder
+        common.translation("joes_addons_for_abmc.config.staff").push("staff");
+        common.translation("joes_addons_for_abmc.config.staff.line").push("line");
+        CONVERGE_OFFSET_X = common
             .comment(
                 "Horizontal (right) offset of the line emitter / converge point relative to the staff holder.",
                 "Applies to all staffs that emit a line or converge particles (redstone laser, cobweb beam,",
                 "enchant link, command feedback line, Omega absorb).",
                 "The offset is relative to the holder's head direction (visual angle), including look-up/down",
                 "pitch, so the position moves relatively when the holder looks up or down.",
-                "Range: -10 .. 10, default 0"
+                "Range: -10 .. 10, default 0.25"
             )
-            .translation("joes_addons_for_abmc.config.line_converge_offset.converge_offset_x")
-            .defineInRange("converge_offset_x", 0.25, -10.0, 10.0);
-        CONVERGE_OFFSET_Y = builder
+            .translation("joes_addons_for_abmc.config.staff.line.x")
+            .defineInRange("x", 0.25, -10.0, 10.0);
+        CONVERGE_OFFSET_Y = common
             .comment(
                 "Vertical (up) offset of the line emitter / converge point relative to the staff holder.",
-                "Range: -10 .. 10, default 0"
+                "Range: -10 .. 10, default 0.05"
             )
-            .translation("joes_addons_for_abmc.config.line_converge_offset.converge_offset_y")
-            .defineInRange("converge_offset_y", 0.05, -10.0, 10.0);
-        CONVERGE_OFFSET_Z = builder
+            .translation("joes_addons_for_abmc.config.staff.line.y")
+            .defineInRange("y", 0.05, -10.0, 10.0);
+        CONVERGE_OFFSET_Z = common
             .comment(
                 "Forward (front) offset of the line emitter / converge point relative to the staff holder.",
-                "Range: -10 .. 10, default 0"
+                "Range: -10 .. 10, default 0.35"
             )
-            .translation("joes_addons_for_abmc.config.line_converge_offset.converge_offset_z")
-            .defineInRange("converge_offset_z", 0.35, -10.0, 10.0);
-        THIRD_PERSON_OFFSET_X = builder
+            .translation("joes_addons_for_abmc.config.staff.line.z")
+            .defineInRange("z", 0.35, -10.0, 10.0);
+        common.pop();   // line
+
+        common.translation("joes_addons_for_abmc.config.staff.third_person").push("third_person");
+        THIRD_PERSON_OFFSET_X = common
             .comment(
                 "Extra X (right) offset applied only in third person / when another holder uses the staff,",
-                "on top of the converge offset. Used to fine-tune the position difference of the staff",
+                "on top of the line offset. Used to fine-tune the position difference of the staff",
                 "between first and third person views.",
                 "Range: -10 .. 10, default 0"
             )
-            .translation("joes_addons_for_abmc.config.line_converge_offset.third_person_offset_x")
-            .defineInRange("third_person_offset_x", 0.0, -10.0, 10.0);
-        THIRD_PERSON_OFFSET_Y = builder
+            .translation("joes_addons_for_abmc.config.staff.third_person.x")
+            .defineInRange("x", 0.0, -10.0, 10.0);
+        THIRD_PERSON_OFFSET_Y = common
             .comment(
                 "Extra Y (up) offset applied only in third person / when another holder uses the staff.",
-                "Range: -10 .. 10, default 0"
+                "Range: -10 .. 10, default 0.5"
             )
-            .translation("joes_addons_for_abmc.config.line_converge_offset.third_person_offset_y")
-            .defineInRange("third_person_offset_y", 0.5, -10.0, 10.0);
-        THIRD_PERSON_OFFSET_Z = builder
+            .translation("joes_addons_for_abmc.config.staff.third_person.y")
+            .defineInRange("y", 0.5, -10.0, 10.0);
+        THIRD_PERSON_OFFSET_Z = common
             .comment(
                 "Extra Z (forward) offset applied only in third person / when another holder uses the staff.",
-                "Range: -10 .. 10, default 0"
+                "Range: -10 .. 10, default -0.1"
             )
-            .translation("joes_addons_for_abmc.config.line_converge_offset.third_person_offset_z")
-            .defineInRange("third_person_offset_z", -0.1, -10.0, 10.0);
-        builder.pop();
+            .translation("joes_addons_for_abmc.config.staff.third_person.z")
+            .defineInRange("z", -0.1, -10.0, 10.0);
+        common.pop();   // third_person
+        common.pop();   // staff
 
-        builder.translation("joes_addons_for_abmc.config.chain").push("chain");
-        CHAIN_LIFT_STRENGTH = builder
-            .comment(
-                "Vertical lift strength of the Chain (Iron Block) staff: how far a grabbed creature is",
-                "raised when the player looks straight up (and lowered when looking down).",
-                "0 disables the lift effect.",
-                "Range: 0 .. 10, default 10"
-            )
-            .translation("joes_addons_for_abmc.config.chain.chain_lift_strength")
-            .defineInRange("chain_lift_strength", 10.0, 0.0, 10.0);
-        builder.pop();
-
-        builder.translation("joes_addons_for_abmc.config.start").push("start");
-        GIVE_STAFF_ON_START = builder
+        common.translation("joes_addons_for_abmc.config.gameplay").push("gameplay");
+        GIVE_STAFF_ON_START = common
             .comment(
                 "Whether to give the player a staff (with empty block type) when they first enter the world.",
                 "Only granted once per player; when disabled, it is never granted.",
                 "Default: false"
             )
-            .translation("joes_addons_for_abmc.config.start.give_staff_on_start")
+            .translation("joes_addons_for_abmc.config.gameplay.give_staff_on_start")
             .define("give_staff_on_start", false);
 
-        FORCE_THIRD_PERSON_ON_TRANSMUTATION = builder
+        FORCE_THIRD_PERSON_ON_TRANSMUTATION = common
             .comment(
                 "Whether the player is forced into third-person view while transmuted into an",
                 "item / block / mob shell / player shell by the transmutation potion.",
@@ -237,79 +209,22 @@ public class ModConfig {
                 "restores it to first-person.",
                 "Default: true"
             )
-            .translation("joes_addons_for_abmc.config.start.force_third_person_on_transmutation")
+            .translation("joes_addons_for_abmc.config.gameplay.force_third_person_on_transmutation")
             .define("force_third_person_on_transmutation", true);
 
-        MODE_TEXT_Y_OFFSET = builder
+        CHAIN_LIFT_STRENGTH = common
             .comment(
-                "Vertical offset (pixels) of the staff-mode HUD text; negative moves it up.",
-                "Adjust so it does not overlap the item name/description text.",
-                "Default: -20"
+                "Vertical lift strength of the Chain (Iron Block) staff: how far a grabbed creature is",
+                "raised when the player looks straight up (and lowered when looking down).",
+                "0 disables the lift effect.",
+                "Range: 0 .. 10, default 10"
             )
-            .translation("joes_addons_for_abmc.config.start.mode_text_y_offset")
-            .defineInRange("mode_text_y_offset", -20, -80, 40);
+            .translation("joes_addons_for_abmc.config.gameplay.chain_lift_strength")
+            .defineInRange("chain_lift_strength", 10.0, 0.0, 10.0);
+        common.pop();   // gameplay
 
-        AWAKE_BREW_BOTTLES_ROTATION = builder
-            .comment(
-                "Initial rotation angle (degrees) of the three-pot arrangement on the awakened brewing stand.",
-                "Top-down view of the brewing stand is treated as a circle whose circumference is split into 3,",
-                "each potion sits at the geometric center of its 1/3 sector. This angle rotates that whole",
-                "circle around the block's vertical center axis; 0 = a potion faces the player directly.",
-                "Range: -360 .. 360, default 0"
-            )
-            .translation("joes_addons_for_abmc.config.start.awake_brew_bottles_rotation")
-            .defineInRange("awake_brew_bottles_rotation", 0.0, -360.0, 360.0);
-
-        AWAKE_BREW_BOTTLES_SCALE = builder
-            .comment(
-                "Render scale multiplier of the potion bottles on the awakened brewing stand.",
-                "1.0 = full block size (roughly an item entity); smaller values shrink the bottles.",
-                "Range: 0.1 .. 3.0, default 0.6"
-            )
-            .translation("joes_addons_for_abmc.config.start.awake_brew_bottles_scale")
-            .defineInRange("awake_brew_bottles_scale", 0.6, 0.1, 3.0);
-
-        AWAKE_BREW_BOTTLES_HEIGHT = builder
-            .comment(
-                "Render center height (blocks) of the potion bottles above the brewing stand block.",
-                "Range: -1.0 .. 2.0, default 0.52"
-            )
-            .translation("joes_addons_for_abmc.config.start.awake_brew_bottles_height")
-            .defineInRange("awake_brew_bottles_height", 0.52, -1.0, 2.0);
-        builder.pop();
-
-        builder.translation("joes_addons_for_abmc.config.lucky_selector").push("lucky_selector");
-        SELECTOR_SEEK_HOVER_PX = builder
-            .comment(
-                "Lucky Selector: how high above the target item entity the selector hovers during /jafa seek.",
-                "Unit: pixels (16 px = 1 block).",
-                "Range: 0 .. 128, default 16"
-            )
-            .translation("joes_addons_for_abmc.config.lucky_selector.seek_hover_px")
-            .defineInRange("seek_hover_px", 16, 0, 128);
-        SELECTOR_SEEK_LIFT_PX = builder
-            .comment(
-                "Lucky Selector: how far the target item entity is lifted during /jafa seek.",
-                "The lift starts at timecode 0.5 of the retreat animation and finishes at 0.75",
-                "(these two timecodes are fixed to the animation timeline, not configurable).",
-                "Unit: pixels (16 px = 1 block).",
-                "Range: 0 .. 256, default 24"
-            )
-            .translation("joes_addons_for_abmc.config.lucky_selector.seek_lift_px")
-            .defineInRange("seek_lift_px", 24, 0, 256);
-        SELECTOR_SEND_LIFT_PX = builder
-            .comment(
-                "Lucky Selector: how far the carried item display rises during /jafa send.",
-                "It rises from timecode 0 to 0.5 of the send animation, then shrinks away from 0.5 to 0.75.",
-                "Unit: pixels (16 px = 1 block).",
-                "Range: 0 .. 256, default 24"
-            )
-            .translation("joes_addons_for_abmc.config.lucky_selector.send_lift_px")
-            .defineInRange("send_lift_px", 24, 0, 256);
-        builder.pop();
-
-        builder.translation("joes_addons_for_abmc.config.debug").push("debug");
-        DEBUG_MODE = builder
+        common.translation("joes_addons_for_abmc.config.debug").push("debug");
+        DEBUG_MODE = common
             .comment(
                 "Debug mode. When enabled, low-probability events will happen with much higher probability.",
                 "(Only effective in new worlds.)",
@@ -320,8 +235,88 @@ public class ModConfig {
             )
             .translation("joes_addons_for_abmc.config.debug.debug_mode")
             .define("debug_mode", false);
-        builder.pop();
+        common.pop();
 
-        SPEC = builder.build();
+        COMMON_SPEC = common.build();
+
+        // =========================================================================
+        // CLIENT：只有客户端读的视觉 / 音效 / HUD
+        // =========================================================================
+        ModConfigSpec.Builder client = new ModConfigSpec.Builder();
+
+        client.translation("joes_addons_for_abmc.config.visual").push("visual");
+        LUCKY_DIMENSION_RANDOM_TEXTURES = client
+            .comment(
+                "Whether lucky_dimension_block uses random textures from full cube blocks.",
+                "When enabled, the block changes appearance every 10 ticks (staggered per-block by position)",
+                "and draws only that random material. The 50% filter.png overlay is currently disabled;",
+                "its code is kept in both renderers and can be re-enabled by uncommenting the call sites.",
+                "When disabled, the block shows its own static texture without any overlay."
+            )
+            .translation("joes_addons_for_abmc.config.visual.lucky_dimension_block_random_textures")
+            .define("lucky_dimension_block_random_textures", true);
+
+        ENABLE_IMMERSIVE_PORTAL_RENDERING = client
+            .comment(
+                "Whether portals created by the End Portal Frame staff render the view from the linked portal.",
+                "When enabled, the portal shows what's on the other side (immersive portal effect).",
+                "When disabled, the portal renders as an end portal block face.",
+                "NOT IMPLEMENTED YET: nothing in the code reads this value, so changing it has no effect.",
+                "It is kept here (and in the lang files) so the option can be wired up later.",
+                "Default: false"
+            )
+            .translation("joes_addons_for_abmc.config.visual.enable_immersive_portal_rendering")
+            .define("enable_immersive_portal_rendering", false);
+
+        MODE_TEXT_Y_OFFSET = client
+            .comment(
+                "Vertical offset (pixels) of the staff-mode HUD text; negative moves it up.",
+                "Adjust so it does not overlap the item name/description text.",
+                "Default: -20"
+            )
+            .translation("joes_addons_for_abmc.config.visual.mode_text_y_offset")
+            .defineInRange("mode_text_y_offset", -20, -80, 40);
+        client.pop();   // visual
+
+        client.translation("joes_addons_for_abmc.config.sound").push("sound");
+        NOTE_MUSIC_SOUND_SOURCE = client
+            .comment(
+                "The sound source/category used for the special looping music in the note block universe.",
+                "Valid values: " + java.util.Arrays.toString(SoundSource.values()),
+                "Set to 'records' (jukebox) so players who turn off the game music slider can still hear it.",
+                "Default: records"
+            )
+            .translation("joes_addons_for_abmc.config.sound.note_music_sound_source")
+            .define("note_music_sound_source", "records");
+
+        BELL_TINNITUS = client
+            .comment(
+                "Whether the Bell staff plays a tinnitus (ear ringing) sound when rung.",
+                "When disabled, ringing the bell still silences other sounds (the sound-dampening effect),",
+                "but no ear-ringing sound is played.",
+                "Default: false"
+            )
+            .translation("joes_addons_for_abmc.config.sound.bell_tinnitus")
+            .define("bell_tinnitus", false);
+        REDSTONE_LASER_SOUNDS = client
+            .comment(
+                "Whether the Redstone Block staff plays laser sound effects (start / looping / end) when firing.",
+                "When disabled, the laser beam still renders but makes no sound.",
+                "Default: true"
+            )
+            .translation("joes_addons_for_abmc.config.sound.redstone_laser_sounds")
+            .define("redstone_laser_sounds", true);
+        COMMAND_FLY_SOUND = client
+            .comment(
+                "Whether the Command Block staff plays a flight sound while the player is flying with it.",
+                "Client-side: the sound is played locally (see CommandStaffFlySound), so the flying",
+                "ability itself is unaffected by this toggle.",
+                "Default: true"
+            )
+            .translation("joes_addons_for_abmc.config.sound.command_fly_sound")
+            .define("command_fly_sound", true);
+        client.pop();   // sound
+
+        CLIENT_SPEC = client.build();
     }
 }

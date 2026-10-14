@@ -254,7 +254,7 @@ public final class OrbAllyWitherControl {
         if (entity instanceof OrbOfLuckEntity) {
             return true;
         }
-        if (entity instanceof PlayerShellEntity shell && shell.isOrbAttached()) {
+        if (entity instanceof PlayerShellEntity shell && shell.isCoreBackedShell()) {
             return true;
         }
         return OrbPossessionSummons.isSummon(entity);

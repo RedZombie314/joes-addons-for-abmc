@@ -57,6 +57,10 @@ public final class OrbPossessionEvents {
         if (!(event.getEntity() instanceof ServerPlayer player)) {
             return;
         }
+        // 被同化的玩家（战败 / 挨够致命打击而被夺走身体）：重新进来时给他一条线索 ——
+        // 身体正被谁的空壳占据、在哪儿（用户指定：只加线索、不动规则）。
+        // 放在最前面：它自带 isAssimilating 判断，普通玩家与附体者都不会被打扰。
+        OrbAssimilation.sendRevengeHintOnJoin(player);
         UUID id = player.getUUID();
         if (!player.getPersistentData().contains(TAG_PREV_GAMEMODE)) {
             PENDING_RECOVERY.remove(id);

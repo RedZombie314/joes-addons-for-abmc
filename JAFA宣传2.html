@@ -1,0 +1,1957 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JAFA · 第二次大更新片头 · 第二版</title>
+
+<style>
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: #0a0906;
+    color: #f0ebdc;
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    gap: 16px;
+  }
+
+  canvas {
+    display: block;
+    width: min(100%, 1280px);
+    height: auto;
+    aspect-ratio: 16 / 9;
+    background: #100e07;
+    box-shadow: 0 24px 90px #000000a6;
+  }
+
+  .controls {
+    width: min(100%, 1280px);
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    font-size: 13px;
+  }
+
+  button, .upload {
+    border: 1px solid #ffffff22;
+    border-radius: 8px;
+    background: #ffffff10;
+    color: inherit;
+    padding: 9px 14px;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  button:hover, .upload:hover { background: #ffffff1f; }
+
+  button:active { background: #ffffff2b; }
+
+  button:disabled,
+  .field input:disabled,
+  input[type="range"]:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  input[type="file"] { display: none; }
+
+  input[type="range"] {
+    flex: 1;
+    min-width: 160px;
+    accent-color: #d9b64a;
+  }
+
+  .field {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid #ffffff22;
+    border-radius: 8px;
+    background: #ffffff0a;
+    padding: 6px 10px;
+    white-space: nowrap;
+  }
+
+  .field input {
+    width: 78px;
+    border: 1px solid #ffffff22;
+    border-radius: 6px;
+    background: #00000055;
+    color: inherit;
+    padding: 5px 6px;
+    font: inherit;
+    text-align: right;
+  }
+
+  .field select {
+    border: 1px solid #ffffff22;
+    border-radius: 6px;
+    background: #1a160c;
+    color: inherit;
+    padding: 5px 6px;
+    font: inherit;
+  }
+
+  .tip {
+    color: #7a7360;
+    font-size: 12px;
+    line-height: 1.6;
+    flex: 1;
+    min-width: 260px;
+  }
+
+  #readout {
+    min-width: 190px;
+    color: #b3aa90;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hint {
+    width: min(100%, 1280px);
+    color: #867f6b;
+    font-size: 12px;
+    line-height: 1.8;
+  }
+</style>
+</head>
+
+<body>
+
+<canvas id="canvas" width="1920" height="1080"></canvas>
+
+<div class="controls">
+  <button id="play" type="button">播放</button>
+  <button id="restart" type="button">重新开始</button>
+  <button id="record" type="button">录制视频</button>
+  <button id="pickMusic" type="button">导入配乐</button>
+  <button id="pickKnife" type="button">小刀截图</button>
+  <button id="pickLuck" type="button">维度截图</button>
+
+  <input id="music" type="file" accept="audio/*" hidden />
+  <input id="knifeImage" type="file" accept="image/*" hidden />
+  <input id="luckImage" type="file" accept="image/*" hidden />
+
+  <input id="seek" type="range" min="0" max="43.5" step="0.01" value="0" />
+
+  <span id="readout"></span>
+</div>
+
+<div class="controls">
+  <label class="field">
+    BPM
+    <input id="bpm" type="number" min="40" max="220" step="0.1" value="106" />
+  </label>
+
+  <label class="field">
+    音乐起点
+    <input id="offset" type="number" step="0.01" value="0" />
+    秒
+  </label>
+
+  <label class="field">
+    格式
+    <select id="format">
+      <option value="auto">自动（MP4 优先）</option>
+      <option value="mp4-silent">MP4 无声</option>
+      <option value="webm">WebM + 声音</option>
+    </select>
+  </label>
+
+  <span class="tip">
+    音乐起点 = 音乐文件里第几秒对应画面第 0 拍：正数跳过开头，负数让音乐延后进入。
+    画面固定按拍编排，改 BPM 只会整体变快变慢。
+  </span>
+</div>
+
+<div class="hint" id="hint">
+  106 BPM · 43.5 拍 ≈ 24.62 秒 · 空格播放 / 暂停 · ← → 逐拍检查 · R 重新开始 · 录制视频＝自动播放并导出文件。<br />
+  节奏：小刀 4 拍 · 幸运维度 7.5 拍（4 拍全景 + 2 拍中景 + 1.5 拍核心特写）· 引导语只占 2 拍，第 35.5 拍直接揭晓主标题。<br />
+  占位画面仅用于确认排版与镜头节奏，可用上面的按钮导入截图替换。
+</div>
+
+<script>
+"use strict";
+
+/* ======================================================
+   第二次大更新片头 · 第二版
+   - 黑底白字，逐字上浮
+   - 时间轴以拍为单位，106 BPM
+   - 不依赖素材文件即可预览（占位画面）
+   - 结尾停在「幸运维度 / 第一部分！」，不做绿色收尾
+   ====================================================== */
+
+const canvas = document.querySelector("#canvas");
+const ctx = canvas.getContext("2d");
+
+/*
+  逻辑坐标系固定 1920 × 1080。
+  ctx 按 VIEW_SCALE 缩放，让画布的像素数正好等于屏幕上实际占用的设备像素数。
+  画布元素是从 1920 缩放过来的，如果后端像素数不跟着屏幕走，
+  文字就等于被浏览器重新采样一遍 —— 这就是糊的主因。
+*/
+let VIEW_SCALE = 1;
+
+const playButton = document.querySelector("#play");
+const restartButton = document.querySelector("#restart");
+const recordButton = document.querySelector("#record");
+const pickMusicButton = document.querySelector("#pickMusic");
+const pickKnifeButton = document.querySelector("#pickKnife");
+const pickLuckButton = document.querySelector("#pickLuck");
+const seek = document.querySelector("#seek");
+const readout = document.querySelector("#readout");
+const bpmInput = document.querySelector("#bpm");
+const offsetInput = document.querySelector("#offset");
+const formatSelect = document.querySelector("#format");
+const musicInput = document.querySelector("#music");
+const knifeImageInput = document.querySelector("#knifeImage");
+const luckImageInput = document.querySelector("#luckImage");
+const hint = document.querySelector("#hint");
+
+const W = 1920;
+const H = 1080;
+
+const MAX_LINE_WIDTH = 1600;
+
+/* ---------- 节奏 ---------- */
+
+// 全部镜头都按「拍」编排：改 BPM 只会整体变快变慢，拍与拍之间的关系不变。
+let BPM = 106;
+let BEAT = 60 / BPM;
+
+/* 与 GPT 建议一致的拍位表。 */
+const TIMING = {
+  question: 0,
+
+  staff: 6,
+  creeper: 8,
+  music: 10,
+
+  no: 12,
+  wish: 15,
+
+  knife: 20,
+  bridge: 24,
+  luck: 26,
+
+  // 核心特写镜头时长（原来 3 拍，这次减半）。
+  closeup: 1.5,
+
+  lead: 33.5,
+  title: 35.5,
+  subtitle: 36.5,
+
+  end: 43.5
+};
+
+const TOTAL_BEATS = TIMING.end;
+let DURATION = TOTAL_BEATS * BEAT;
+
+/* ---------- 配色：黑底白字 ---------- */
+
+const C = {
+  bg: "#100e07",
+  panel: "#171309",
+  ink: "#f7f3e4",
+  muted: "#968e79",
+  amber: "#e0a04a",
+  gold: "#e3c56a",
+  cream: "#f7f0cf",
+  line: "#443b28"
+};
+
+const FONT =
+  '"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif';
+
+/* 逐字上浮的幅度系数：distance × MOTION_STRENGTH 才是实际位移。 */
+const MOTION_STRENGTH = 1.5;
+
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const progress = (v, start, duration) => clamp((v - start) / duration);
+const out = t => 1 - Math.pow(1 - clamp(t), 3);
+const smooth = t => {
+  t = clamp(t);
+  return t * t * (3 - 2 * t);
+};
+const lerp = (a, b, p) => a + (b - a) * p;
+const smootherStep = t => {
+  t = clamp(t);
+  return t * t * t * (t * (t * 6 - 15) + 10);
+};
+
+/* ======================================================
+   片尾：逐渐抖动 + 加速放大
+   与 JAFA 宣传 1 的逼近效果同源：
+   二次曲线加速的推近 + 平滑噪声抖动 + 轻微 roll + 递增模糊。
+   ====================================================== */
+
+const FINALE = {
+  // 从第几拍开始（40.63 拍 ≈ 23.0 秒 @106 BPM）
+  startBeat: 40.63,
+
+  /*
+    整段爆发时长。放大 / 抖动 / 模糊共用这一条进度，
+    三者同时开始、同时到顶。
+    走完之后剩下的时间画面已经是纯黑，抖动和模糊都看不见。
+  */
+  duration: 0.67,
+
+  // 推近到多少倍
+  endScale: 24,
+
+  /*
+    相机在「深度」上的行程 travel：0 = 起点，1 = 到位，然后
+        scale = 1 / (1 - (1 - 1/endScale) * travel)
+    这是宣传1 的透视模型（相机朝画面飞过去），下面两个旋钮直接控制手感：
+
+      startVelocity  初速度占比。
+                     0    = 从静止起步（宣传1 的写法，推荐）
+                     0.2  = 一开始就有两成速度，起步更冲
+                     嫌「初速度太大」就往 0 调。
+
+      approachPower  travel 里 p 的指数，也就是加速强度。
+                     1     = 匀速，没有加速感
+                     2     = 匀加速（宣传1 的写法）
+                     2.5~3 = 后段更猛
+                     嫌「加速度太小」就往大调。
+
+    这两个值和「什么时候变全黑」是联动的：
+    曲线越靠后发力，画面冲出画外（变黑）就越晚。
+  */
+  startVelocity: 0,
+  approachPower: 2,
+
+  /*
+    抖动 / roll 的包络峰值点。
+    画面要到 p≈0.98 才冲出画外变全黑，所以峰值定在 0.85 ——
+    比全黑早一点到顶，保证「看得到画面的时候抖得最狠」，
+    同时和推近是同一条进度、一起加速，不是先抖后推。
+  */
+  shakePeakAt: 0.85,
+
+  // 抖动：幅度按 (p/shakePeakAt)^1.4 增长，之后保持满幅
+  maxShakeX: 46,
+  maxShakeY: 46,
+  shakeGrowthPower: 1.4,
+  shakeFrequency: 12,
+
+  // 轻微旋转：按 (p/shakePeakAt)^0.7 增长
+  maxRollDeg: 2.4,
+  rollGrowthPower: 0.7,
+  rollFrequency: 7,
+
+  /*
+    模糊沿用宣传1 的公式：实际模糊 = 当前缩放 × relativeBlur。
+    relativeBlur 从 0.9 涨到 3.2，配合 30 倍推近，最后糊成一片色块。
+    实现上不用高斯滤波（1080p60 下 30ms+/帧，录制会掉帧），
+    而是把画面缩到 1/N 再拉回来，N 就是等效模糊半径。
+  */
+  initialRelativeBlur: 0.9,
+  finalRelativeBlur: 3.2,
+  blurGrowthPower: 1.15,
+  maxSoften: 64,
+
+  /*
+    往画面哪个点推。
+    y = 638 是标题（墨迹到 592.5）和副标题（墨迹从 684 起）之间的空带中心，
+    推到底时可视窗口整块落在黑底上 —— 收尾是全黑，抖动也看不见。
+  */
+  pivotX: 960,
+  pivotY: 638
+};
+
+// 每次刷新换一套抖动，但同一帧时间点永远得到同一个结果（可重放 / 可逐帧检查）。
+const MOTION_SEED = Math.floor(Math.random() * 0x100000000) >>> 0;
+
+function randomAt(index, channel = 0) {
+  let value = (
+    MOTION_SEED ^
+    Math.imul(index | 0, 0x9e3779b1) ^
+    Math.imul((channel + 1) | 0, 0x85ebca6b)
+  ) >>> 0;
+
+  value ^= value >>> 16;
+  value = Math.imul(value, 0x7feb352d);
+  value ^= value >>> 15;
+  value = Math.imul(value, 0x846ca68b);
+  value ^= value >>> 16;
+
+  return (value >>> 0) / 4294967295 * 2 - 1;
+}
+
+function smoothNoise(position, channel = 0) {
+  const index = Math.floor(position);
+  const fraction = position - index;
+
+  return lerp(
+    randomAt(index, channel),
+    randomAt(index + 1, channel),
+    smootherStep(fraction)
+  );
+}
+
+function finaleStartSeconds() {
+  return FINALE.startBeat * BEAT;
+}
+
+// 单条进度：0 = 还没开始，1 = 爆发到底（之后一直保持 1）
+function finaleProgress(seconds) {
+  const start = finaleStartSeconds();
+  return clamp((seconds - start) / Math.max(0.001, FINALE.duration));
+}
+
+/*
+  片尾状态一次算完：缩放、抖动、roll、模糊全由同一个 p 驱动。
+  返回 null 表示这一帧还没进片尾。
+*/
+function finaleState(seconds) {
+  const p = finaleProgress(seconds);
+
+  if (p <= 0) return null;
+
+  /*
+    相机深度行程：起点速度由 startVelocity 决定，后段由 approachPower 决定。
+    startVelocity = 0 时 travel = p^approachPower —— 起手速度为零，全程加速。
+  */
+  const endScale = Math.max(1, FINALE.endScale);
+  const travel =
+    FINALE.startVelocity * p +
+    (1 - FINALE.startVelocity) * Math.pow(p, FINALE.approachPower);
+
+  const distanceRatio = 1 - (1 - 1 / endScale) * travel;
+  const scale = 1 / distanceRatio;
+
+  /*
+    抖动 / roll 的包络在 shakePeakAt 处到顶，之后保持满幅。
+    因为画面到 p≈0.52 已经全黑，再往后加幅度没有意义 ——
+    必须保证「画面还在的时候就抖得最狠」。
+  */
+  const shakeRamp = clamp(p / Math.max(0.01, FINALE.shakePeakAt));
+  const shakeEnvelope = Math.pow(shakeRamp, FINALE.shakeGrowthPower);
+  const rollEnvelope = Math.pow(shakeRamp, FINALE.rollGrowthPower);
+  const frequency = FINALE.shakeFrequency;
+
+  const noiseX =
+    smoothNoise(seconds * frequency, 11) * 0.68 +
+    smoothNoise(seconds * frequency * 2.13, 12) * 0.32;
+
+  const noiseY =
+    smoothNoise(seconds * frequency * 1.07, 21) * 0.68 +
+    smoothNoise(seconds * frequency * 2.37, 22) * 0.32;
+
+  const initialPhase = randomAt(0, 31) * Math.PI;
+  const phaseVariation = smoothNoise(seconds * 0.72, 32) * 1.25;
+
+  const rollWave = Math.sin(
+    seconds * Math.PI * 2 * FINALE.rollFrequency +
+    initialPhase +
+    phaseVariation
+  );
+
+  const rollDetail = smoothNoise(seconds * 2.6, 33);
+  const rollSignal = rollWave * 0.82 + rollDetail * 0.18;
+
+  const relativeBlur = lerp(
+    FINALE.initialRelativeBlur,
+    FINALE.finalRelativeBlur,
+    Math.pow(p, FINALE.blurGrowthPower)
+  );
+
+  return {
+    p,
+    scale,
+    blur: scale * relativeBlur,
+    shakeX: FINALE.maxShakeX * shakeEnvelope * noiseX,
+    shakeY: FINALE.maxShakeY * shakeEnvelope * noiseY,
+    roll: FINALE.maxRollDeg * rollEnvelope * rollSignal
+  };
+}
+
+// 位移 + roll + 缩放；模糊交给 applySoften。
+function applyFinaleCamera(state) {
+  if (!state) return;
+
+  ctx.translate(
+    FINALE.pivotX + state.shakeX,
+    FINALE.pivotY + state.shakeY
+  );
+
+  ctx.rotate(state.roll * Math.PI / 180);
+  ctx.scale(state.scale, state.scale);
+  ctx.translate(-FINALE.pivotX, -FINALE.pivotY);
+}
+
+/* ---------- 片尾柔化 ---------- */
+
+let softenCanvas = null;
+let softenContext = null;
+
+function applySoften(state) {
+  if (!state || state.blur < 0.4) return;
+
+  const divisor = clamp(state.blur, 1, FINALE.maxSoften);
+  const lowWidth = Math.max(4, Math.round(W / divisor));
+  const lowHeight = Math.max(3, Math.round(H / divisor));
+
+  if (!softenCanvas) {
+    softenCanvas = document.createElement("canvas");
+    softenContext = softenCanvas.getContext("2d");
+  }
+
+  if (softenCanvas.width < lowWidth || softenCanvas.height < lowHeight) {
+    softenCanvas.width = Math.max(softenCanvas.width, lowWidth);
+    softenCanvas.height = Math.max(softenCanvas.height, lowHeight);
+  }
+
+  softenContext.setTransform(1, 0, 0, 1, 0, 0);
+  softenContext.clearRect(0, 0, lowWidth, lowHeight);
+  softenContext.imageSmoothingEnabled = true;
+  softenContext.imageSmoothingQuality = "high";
+  softenContext.drawImage(canvas, 0, 0, lowWidth, lowHeight);
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(
+    softenCanvas,
+    0, 0, lowWidth, lowHeight,
+    0, 0, canvas.width, canvas.height
+  );
+  ctx.imageSmoothingQuality = "low";
+}
+
+function rect(x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, w, h);
+}
+
+/* ======================================================
+   文字：逐字排版 + 逐字上浮
+   ====================================================== */
+
+const layoutCache = new Map();
+
+function line(
+  str, size, weight = 500, x = 960, y = 540,
+  color = C.ink, align = "center"
+) {
+  const key = [str, size, weight, x, y, color, align].join("|");
+
+  const cached = layoutCache.get(key);
+  if (cached) return cached;
+
+  const chars = Array.from(str);
+
+  const measureAll = fontSize => {
+    ctx.font = `${weight} ${fontSize}px ${FONT}`;
+    return chars.map(character => ctx.measureText(character).width);
+  };
+
+  let fontSize = size;
+  let widths = measureAll(fontSize);
+  let total = widths.reduce((sum, width) => sum + width, 0);
+
+  // 单行过宽时整体缩小，避免超出 1600 安全宽度。
+  if (total > MAX_LINE_WIDTH) {
+    fontSize *= MAX_LINE_WIDTH / total;
+    widths = measureAll(fontSize);
+    total = widths.reduce((sum, width) => sum + width, 0);
+  }
+
+  const offsets = [];
+  let cursor = 0;
+
+  for (const width of widths) {
+    offsets.push(cursor);
+    cursor += width;
+  }
+
+  const startX =
+    align === "center" ? x - total / 2 :
+    align === "right" ? x - total : x;
+
+  const layout = {
+    str, chars, widths, offsets, total,
+    startX, x, y, size: fontSize, weight, color, align
+  };
+
+  layoutCache.set(key, layout);
+  return layout;
+}
+
+/*
+  逐字上浮。
+  delay / duration / stagger 均以「拍」为单位。
+  distance 会被 MOTION_STRENGTH 放大。
+*/
+function rise(l, time, o = {}) {
+  const {
+    delay = 0,
+    duration = 0.7,
+    stagger = 0,
+    distance = 30,
+    startScale = 1
+  } = o;
+
+  ctx.save();
+  ctx.font = `${l.weight} ${l.size}px ${FONT}`;
+  ctx.fillStyle = l.color;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+
+  l.chars.forEach((character, i) => {
+    const p = out(progress(time, delay + i * stagger, duration));
+    if (p <= 0) return;
+
+    const width = l.widths[i];
+    const center = l.startX + l.offsets[i] + width / 2;
+    const lift = distance * MOTION_STRENGTH * (1 - p);
+    const scale = lerp(startScale, 1, p);
+
+    ctx.save();
+    ctx.globalAlpha *= p;
+    ctx.translate(center, l.y + lift);
+    ctx.scale(scale, scale);
+    ctx.fillText(character, -width / 2, 0);
+    ctx.restore();
+  });
+
+  ctx.restore();
+}
+
+/*
+  整行定位 + 逐字上浮。
+  x / y 会把这行从原始基准点搬到指定位置。
+*/
+function drawLine(l, time, o = {}) {
+  const x = o.x === undefined ? l.x : o.x;
+  const y = o.y === undefined ? l.y : o.y;
+  const scale = o.scale === undefined ? 1 : o.scale;
+  const opacity = o.opacity === undefined ? 1 : o.opacity;
+
+  if (opacity <= 0) return;
+
+  ctx.save();
+  ctx.globalAlpha *= clamp(opacity);
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  ctx.translate(-l.x, -l.y);
+  rise(l, time, o);
+  ctx.restore();
+}
+
+/* 重点词下划线：按实际字宽计算，左端固定、向右伸出。 */
+function drawUnderline(
+  l, keyword, p, { color = C.amber, width = 6, dy = null } = {}
+) {
+  if (p <= 0) return;
+
+  const index = l.str.indexOf(keyword);
+  if (index < 0) return;
+
+  const start = Array.from(l.str.slice(0, index)).length;
+  const length = Array.from(keyword).length;
+  const last = start + length - 1;
+
+  const x1 = l.startX + l.offsets[start];
+  const x2 = l.startX + l.offsets[last] + l.widths[last];
+  const y = l.y + (dy === null ? l.size * 0.66 : dy);
+
+  ctx.save();
+  ctx.globalAlpha *= clamp(p);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(x1, y);
+  ctx.lineTo(lerp(x1, x2, p), y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/* ======================================================
+   场景：整段淡入淡出 + 出场时轻微上移
+   ====================================================== */
+
+function scene(b, start, end, draw, fadeIn = 0.35, fadeOut = 0.3) {
+  if (b < start || b >= end) return;
+
+  const enter = smooth(progress(b, start, fadeIn));
+  const exit = smooth(progress(b, end - fadeOut, fadeOut));
+  const alpha = enter * (1 - exit);
+
+  if (alpha <= 0.002) return;
+
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.translate(0, -36 * exit);
+  draw(b - start, b);
+  ctx.restore();
+}
+
+function cornerLabel(label) {
+  drawLine(L.brand, 1, {});
+  drawLine(L[label] || L.cornerDefault, 1, {});
+}
+
+/* ======================================================
+   静止素材占位
+   ====================================================== */
+
+const frames = {
+  knife: { canvas: null, image: null },
+  luck: { canvas: null, image: null }
+};
+
+function createFrameCanvas(draw) {
+  // 占位画面按屏幕实际像素渲染，放大到特写时也不会发虚。
+  const scale = Math.max(1, VIEW_SCALE);
+
+  const c = document.createElement("canvas");
+  c.width = Math.round(W * scale);
+  c.height = Math.round(H * scale);
+
+  const g = c.getContext("2d");
+  g.scale(scale, scale);
+  draw(g);
+
+  return c;
+}
+
+/* 小刀：几何示意，非原作素材。 */
+function drawKnifeArt(g) {
+  g.fillStyle = C.panel;
+  g.fillRect(0, 0, W, H);
+
+  g.strokeStyle = "#ffd98a0c";
+  g.lineWidth = 2;
+  for (let x = 0; x <= W; x += 100) {
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke();
+  }
+  for (let y = 0; y <= H; y += 100) {
+    g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke();
+  }
+
+  g.save();
+  g.translate(960, 545);
+  g.rotate(-0.28);
+
+  // 刀身：左端为刀尖，右端平齐接刀柄。
+  g.beginPath();
+  g.moveTo(-372, 0);
+  g.lineTo(-300, -72);
+  g.lineTo(226, -72);
+  g.lineTo(226, 72);
+  g.lineTo(-300, 72);
+  g.closePath();
+  g.fillStyle = "#cdc7b5";
+  g.fill();
+
+  // 刀背高光
+  g.fillStyle = "#f5efdf";
+  g.fillRect(-300, -72, 526, 16);
+
+  // 刀柄
+  g.fillStyle = C.amber;
+  g.fillRect(226, -54, 220, 108);
+  g.fillStyle = "#1d1810";
+  [262, 336, 410].forEach(x => {
+    g.beginPath();
+    g.arc(x, 0, 11, 0, Math.PI * 2);
+    g.fill();
+  });
+
+  g.restore();
+}
+
+/* 幸运维度：方块世界示意 + 中央核心。 */
+function drawLuckArt(g) {
+  g.fillStyle = "#241d0e";
+  g.fillRect(0, 0, W, H);
+
+  const blocks = [
+    [180, 700, 380, 260, "#4d3f19"],
+    [520, 800, 280, 160, "#614f23"],
+    [1400, 690, 370, 270, "#50421b"],
+    [1520, 520, 220, 150, "#75602a"],
+    [260, 380, 200, 140, "#665428"],
+    [470, 270, 140, 110, "#836c32"],
+    [1300, 280, 150, 120, "#5d4c20"]
+  ];
+
+  for (const [x, y, w, h, color] of blocks) {
+    g.fillStyle = color;
+    g.fillRect(x, y, w, h);
+    g.fillStyle = "#ffffff10";
+    g.fillRect(x, y, w, 22);
+  }
+
+  // 核心固定在画面中央，方便镜头推近。
+  const glow = g.createRadialGradient(960, 540, 20, 960, 540, 340);
+  glow.addColorStop(0, "#f0d8785c");
+  glow.addColorStop(1, "#f0d87800");
+  g.fillStyle = glow;
+  g.fillRect(520, 100, 880, 880);
+
+  g.fillStyle = "#e8d071";
+  g.fillRect(870, 450, 180, 180);
+  g.fillStyle = "#f8f0b0";
+  g.fillRect(886, 466, 148, 25);
+  g.fillStyle = "#8a7434";
+  g.fillRect(1014, 491, 20, 123);
+
+  g.font = `700 62px ${FONT}`;
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillStyle = "#4a3d18";
+  g.fillText("?", 954, 548);
+}
+
+function buildFrames() {
+  frames.knife.canvas = createFrameCanvas(drawKnifeArt);
+  frames.luck.canvas = createFrameCanvas(drawLuckArt);
+}
+
+function drawCover(image, x, y, w, h) {
+  const imageRatio = image.width / image.height;
+  const boxRatio = w / h;
+
+  let dw, dh;
+
+  if (imageRatio > boxRatio) {
+    dh = h;
+    dw = h * imageRatio;
+  } else {
+    dw = w;
+    dh = w / imageRatio;
+  }
+
+  ctx.drawImage(image, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+}
+
+const VIEW = { x: 150, y: 120, w: 1620, h: 840 };
+
+/*
+  取景缩放只作用于画面区域；
+  标题和说明文字画在缩放层之外，不会被一起放大。
+*/
+function drawPlaceholder(frame, scale, { caption, tag, note }) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(VIEW.x, VIEW.y, VIEW.w, VIEW.h);
+  ctx.clip();
+
+  ctx.translate(960, 540);
+  ctx.scale(scale, scale);
+  ctx.translate(-960, -540);
+
+  if (frame.image) {
+    drawCover(frame.image, VIEW.x, VIEW.y, VIEW.w, VIEW.h);
+  } else {
+    ctx.drawImage(frame.canvas, 0, 0, W, H);
+  }
+
+  ctx.restore();
+
+  ctx.save();
+  ctx.strokeStyle = C.line;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(
+    VIEW.x + 1, VIEW.y + 1, VIEW.w - 2, VIEW.h - 2
+  );
+  ctx.restore();
+
+  drawLine(caption, 1, {});
+  if (tag) drawLine(tag, 1, {});
+  drawLine(note, 1, {});
+}
+
+/* ======================================================
+   文案表：字体加载完成后重建
+   ====================================================== */
+
+let L = {};
+
+function buildLines() {
+  layoutCache.clear();
+
+  L = {
+    brand: line("JAFA", 30, 800, 110, 94, C.gold, "left"),
+    cornerDefault: line("第二次大更新", 23, 500, 1810, 94, C.muted, "right"),
+    "第二次大更新": line("第二次大更新", 23, 500, 1810, 94, C.muted, "right"),
+    "是因为……": line("是因为……", 23, 500, 1810, 94, C.muted, "right"),
+    "最初的起点": line("最初的起点", 23, 500, 1810, 94, C.muted, "right"),
+
+    // 0–6 拍：开场提问
+    q1: line("你们想知道，", 56, 500, 960, 420),
+    q2: line("我最初为什么想做这个 mod 吗？", 78, 700, 960, 580, C.ink),
+
+    // 6–12 拍：三连猜测
+    guess1: line("是橙王的权杖？", 92, 700, 960, 540),
+    guess2: line("是苦力怕维度？", 92, 700, 960, 540),
+    guess3: line("音符盒宇宙？", 92, 700, 960, 540),
+
+    // 12–15 拍：三个 NO
+    no1: line("NO.", 145, 800, 540, 540, C.amber),
+    no2: line("NO.", 145, 800, 960, 540, C.amber),
+    no3: line("NO!", 145, 800, 1380, 540, C.amber),
+
+    // 15–20 拍：最初的愿望
+    wish1: line("最初的愿望，", 56, 500, 960, 390),
+    wish2: line("围绕这一把小刀", 100, 700, 960, 550),
+    wish3: line("展开……", 60, 500, 960, 705, C.muted),
+
+    // 24–26 拍：过渡句
+    bridge1: line("随后，", 52, 500, 960, 420, C.muted),
+    bridge2: line("就是这些！", 112, 700, 960, 595),
+
+    // 35 拍起：引导语 → 主标题
+    lead: line("这次大更新，将为你带来：", 64, 500, 960, 540, C.cream),
+    title: line("幸运维度", 168, 800, 960, 530, "#f3ecc0"),
+    subtitle: line("第一部分！", 78, 500, 960, 730, C.gold),
+
+    // 素材标签
+    knifeCaption: line("AVM 19 · 小刀片段", 28, 500, 960, 165),
+    luckCaption: line("AVM 19 · 幸运维度", 28, 500, 960, 165),
+
+    tagKnife: line("素材占位 / 4 BEATS", 23, 500, 1740, 165, C.muted, "right"),
+    tagWide: line("素材占位 / 全景", 23, 500, 1740, 165, C.muted, "right"),
+    tagMid: line("素材占位 / 中景", 23, 500, 1740, 165, C.muted, "right"),
+    tagClose: line("素材占位 / 核心特写", 23, 500, 1740, 165, C.muted, "right"),
+
+    notePlaceholder: line("示意占位 · 非原作画面", 23, 500, 960, 915, C.muted),
+    noteImage: line("静止图片占位", 23, 500, 960, 915, C.muted)
+  };
+}
+
+/* ======================================================
+   时间轴
+   ====================================================== */
+
+function render(seconds) {
+  const b = Math.min(seconds / BEAT, TOTAL_BEATS - 0.000001);
+
+  ctx.setTransform(VIEW_SCALE, 0, 0, VIEW_SCALE, 0, 0);
+  ctx.globalAlpha = 1;
+
+  // 先用底色铺满整块画布：片尾抖动/放大时露出来的边也是同色。
+  rect(0, 0, W, H, C.bg);
+
+  // 片尾（约 23 秒起）：放大 / 抖动 / 模糊由同一条进度同时推进。
+  const finale = finaleState(seconds);
+
+  ctx.save();
+  applyFinaleCamera(finale);
+
+  /* 0–6 拍：开场提问 */
+  scene(b, TIMING.question, TIMING.staff, t => {
+    cornerLabel("第二次大更新");
+
+    drawLine(L.q1, t, { delay: 0.15, stagger: 0.07, duration: 0.75 });
+    drawLine(L.q2, t, { delay: 1.15, stagger: 0.055, duration: 0.8 });
+
+    drawUnderline(L.q2, "最初", smooth(progress(t, 2.8, 0.65)));
+  });
+
+  /* 6–12 拍：三连猜测，每项两拍 */
+  [
+    [TIMING.staff, L.guess1],
+    [TIMING.creeper, L.guess2],
+    [TIMING.music, L.guess3]
+  ].forEach(([start, text]) => {
+    scene(b, start, start + 2, t => {
+      cornerLabel("是因为……");
+
+      drawLine(text, t, {
+        duration: 0.52,
+        stagger: 0.025,
+        distance: 24
+      });
+    }, 0.15, 0.22);
+  });
+
+  /* 12–15 拍：NO / NO / NO!，分别踩拍 */
+  scene(b, TIMING.no, TIMING.wish, t => {
+    [L.no1, L.no2, L.no3].forEach((word, i) => {
+      const p = out(progress(t, i, 0.3));
+
+      drawLine(word, t, {
+        delay: i,
+        duration: 0.3,
+        distance: 0,
+        opacity: t < i ? 0 : 1,
+        y: 540 + 22 * (1 - p),
+        scale: lerp(1.18, 1, p)
+      });
+    });
+  }, 0.08, 0.2);
+
+  /* 15–20 拍：最初的愿望 */
+  scene(b, TIMING.wish, TIMING.knife, t => {
+    cornerLabel("最初的起点");
+
+    drawLine(L.wish1, t, { delay: 0.05, stagger: 0.065 });
+    drawLine(L.wish2, t, { delay: 0.8, stagger: 0.07, duration: 0.85 });
+    drawLine(L.wish3, t, { delay: 2, stagger: 0.07 });
+
+    drawUnderline(L.wish2, "这一把小刀", smooth(progress(t, 2.6, 0.7)));
+  });
+
+  /* 20–24 拍：小刀素材，4 拍 */
+  scene(b, TIMING.knife, TIMING.bridge, t => {
+    const p = out(progress(t, 0, 0.6));
+
+    ctx.save();
+    ctx.translate(960, 540);
+    ctx.scale(lerp(0.92, 1, p), lerp(0.92, 1, p));
+    ctx.translate(-960, -540);
+
+    drawPlaceholder(frames.knife, 1, {
+      caption: L.knifeCaption,
+      tag: L.tagKnife,
+      note: frames.knife.image ? L.noteImage : L.notePlaceholder
+    });
+
+    ctx.restore();
+  }, 0.2, 0);
+
+  /* 24–26 拍：过渡句 */
+  scene(b, TIMING.bridge, TIMING.luck, t => {
+    drawLine(L.bridge1, t, { duration: 0.45, distance: 20 });
+    drawLine(L.bridge2, t, {
+      delay: 0.45,
+      duration: 0.5,
+      distance: 26,
+      startScale: 0.96
+    });
+  }, 0.12, 0.18);
+
+  /* 26–33.5 拍：幸运维度，4 拍全景 + 2 拍中景 + 1.5 拍核心特写 */
+  scene(b, TIMING.luck, TIMING.lead, t => {
+    let scale;
+    let tag;
+
+    // 特写段时长跟着 TIMING 走，不再写死 3 拍。
+    const closeupLength = TIMING.lead - TIMING.luck - 6;
+
+    if (t < 4) {
+      scale = lerp(1, 1.04, t / 4);
+      tag = L.tagWide;
+    } else if (t < 6) {
+      scale = lerp(1.55, 1.61, (t - 4) / 2);
+      tag = L.tagMid;
+    } else {
+      scale = lerp(2.65, 2.78, (t - 6) / closeupLength);
+      tag = L.tagClose;
+    }
+
+    drawPlaceholder(frames.luck, scale, {
+      caption: L.luckCaption,
+      tag,
+      note: frames.luck.image ? L.noteImage : L.notePlaceholder
+    });
+  }, 0.2, 0);
+
+  /* 33.5–43.5 拍：引导语只等 2 拍，第 35.5 拍直接揭晓主标题 */
+  scene(b, TIMING.lead, TIMING.end, t => {
+    const enter = {
+      delay: 0,
+      duration: 0.55,
+      stagger: 0.025,
+      distance: 22
+    };
+
+    // t = 2 即全片第 35.5 拍：引导语上移，主标题同时入场。
+    const move = smooth(progress(t, 2, 0.65));
+
+    drawLine(L.lead, t, Object.assign({}, enter, {
+      y: lerp(540, 315, move),
+      scale: lerp(1, 0.72, move),
+      opacity: lerp(1, 0.78, move)
+    }));
+
+    drawLine(L.title, t, {
+      delay: 2,
+      duration: 0.65,
+      stagger: 0.035,
+      distance: 24,
+      startScale: 1.06
+    });
+
+    drawLine(L.subtitle, t, {
+      delay: 3,
+      duration: 0.6,
+      stagger: 0.045,
+      distance: 20
+    });
+
+    // 副标题下划线：长度按「第一部分」的实际字宽算，左端从「第」的左边开始。
+    const ray = out(progress(t, 3.65, 0.65));
+    drawUnderline(L.subtitle, "第一部分", ray, {
+      color: C.gold,
+      width: 4,
+      dy: 62
+    });
+  }, 0.3, 0);
+
+  // 收尾：复位片尾相机，再按同一份状态做柔化
+  ctx.restore();
+  applySoften(finale);
+}
+
+/* ======================================================
+   播放控制
+   ====================================================== */
+
+const audio = new Audio();
+audio.preload = "auto";
+
+let audioURL = "";
+let musicPlayPending = false;
+
+/*
+  音乐起点：音乐文件里的第几秒对应画面第 0 拍。
+  0    = 音乐第 0 秒对齐第 0 拍（默认）
+  正数 = 跳过音乐开头 N 秒，让更靠后的重拍踩上第 0 拍
+  负数 = 音乐延后 N 秒进入
+*/
+let musicStart = 0;
+
+let playing = false;
+let position = 0;
+let startedAt = 0;
+
+/*
+  主时钟用 performance.now()，音乐只做从动。
+  这样画面是逐帧顺滑的，不会被 audio.currentTime 的量化拖出细碎抖动；
+  音乐一旦和画面差出 MUSIC_TOLERANCE，再把它拽回来。
+*/
+const MUSIC_TOLERANCE = 0.08;
+
+function currentTime() {
+  if (!playing) return position;
+
+  return clamp(
+    position + (performance.now() - startedAt) / 1000,
+    0,
+    DURATION
+  );
+}
+
+function musicTimeFor(t) {
+  return t + musicStart;
+}
+
+function syncMusic(t, force = false) {
+  if (!audioURL) return;
+
+  const target = musicTimeFor(t);
+
+  // 这一段画面还没有轮到音乐：先按住不动。
+  if (target < 0) {
+    if (!audio.paused) audio.pause();
+    if (audio.currentTime !== 0) audio.currentTime = 0;
+    return;
+  }
+
+  // 音乐已经放完，剩下的画面静音走完，不再反复起播。
+  if (
+    Number.isFinite(audio.duration) &&
+    target >= audio.duration - 0.05
+  ) {
+    if (!audio.paused) audio.pause();
+    return;
+  }
+
+  if (audio.paused) {
+    if (musicPlayPending) return;
+
+    audio.currentTime = target;
+    musicPlayPending = true;
+
+    audio.play()
+      .catch(() => {
+        hint.textContent =
+          "配乐未能播放，当前使用无声预览。可重新导入浏览器支持的音频文件。";
+      })
+      .finally(() => {
+        musicPlayPending = false;
+      });
+
+    return;
+  }
+
+  if (force || Math.abs(audio.currentTime - target) > MUSIC_TOLERANCE) {
+    audio.currentTime = target;
+  }
+}
+
+function refreshUI(t) {
+  const b = t / BEAT;
+
+  if (document.activeElement !== seek) seek.value = b;
+
+  const offset = musicStart === 0
+    ? ""
+    : ` · 音乐起点 ${musicStart > 0 ? "+" : ""}${musicStart.toFixed(2)}s`;
+
+  readout.textContent =
+    `${t.toFixed(2)}s / ${DURATION.toFixed(2)}s · ${b.toFixed(1)}拍${offset}`;
+}
+
+function play() {
+  if (playing) return;
+  if (position >= DURATION - 0.01) position = 0;
+
+  // 先锚定时钟再启动音乐，起播瞬间不会因为解码延迟而错位。
+  startedAt = performance.now();
+  playing = true;
+  playButton.textContent = "暂停";
+
+  syncMusic(position, true);
+}
+
+function pause() {
+  position = currentTime();
+  playing = false;
+  audio.pause();
+  playButton.textContent = "播放";
+}
+
+function jump(seconds) {
+  const wasPlaying = playing;
+  pause();
+
+  position = clamp(seconds, 0, DURATION);
+
+  const target = musicTimeFor(position);
+  if (audioURL && target >= 0) audio.currentTime = target;
+
+  render(position);
+  refreshUI(position);
+
+  if (wasPlaying && position < DURATION) play();
+}
+
+function refreshBpm(value) {
+  const next = Number(value);
+
+  if (!Number.isFinite(next) || next < 40 || next > 220) return;
+
+  const beatPosition = position / BEAT;
+
+  BPM = next;
+  BEAT = 60 / BPM;
+  DURATION = TOTAL_BEATS * BEAT;
+
+  position = clamp(beatPosition * BEAT, 0, DURATION);
+
+  seek.max = String(TOTAL_BEATS);
+
+  render(position);
+  refreshUI(position);
+  syncMusic(position, true);
+}
+
+playButton.addEventListener("click", () => {
+  playing ? pause() : play();
+});
+
+restartButton.addEventListener("click", () => {
+  pause();
+  position = 0;
+  if (audioURL) audio.currentTime = Math.max(0, musicStart);
+  play();
+});
+
+seek.max = String(TOTAL_BEATS);
+
+seek.addEventListener("input", () => {
+  jump(Number(seek.value) * BEAT);
+});
+
+bpmInput.addEventListener("input", () => {
+  refreshBpm(bpmInput.value);
+});
+
+offsetInput.addEventListener("input", () => {
+  const next = Number(offsetInput.value);
+
+  if (!Number.isFinite(next)) return;
+
+  musicStart = next;
+
+  if (playing) {
+    syncMusic(currentTime(), true);
+  }
+
+  refreshUI(currentTime());
+});
+
+pickMusicButton.addEventListener("click", () => musicInput.click());
+pickKnifeButton.addEventListener("click", () => knifeImageInput.click());
+pickLuckButton.addEventListener("click", () => luckImageInput.click());
+
+musicInput.addEventListener("change", () => {
+  const armed = pendingRecord;
+  const file = musicInput.files[0];
+
+  if (!file) {
+    pendingRecord = false;
+    return;
+  }
+
+  pause();
+
+  if (audioURL) URL.revokeObjectURL(audioURL);
+
+  audioURL = URL.createObjectURL(file);
+  audio.src = audioURL;
+  audio.load();
+
+  position = 0;
+
+  // 换了配乐，重新给 MP4 一次机会
+  downgradedToWebm = false;
+
+  pickMusicButton.textContent = "换配乐";
+
+  hint.textContent =
+    `已载入：${file.name}。默认音乐第 0 秒对齐第 0 拍；` +
+    "若重拍没踩上，用下面的「音乐起点(秒)」微调，直到画面与鼓点重合。";
+
+  // 是点「录制视频」进来的：选完文件直接接着录。
+  if (armed) startRecording();
+});
+
+function loadFrameImage(input, frame) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+
+  reader.addEventListener("load", () => {
+    const image = new Image();
+
+    image.addEventListener("load", () => {
+      frame.image = image;
+      render(currentTime());
+    });
+
+    image.src = String(reader.result);
+  });
+
+  reader.readAsDataURL(file);
+}
+
+knifeImageInput.addEventListener("change", () =>
+  loadFrameImage(knifeImageInput, frames.knife)
+);
+
+luckImageInput.addEventListener("change", () =>
+  loadFrameImage(luckImageInput, frames.luck)
+);
+
+document.addEventListener("keydown", e => {
+  // 录制期间不接受任何快捷键，免得打断录制。
+  if (recording) return;
+
+  const target = e.target;
+
+  const editing =
+    (target instanceof HTMLInputElement && target.type !== "range") ||
+    target instanceof HTMLTextAreaElement ||
+    (target instanceof HTMLElement && target.isContentEditable);
+
+  if (editing) return;
+
+  // 焦点停在按钮或进度条上时交回给快捷键，避免空格误触上一个按钮。
+  if (
+    target instanceof HTMLButtonElement ||
+    target instanceof HTMLInputElement
+  ) {
+    target.blur();
+  }
+
+  if (e.code === "Space") {
+    e.preventDefault();
+    playing ? pause() : play();
+    return;
+  }
+
+  if (e.code === "KeyR") {
+    pause();
+    position = 0;
+    if (audioURL) audio.currentTime = 0;
+    play();
+    return;
+  }
+
+  if (e.code === "ArrowLeft" || e.code === "ArrowRight") {
+    e.preventDefault();
+
+    const t = currentTime();
+    pause();
+
+    jump(t + (e.code === "ArrowRight" ? BEAT : -BEAT));
+  }
+});
+
+function tick() {
+  const t = currentTime();
+
+  render(t);
+  refreshUI(t);
+
+  // 音乐只做从动：差得多了才拉回来，平时不动它。
+  if (playing) syncMusic(t);
+
+  if (recording) {
+    hint.textContent =
+      `录制中… ${t.toFixed(1)} / ${DURATION.toFixed(1)} 秒` +
+      "（完成后自动停止并下载）";
+  }
+
+  if (playing && t >= DURATION) {
+    pause();
+    position = DURATION;
+    endRecordingSoon();
+  }
+
+  requestAnimationFrame(tick);
+}
+
+// 切到后台时冻结进度，切回来不会突然跳掉一段。
+document.addEventListener("visibilitychange", () => {
+  if (!playing) return;
+
+  if (document.hidden) {
+    // 录制中切走：requestAnimationFrame 会停，画面会冻住，干脆放弃这次录制。
+    if (recording) {
+      pause();
+      discardRecording = true;
+      stopRecording();
+      return;
+    }
+
+    position = currentTime();
+    audio.pause();
+  } else {
+    startedAt = performance.now();
+    syncMusic(position, true);
+  }
+});
+
+/* ======================================================
+   内置录制
+   - 点「录制视频」：没配乐先弹选文件，选完自动开始
+   - 自动从第 0 拍播放，画布 + 音轨一起录
+   - 播完定格 1 秒后自动停止并下载
+   ====================================================== */
+
+const RECORD_FPS = 60;
+const RECORD_VIDEO_BITRATE = 12000000;
+const RECORD_AUDIO_BITRATE = 192000;
+const END_HOLD_MS = 1000;
+
+// MP4 优先（H.264 + AAC，剪辑软件通吃），不支持再退 WebM（VP9 / VP8）
+const MP4_TYPES = [
+  "video/mp4;codecs=avc1.640028,mp4a.40.2",
+  "video/mp4;codecs=avc1.4D401F,mp4a.40.2",
+  "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+  "video/mp4;codecs=avc1,mp4a.40.2",
+  "video/mp4"
+];
+
+const WEBM_TYPES = [
+  "video/webm;codecs=vp9,opus",
+  "video/webm;codecs=vp8,opus",
+  "video/webm;codecs=vp9",
+  "video/webm"
+];
+
+let recording = false;
+let recorder = null;
+let recordChunks = [];
+let recordStream = null;
+let recordHoldTimer = 0;
+let discardRecording = false;
+let finishing = false;
+
+// 格式选择：auto（MP4 优先）/ mp4-silent（MP4 无声）/ webm
+let formatChoice = "auto";
+
+// AAC 编码器不吃这条音轨时，自动降级 WebM 重录一次
+let downgradedToWebm = false;
+let restartAfterFinish = false;
+let recordFailure = "";
+
+// 点过「录制视频」但还没选到配乐
+let pendingRecord = false;
+let recordArmedAt = 0;
+
+function firstSupported(list) {
+  for (const type of list) {
+    if (MediaRecorder.isTypeSupported(type)) return type;
+  }
+
+  return "";
+}
+
+function pickMimeType() {
+  if (formatChoice === "webm" || downgradedToWebm) {
+    return firstSupported(WEBM_TYPES);
+  }
+
+  const mp4 = firstSupported(MP4_TYPES);
+
+  if (formatChoice === "mp4-silent") return mp4 || firstSupported(WEBM_TYPES);
+
+  return mp4 || firstSupported(WEBM_TYPES);
+}
+
+function wantsAudio() {
+  return formatChoice !== "mp4-silent";
+}
+
+function extensionFor(mimeType) {
+  return typeof mimeType === "string" && mimeType.includes("mp4")
+    ? "mp4"
+    : "webm";
+}
+
+// 让按钮直接写清楚会录成什么格式
+let recordFormatLabel = "录制视频";
+
+function initRecordFormatLabel() {
+  const type = pickMimeType();
+
+  if (formatChoice === "mp4-silent") {
+    recordFormatLabel = "录制视频 · MP4 无声";
+  } else if (type.includes("mp4")) {
+    recordFormatLabel = "录制视频 · MP4";
+  } else {
+    recordFormatLabel = "录制视频 · WebM";
+  }
+
+  recordButton.textContent = recordFormatLabel;
+  recordButton.title = type
+    ? "导出格式：" + type +
+      (wantsAudio() ? "" : "（不含音轨）")
+    : "当前浏览器不支持录制";
+}
+
+function nextFrame() {
+  return new Promise(resolve => requestAnimationFrame(() => resolve()));
+}
+
+// 等音频解码到能播，避免录出来开头是静音。
+function waitForAudioReady(timeout = 4000) {
+  if (!audioURL || audio.readyState >= 2) return Promise.resolve();
+
+  return new Promise(resolve => {
+    let done = false;
+
+    const finish = () => {
+      if (done) return;
+      done = true;
+
+      ["loadeddata", "canplay", "error"].forEach(name =>
+        audio.removeEventListener(name, finish)
+      );
+
+      resolve();
+    };
+
+    ["loadeddata", "canplay", "error"].forEach(name =>
+      audio.addEventListener(name, finish)
+    );
+
+    setTimeout(finish, timeout);
+  });
+}
+
+function setRecordingUI(on) {
+  recordButton.textContent = on ? "● 录制中…" : recordFormatLabel;
+  recordButton.disabled = on;
+
+  [playButton, restartButton, pickMusicButton, pickKnifeButton, pickLuckButton]
+    .forEach(button => { button.disabled = on; });
+
+  seek.disabled = on;
+  bpmInput.disabled = on;
+  offsetInput.disabled = on;
+  formatSelect.disabled = on;
+}
+
+async function startRecording() {
+  if (recording) return;
+
+  // 清掉上一轮可能残留的定时器（例如编码器报错时的兜底停止）
+  clearTimeout(recordHoldTimer);
+
+  if (
+    typeof MediaRecorder === "undefined" ||
+    typeof canvas.captureStream !== "function"
+  ) {
+    hint.textContent =
+      "当前浏览器不支持内置录制，请改用 Chrome / Edge 打开。";
+    return;
+  }
+
+  // 没配乐：先自动按一次「导入配乐」，选完文件再回来继续。
+  if (!audioURL) {
+    pendingRecord = true;
+    recordArmedAt = performance.now();
+
+    hint.textContent = "还没导入配乐：先选一个音频文件，选好后会自动开始录制。";
+    musicInput.click();
+    return;
+  }
+
+  pendingRecord = false;
+
+  pause();
+  position = 0;
+
+  if (audioURL) audio.currentTime = Math.max(0, musicStart);
+
+  await waitForAudioReady();
+
+  // 录制固定 1920 × 1080 出片，和屏幕缩放无关。
+  recording = true;
+  VIEW_SCALE = 1;
+  canvas.width = W;
+  canvas.height = H;
+  buildFrames();
+  render(0);
+  refreshUI(0);
+
+  recordChunks = [];
+  recordStream = canvas.captureStream(RECORD_FPS);
+
+  const withAudio = await attachAudioTracks(recordStream);
+
+  const mimeType = pickMimeType();
+  const options = { videoBitsPerSecond: RECORD_VIDEO_BITRATE };
+
+  if (mimeType) options.mimeType = mimeType;
+  if (withAudio) options.audioBitsPerSecond = RECORD_AUDIO_BITRATE;
+
+  try {
+    recorder = new MediaRecorder(recordStream, options);
+  } catch (error) {
+    recording = false;
+    resizeCanvas();
+    hint.textContent = "录制启动失败：" + error.message;
+    return;
+  }
+
+  recorder.addEventListener("dataavailable", event => {
+    if (event.data && event.data.size) recordChunks.push(event.data);
+  });
+
+  recorder.addEventListener("error", onRecorderError);
+  recorder.addEventListener("stop", finishRecording);
+
+  try {
+    recorder.start(1000);
+  } catch (error) {
+    recording = false;
+    resizeCanvas();
+    hint.textContent = "录制启动失败：" + error.message;
+    return;
+  }
+
+  setRecordingUI(true);
+
+  // 等两帧，让第一帧画面先画好，再开播。
+  await nextFrame();
+  await nextFrame();
+
+  play();
+
+  hint.textContent =
+    `录制中… 0.0 / ${DURATION.toFixed(1)} 秒` +
+    `（${extensionFor(mimeType).toUpperCase()}${withAudio ? " + 声音" : " 无声"}，` +
+    `完成后自动下载）`;
+}
+
+/*
+  音轨要等到 captureStream 真的给出 track 才算数，
+  否则会静默地录出一个没声音的文件。
+*/
+async function attachAudioTracks(stream) {
+  if (!wantsAudio() || !audioURL) return false;
+
+  if (typeof audio.captureStream !== "function") {
+    hint.textContent = "这个浏览器不支持捕获音轨，将录制无声视频。";
+    return false;
+  }
+
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      const tracks = audio.captureStream().getAudioTracks();
+
+      if (tracks.length) {
+        tracks.forEach(track => stream.addTrack(track));
+        return true;
+      }
+    } catch (error) {
+      console.warn("音轨捕获失败，将录制无声视频：", error);
+      return false;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 120));
+  }
+
+  hint.textContent = "没能拿到音轨，这次会录成无声视频。";
+  return false;
+}
+
+/*
+  编码器报错时（例如 AAC 不吃非 44.1/48kHz 的音源）：
+  MP4 自动降级重录一次 WebM，绝不导出 0 字节的坏文件。
+*/
+function onRecorderError(event) {
+  const error = event && event.error;
+  const name = (error && error.name) || "UnknownError";
+
+  console.warn("录制器报错：", error || name);
+
+  if (!recording) return;
+
+  const usingWebm =
+    String(recorder && recorder.mimeType).indexOf("webm") >= 0;
+
+  if (!downgradedToWebm && !usingWebm && formatChoice !== "webm") {
+    downgradedToWebm = true;
+    restartAfterFinish = true;
+    recordFailure = "";
+
+    hint.textContent =
+      "MP4（AAC）编码器不支持当前音频参数，正在自动改用 WebM 重录…";
+
+    clearTimeout(recordHoldTimer);
+    recordHoldTimer = setTimeout(() => {
+      if (recording) finishRecording();
+    }, 1500);
+
+    return;
+  }
+
+  recordFailure = name;
+}
+
+// 播放走到结尾时调用：定格一会儿再停，别把最后一帧切掉。
+function endRecordingSoon() {
+  if (!recording) return;
+
+  clearTimeout(recordHoldTimer);
+  recordHoldTimer = setTimeout(stopRecording, END_HOLD_MS);
+}
+
+function stopRecording() {
+  clearTimeout(recordHoldTimer);
+
+  try {
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+      return;
+    }
+  } catch (error) {
+    console.warn("停止录制失败：", error);
+  }
+
+  finishRecording();
+}
+
+function finishRecording() {
+  if (finishing) return;
+  if (!recordChunks.length && !recording) return;
+
+  finishing = true;
+
+  const discarded = discardRecording;
+  const restart = restartAfterFinish;
+  const failure = recordFailure;
+  const mimeType = (recorder && recorder.mimeType) || "video/webm";
+
+  const blob = new Blob(recordChunks, { type: mimeType });
+  const megabytes = (blob.size / 1048576).toFixed(1);
+  const extension = extensionFor(mimeType);
+
+  recordChunks = [];
+  discardRecording = false;
+  restartAfterFinish = false;
+  recordFailure = "";
+
+  if (recordStream) {
+    const audioTracks = recordStream.getAudioTracks();
+    recordStream.getTracks().forEach(track => {
+      // 捕获自 <audio> 的音轨不属于本次录制，别把它关掉。
+      if (audioTracks.indexOf(track) < 0) track.stop();
+    });
+    recordStream = null;
+  }
+
+  recorder = null;
+  recording = false;
+
+  setRecordingUI(false);
+  resizeCanvas();
+  render(position);
+  refreshUI(position);
+
+  finishing = false;
+
+  if (restart) {
+    hint.textContent = "已切换到 WebM，重新开始录制…";
+    setTimeout(startRecording, 120);
+    return;
+  }
+
+  if (discarded) {
+    hint.textContent =
+      "录制已取消：录制过程中页面被切到后台，画面会冻结，所以没有导出。";
+    return;
+  }
+
+  if (failure || blob.size === 0) {
+    hint.textContent =
+      "录制失败" + (failure ? "（" + failure + "）" : "") +
+      "：编码器没有给出数据。可以试试把「格式」换成 WebM 或 MP4 无声再录一次。";
+    return;
+  }
+
+  downloadBlob(blob, extension);
+
+  hint.textContent =
+    `录制完成：${extension.toUpperCase()} · ${megabytes} MB · ` +
+    `${(DURATION + END_HOLD_MS / 1000).toFixed(1)} 秒，已开始下载。`;
+}
+
+function downloadBlob(blob, extension) {
+  const url = URL.createObjectURL(blob);
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[:.]/g, "-")
+    .slice(0, 19);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `JAFA-第二次大更新-${stamp}.${extension}`;
+
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+recordButton.addEventListener("click", () => {
+  startRecording();
+});
+
+formatSelect.addEventListener("change", () => {
+  formatChoice = formatSelect.value;
+
+  // 换了格式就重新允许先试 MP4
+  downgradedToWebm = false;
+
+  initRecordFormatLabel();
+});
+
+// 文件选择框被取消时 change 不会触发，这里兜底把待录制标记清掉。
+window.addEventListener("focus", () => {
+  if (!pendingRecord) return;
+
+  setTimeout(() => {
+    if (pendingRecord && performance.now() - recordArmedAt > 1500) {
+      pendingRecord = false;
+      hint.textContent = "已取消录制：没有选择配乐文件。";
+    }
+  }, 1600);
+});
+
+/* ---------- 画布分辨率 ---------- */
+
+/*
+  让画布的后端像素数等于它在屏幕上占用的设备像素数。
+  这样文字是「按屏幕像素直接光栅化」，而不是先画 1920 再被浏览器缩小/放大。
+  录制期间锁定 1920 × 1080，不受窗口大小影响。
+*/
+function resizeCanvas() {
+  if (recording) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+
+  const width = Math.max(1, Math.round(rect.width * dpr));
+  const height = Math.max(1, Math.round(rect.height * dpr));
+
+  if (canvas.width === width && canvas.height === height) return;
+
+  canvas.width = width;
+  canvas.height = height;
+
+  const next = width / W;
+
+  // 变化超过 2% 才重建占位画面，避免拖窗口时反复重画。
+  if (Math.abs(next - VIEW_SCALE) > 0.02) {
+    VIEW_SCALE = next;
+    buildFrames();
+  } else {
+    VIEW_SCALE = next;
+  }
+
+  render(currentTime());
+  refreshUI(currentTime());
+}
+
+window.addEventListener("resize", resizeCanvas);
+
+// 显示器 / 缩放比例变化时，devicePixelRatio 变了也要跟着重建。
+if (window.matchMedia) {
+  const watchDpr = () => {
+    const query = matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    query.addEventListener("change", () => {
+      resizeCanvas();
+      watchDpr();
+    }, { once: true });
+  };
+
+  watchDpr();
+}
+
+/* ---------- 启动 ---------- */
+
+buildLines();
+initRecordFormatLabel();
+resizeCanvas();
+render(0);
+refreshUI(0);
+tick();
+
+// 打开即从头播放；此时还没有配乐，不涉及浏览器自动播放限制。
+play();
+
+// 字体加载完成后重新测字，避免首帧字距不准。
+document.fonts.ready.then(() => {
+  buildFrames();
+  buildLines();
+  render(currentTime());
+  refreshUI(currentTime());
+});
+</script>
+
+</body>
+</html>

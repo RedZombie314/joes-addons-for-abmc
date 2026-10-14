@@ -57,26 +57,50 @@ public class OrbOfLuckRenderer extends EntityRenderer<OrbOfLuckEntity> {
             return;
         }
 
-        // 资源重载完成前 shader 可能还是空的，直接跳过。
-        if (!OrbOfLuckRenderType.isReady()) {
-            return;
-        }
-
         // 半径直接取碰撞箱宽度的一半：尺寸永远和判定一致，
         // 而且未来 AI 若通过 Attributes.SCALE 把核心改大改小，画面会自动跟上。
-        float radius = entity.getBbWidth() * 0.5F;
-        if (radius <= 0.01F) {
+        // 碰撞箱底面对齐实体坐标，实体原点是箱底 → 光球中心要抬到箱子中间，所以 y 偏移取 height/2。
+        drawOrb(poseStack, buffer, 0.0F, entity.getBbHeight() * 0.5F, 0.0F,
+            entity.getBbWidth() * 0.5F, entity.level().getGameTime(), partialTicks,
+            this.entityRenderDispatcher.cameraOrientation());
+
+        super.render(entity, entityYaw, partialTicks, poseStack, buffer, packedLight);
+    }
+
+    /**
+     * <b>在指定局部位置画一颗"核心同款光球"</b>（正对摄像机的面片，衰减/呼吸/配色全由 core shader 现算）。
+     *
+     * <p>把这段几何抽成静态方法，是为了让"其它地方也要画一颗核心同款光球"复用同一份代码
+     * 与同一个呼吸相位 —— 免得两处各写一份、以后调 SPAN/半径比例时漏掉一边
+     * （调用点：空壳头顶 {@code ShellHeadOrbLayer}、传送门屋里
+     * {@code LuckyPortalOrbRenderer}）。
+     *
+     * <p>调用方负责把 poseStack 摆到"光球所在的位置"（核心实体是实体坐标 + 半身高，
+     * 传送门那颗给的是方块局部偏移）。
+     *
+     * @param offsetX 光球中心相对当前 poseStack 原点的 X 偏移（格）
+     * @param offsetY 同上，Y 偏移
+     * @param offsetZ 同上，Z 偏移
+     * @param radius  光球半径（格）；核心实体用的是"碰撞箱宽度的一半"
+     * @param cameraOrientation 摄像机朝向，公告板用；实体内传
+     *        {@code entityRenderDispatcher.cameraOrientation()}
+     */
+    public static void drawOrb(PoseStack poseStack, MultiBufferSource buffer,
+                               float offsetX, float offsetY, float offsetZ,
+                               float radius, long gameTime, float partialTick,
+                               org.joml.Quaternionf cameraOrientation) {
+        // 资源重载完成前 shader 可能还是空的，直接跳过。
+        if (!OrbOfLuckRenderType.isReady() || radius <= 0.01F) {
             return;
         }
 
         float half = radius * QUAD_HALF_PER_RADIUS;
-        float breath = OrbOfLuckEntity.breathAt(entity.level().getGameTime(), partialTicks);
+        float breath = OrbOfLuckEntity.breathAt(gameTime, partialTick);
 
         poseStack.pushPose();
-        // 碰撞箱底面对齐实体坐标，实体原点是箱底 → 光球中心要抬到箱子中间。
-        poseStack.translate(0.0F, entity.getBbHeight() * 0.5F, 0.0F);
+        poseStack.translate(offsetX, offsetY, offsetZ);
         // 公告板：转到正对摄像机即可，世界尺寸由 half 决定（不做任何缩放）。
-        poseStack.mulPose(this.entityRenderDispatcher.cameraOrientation());
+        poseStack.mulPose(cameraOrientation);
         Matrix4f pose = poseStack.last().pose();
 
         VertexConsumer consumer = buffer.getBuffer(OrbOfLuckRenderType.ORB_OF_LUCK);
@@ -87,8 +111,6 @@ public class OrbOfLuckRenderer extends EntityRenderer<OrbOfLuckEntity> {
         vertex(consumer, pose, -half, half, breath, 0.0F, 0.0F);
 
         poseStack.popPose();
-
-        super.render(entity, entityYaw, partialTicks, poseStack, buffer, packedLight);
     }
 
     private static void vertex(VertexConsumer consumer, Matrix4f pose, float x, float y, float breath, float u, float v) {

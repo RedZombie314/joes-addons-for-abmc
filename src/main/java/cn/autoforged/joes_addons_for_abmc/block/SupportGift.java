@@ -111,7 +111,7 @@ public final class SupportGift {
     private static void stunOneShellNear(ServerLevel level, ServerPlayer target) {
         List<PlayerShellEntity> shells = level.getEntitiesOfClass(PlayerShellEntity.class,
             target.getBoundingBox().inflate(SHELL_RADIUS),
-            shell -> shell.isAlive() && shell.isOrbAttached());
+            shell -> shell.isAlive() && shell.isCoreBackedShell());
         if (shells.isEmpty()) {
             return;
         }

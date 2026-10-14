@@ -119,7 +119,8 @@ public class OrbOfLuckEntity extends Animal {
      *       跟着它走（身体是会走位/索敌的 AI，见 {@code OrbPossessionKiteGoal}）。
      *       这一阶段核心<b>没有碰撞箱、也不承伤</b>，败北判定看那具空壳的血量
      *       （归零 = 被击败，见 {@link #onVesselDefeated}）。
-     *       玩家切回创造模式、附体倒计时归零、<b>索敌冷却到点</b>（{@link #TARGET_COOLDOWN_TICKS}：
+     *       玩家切回创造模式、附体倒计时归零（这条倒计时<b>只在被附体的玩家离开幸运维度之后才开始走</b>，
+     *       见 {@link #isPossessionCountdownPaused()}）、<b>索敌冷却到点</b>（{@link #TARGET_COOLDOWN_TICKS}：
      *       空壳手上连续 3 分钟没有活的目标，核心回拾取点而不消失）、或空壳被打死，都会结束附体。</li>
      *   <li>{@link #ULTIMATE}：最终阶段。行为待实装。</li>
      * </ul>
@@ -346,11 +347,34 @@ public class OrbOfLuckEntity extends Animal {
 
     // ====================== 附体倒计时 ======================
 
-    /** 附体倒计时基准：20 分钟，按<b>游戏刻</b>计（20 分 × 60 秒 × 20 刻）。 */
+    /**
+     * 附体倒计时基准：20 分钟，按<b>游戏刻</b>计（20 分 × 60 秒 × 20 刻）。
+     * <p>
+     * <b>只在被附体的玩家离开幸运维度之后才开始走</b>（用户指定）：玩家待在幸运维度里时这条倒计时
+     * 暂停、剩余时间原地不动，中途再进幸运维度也只是再次暂停（不清零）。见
+     * {@link #isPossessionCountdownPaused()}。
+     */
     public static final int POSSESSION_BASE_TICKS = 20 * 60 * 20;
 
     /** 每发现一个新的索敌目标，倒计时延长：1 分钟。 */
     public static final int POSSESSION_NEW_TARGET_BONUS_TICKS = 60 * 20;
+
+    /**
+     * <b>每"有效使用"一次核心，附体倒计时直接减掉这么多</b>（用户指定）：<b>2 秒</b>。
+     * <p>与 {@code OrbOfLuckItem#USE_COST_TICKS}（拿在手里时每用一次扣 2 秒）是同一个量级，
+     * 所以"用核心"这件事在附体前后都是 2 秒一次的代价；唯一的例外见
+     * {@link #CORE_USE_COST_IN_LUCKY_DIM_TICKS}。
+     */
+    public static final int CORE_USE_COST_TICKS = 2 * 20;
+
+    /**
+     * <b>在幸运维度里</b>每"有效使用"一次核心扣掉的附体倒计时（用户指定）：<b>0.5 秒</b>。
+     * <p>幸运维度里那条 20 分钟倒计时本来是<b>暂停</b>的（见 {@link #isCountdownPausedByLuckyDimension()}），
+     * 用户补的规则是"暂停不等于白住"：只要核心被真的用了一次，就照样扣一点，只是便宜到 1/4。
+     * 判据与暂停那条完全一致（看<b>被附体的玩家</b>在不在幸运维度里），所以"倒计时暂停中 = 半秒、
+     * 正在流逝 = 两秒"，两句话说的是同一件事。
+     */
+    public static final int CORE_USE_COST_IN_LUCKY_DIM_TICKS = 10;
 
     /**
      * <b>索敌冷却</b>（用户指定）：附体期间连续这么久<b>手上没有活的目标</b>，
@@ -367,10 +391,15 @@ public class OrbOfLuckEntity extends Animal {
      * （归零 = {@code retreat()} + {@code discard()}，核心直接消失），这条是"没活干就回家"的软收场。
      * 两条同时有效，但冷却只有 3 分钟，所以实战里几乎总是冷却先到点。
      * <p>
+     * <b>暂停规则</b>：上面那条 20 分钟倒计时有<b>两种</b>暂停（主人不在存档里 / 玩家在幸运维度里，
+     * 见 {@link #isPossessionCountdownPaused()}），这条索敌冷却只在<b>主人不在存档里</b>时一起暂停
+     * （见 {@link #isCountdownPausedByOwnerAbsent()}）—— "玩家在幸运维度里"那次用户明确只要求改 20 分钟那条。
+     * <p>
      * 计时在附体开始的那一刻起算（{@link #startPossession}）：
      * 附体后 3 分钟一个目标都没锁到，核心就回拾取点。
      * <p>
-     * 刷怪蛋放出来的那具空壳背后没有核心（{@code possessedOrbUuid == null}），
+     * 刷怪蛋放出来的那具空壳背后没有核心（来源 {@code ShellOrigin.SPAWN_EGG}，见
+     * {@code PlayerShellEntity#getShellOrigin()}），
      * 计时器挂在核心身上，所以它<b>天然没有</b>这条行为（用户指定）；
      * 被同化的空壳只要记着母体（{@code OrbAssimilation} 的 TAG_ORB），
      * 它的目标同样会顶住<b>同一颗母体</b>的这份计时（用户指定："倒计时与母体同步"）。
@@ -654,6 +683,88 @@ public class OrbOfLuckEntity extends Animal {
         return Math.max(0L, this.possessionDeadlineGameTime - this.level().getGameTime());
     }
 
+    /**
+     * <b>核心被"有效使用"了一次</b>（附体空壳把抽到的签真的打了出去）→ 附体倒计时直接减掉一段。
+     *
+     * <p>用户指定：幸运维度里一次 −0.5 秒、其他维度一次 −2 秒（见 {@link #coreUseCostTicks()}）。
+     * 于是"在幸运维度里倒计时不动"不是免费长住：核心每被用一次仍要付一点时间，
+     * 一直用下去一样会把这次附体用掉（减到 ≤ 0 时由 {@link #tick()} 的归零判定正常收场）。
+     *
+     * <p>由空壳在"签真的打出去了"那两处调用（见 {@code PlayerShellEntity#reportCoreUse()}）——
+     * 抽到了却没能出手（目标跑了、冷却没好）不算使用。
+     */
+    public void onCoreUsed() {
+        if (this.getOrbState() != OrbState.POSSESSING || this.possessionDeadlineGameTime < 0L) {
+            return;
+        }
+        this.possessionDeadlineGameTime -= this.coreUseCostTicks();
+    }
+
+    /**
+     * 当前这一次"有效使用"要扣多少附体倒计时（刻）。
+     * <p>判据就是那条倒计时<b>此刻是不是因为"玩家在幸运维度里"而暂停</b>：
+     * 暂停中 = {@link #CORE_USE_COST_IN_LUCKY_DIM_TICKS}（0.5 秒），否则
+     * {@link #CORE_USE_COST_TICKS}（2 秒，照常）。
+     */
+    public int coreUseCostTicks() {
+        return this.isCountdownPausedByLuckyDimension()
+            ? CORE_USE_COST_IN_LUCKY_DIM_TICKS : CORE_USE_COST_TICKS;
+    }
+
+    /**
+     * 附体倒计时此刻是否处于<b>暂停</b>状态。两种原因（见下面两个方法）：
+     * <ul>
+     *   <li>{@link #isCountdownPausedByOwnerAbsent()}：主人不在这个存档里
+     *       （多人里他被附体后会被踢出去，于是这几乎是常态）；</li>
+     *   <li>{@link #isCountdownPausedByLuckyDimension()}：被附体的玩家还在幸运维度里。</li>
+     * </ul>
+     * 两者的实现都是"把截止时刻跟着游戏时间 +1 刻"（见 {@link #tick()}）——
+     * 剩余时间原地不动，<b>不清零、不重置</b>。
+     * <p>
+     * 给 {@code /jafa orbinfo} 显示用（见 {@code ModMain#orbPossessionCountdown}）：
+     * 不然"倒计时不动"看起来像卡死了。
+     */
+    public boolean isPossessionCountdownPaused() {
+        return this.isCountdownPausedByOwnerAbsent() || this.isCountdownPausedByLuckyDimension();
+    }
+
+    /**
+     * 暂停原因①：<b>主人（被附体的那位玩家）此刻不在这个存档里</b>（用户指定）。
+     * <p>
+     * 多人里他被附体后会被立刻"因太过贪婪"踢出存档（见 {@code ModMain#scheduleGreedKick}），
+     * 于是这是常态。需求：这种情况下一律暂停 —— 要么他重新进来把这 20 分钟走完，
+     * 要么别的玩家把这具空壳干掉，<b>否则它不会自己消失</b>。
+     * <p>
+     * 这条同时也按住 {@link #TARGET_COOLDOWN_TICKS 索敌冷却}（见 {@link #tick()}：
+     * 那条的收场同样是"核心回家 + 空壳消失"，不按住的话"永远不会消失"就不成立）。
+     * 注意幸运维度那条暂停<b>不</b>带它 —— 那次用户明确只暂停 20 分钟那一条。
+     */
+    public boolean isCountdownPausedByOwnerAbsent() {
+        return this.possessorPlayer() == null;
+    }
+
+    /**
+     * 暂停原因②：<b>被附体的玩家还在幸运维度里</b>（用户指定）。
+     * <p>
+     * 这条 20 分钟基准倒计时<b>只在玩家离开幸运维度之后才开始走</b>：玩家在维度里的每一刻，
+     * 截止时刻跟着游戏时间 +1 刻，剩余时间原地不动；离开那一刻起才真正流逝，
+     * 中途再进去同样暂停（不清零、不重置）。
+     */
+    public boolean isCountdownPausedByLuckyDimension() {
+        ServerPlayer owner = this.possessorPlayer();
+        return owner != null && LuckyDimensionMobs.isLuckyDimension(owner.level());
+    }
+
+    /** 被附体的那位玩家（在线才有）；没有附体对象或玩家离线时返回 null。 */
+    @Nullable
+    private ServerPlayer possessorPlayer() {
+        if (this.possessorUuid == null) {
+            return null;
+        }
+        var server = this.level().getServer();
+        return server == null ? null : server.getPlayerList().getPlayer(this.possessorUuid);
+    }
+
     /** 本次附体已见过的索敌目标数量（调试用）。 */
     public int getPossessionSeenTargetCount() {
         return this.possessionSeenTargets.size();
@@ -773,6 +884,12 @@ public class OrbOfLuckEntity extends Animal {
         this.spawnVessel(player);
 
         player.setGameMode(GameType.SPECTATOR);
+        // 用户指定：被附体 = 被设成旁观，等待 10~20 游戏刻后强制"踢出"该存档
+        // （理由："你因太过贪婪而不配拥有此具身体"）。
+        // 只在这里排一次：每刻维持旁观的那几处（reattachOnLogin、tick 里的兜底）不排，
+        // 否则玩家一重进就会被再踢一次，而按需求他要能进来把倒计时走完
+        // （见 isCountdownPausedByOwnerAbsent）。
+        ModMain.scheduleGreedKick(player);
     }
 
     /**
@@ -785,14 +902,12 @@ public class OrbOfLuckEntity extends Animal {
         PlayerShellEntity vessel = new PlayerShellEntity(ModEntities.PLAYER_SHELL.get(), this.level());
         vessel.setSkinTexture(this.getSkinName());
         vessel.moveTo(owner.getX(), owner.getY(), owner.getZ(), owner.getYRot(), 0.0F);
-        // 附体形态要会动：解除 noAi，加入骷髅式走位（变形药水那套空壳不受影响）
-        vessel.enablePossessionCombat();
-        vessel.setPersistenceRequired();
-        vessel.setOrbAttached(true);       // 渲染头部光球
-        vessel.setPossessedOrb(this.getUUID());
+        // 一具"由幸运核心支撑"的空壳，来源 = <b>附体事件</b>（见 PlayerShellEntity.ShellOrigin）：
+        // 解除 noAi、装上骷髅式走位与抽签攻击、头顶光球、记下属于哪颗核心，
         // 核心支撑的体质：<b>生命上限 = 被附体前这位玩家的最大生命值</b>（用户指定）
-        // + 20 护甲 + 12 韧性 + 保护 16（承伤方就是这具空壳）
-        vessel.applyCoreBackedStats(owner.getMaxHealth());
+        // + 20 护甲 + 12 韧性 + 保护 16（承伤方就是这具空壳）。
+        // 变形药水造出来的临时壳不走这里（它们没有任何来源标记，也不是核心的体外生命）。
+        vessel.configureAsPossessionVessel(this.getUUID(), owner.getMaxHealth());
         this.level().addFreshEntity(vessel);
         this.vesselUuid = vessel.getUUID();
 
@@ -864,6 +979,10 @@ public class OrbOfLuckEntity extends Animal {
      * <p>
      * 复原是"照 NBT 重新 new 一个实体"，<b>UUID 变了</b>，核心记的 {@code vesselUuid} 当场失效；
      * 不重认的话核心会以为身体丢了、再补一具新的，于是出现两具 boss 身体。
+     * <p>
+     * 认领的同时<b>把来源重新钉成"附体事件"</b>（{@code setPossessedOrb} 会一并做掉）：
+     * 复原出来的壳 NBT 里本来就带着 {@code ShellOrigin}，这里再写一次只是双保险 ——
+     * 万一走的是"旧存档里那具没有来源字段的壳"，也不至于被推断成别的来源。
      */
     public void onVesselReverted(PlayerShellEntity shell) {
         this.vesselMorphProductUuid = null;
@@ -1083,7 +1202,24 @@ public class OrbOfLuckEntity extends Animal {
         OrbAssimilation.tick(this);
         ServerPlayer owner = this.level().getServer().getPlayerList().getPlayer(this.possessorUuid);
         if (owner == null) {
-            // 玩家离线：附体状态原样留着等他回来（核心自己不会被刷掉，见 startPossession）
+            // 玩家离线（含"多人里他被附体后已被踢出存档"）：附体状态原样留着等他回来
+            // （核心自己不会被刷掉，见 startPossession），其余附体逻辑（旁观维持、身体补建、
+            // 20 分钟倒计时与索敌冷却的判定）都等他回来再管。
+            //
+            // <b>但两条"自动收场"的计时必须在这里就按住</b>（用户指定）：倒计时用的是
+            // <b>绝对游戏刻</b>（deadline = 附体那一刻的 gameTime + N），主人不在的这段时间游戏刻照走 ——
+            // 只把判定跳过（以前的写法）是<b>假暂停</b>：等他回来时 deadline 早已过期，
+            // 空壳会在第一刻当场消失。把截止时刻跟着游戏时间往前推 1 刻才是真暂停：
+            // 剩余时间原地不动，于是"要么他进来把倒计时走完，要么别的玩家干掉这具空壳，
+            // 否则它永远不会消失"才成立。
+            if (this.getOrbState() == OrbState.POSSESSING) {
+                if (this.possessionDeadlineGameTime >= 0L) {
+                    this.possessionDeadlineGameTime++;
+                }
+                if (this.targetCooldownDeadlineGameTime >= 0L) {
+                    this.targetCooldownDeadlineGameTime++;
+                }
+            }
             return;
         }
         // 玩家用命令切回创造模式 → 此次附体结束：Retreat，然后核心消失
@@ -1102,6 +1238,17 @@ public class OrbOfLuckEntity extends Animal {
             this.retreat();
             this.returnToPickup();
             return;
+        }
+        // <b>附体倒计时只在"玩家离开幸运维度之后"才走</b>（用户指定）：玩家还在幸运维度里时，
+        // 把截止时刻跟着游戏时间一起往前推 1 刻 —— 剩余时间原地不动，等于暂停。
+        // 于是"在幸运维度里拿到核心"不会一进去就开始烧这 20 分钟，离开那一刻才真正开始流逝；
+        // 中途再进幸运维度也只是再次暂停，<b>不清零、不重置</b>（玩家可以来回进出）。
+        // 必须排在下面那条"倒计时归零"的判断<b>之前</b>：否则玩家刚进维度的那一瞬仍可能被判到点。
+        // 判据是被附体的那位玩家自己的维度（他是旁观者，可以自己飞出去/穿传送门），
+        // 而不是核心或空壳所在的维度。
+        if (this.getOrbState() == OrbState.POSSESSING && this.possessionDeadlineGameTime >= 0L
+            && this.isCountdownPausedByLuckyDimension()) {
+            this.possessionDeadlineGameTime++;
         }
         // 附体倒计时归零（20 分钟 + 每个新目标 1 分钟）→ 同样 Retreat、核心消失。
         // 计的是游戏刻，所以 /tick freeze 期间不会流逝（和变形倒计时一个判据）。
@@ -1350,7 +1497,8 @@ public class OrbOfLuckEntity extends Animal {
      * 自回血的计时周期（刻）：10 刻（半秒）。
      * <p>
      * <b>只给核心本体用</b>：那几具"由幸运核心支撑"的空壳原本也照这套数值回血，
-     * 现在已改成靠附魔金苹果（见 {@code PlayerShellEntity} 的苹果逻辑）。
+     * 现在已改成靠附魔金苹果（见 {@code PlayerShellEntity} 的苹果逻辑）——
+     * 而且那口苹果只有附体事件那一具吃得到（{@code PlayerShellEntity#hasPossessionExclusiveAbilities()}）。
      */
     public static final int REGEN_INTERVAL_TICKS = 10;
 

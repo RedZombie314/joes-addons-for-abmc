@@ -20,6 +20,7 @@ import cn.autoforged.joes_addons_for_abmc.damage.ModDamageTypes;
  * - ExplosionRadius 在 2~6 随机取值，Powered 在 true/false 随机取值；
  * - 接触任意方块或投掷者左键引爆（fuse 设为 1）后立即爆炸；
  * - 免疫任何伤害（无法被玩家/环境杀死）；
+ * - <b>生命值被置零后不再引爆</b>（撞生物 / 撞方块 / 引信三条路全作废，见 {@link #tick()}）；
  * - 与 TNT 相反，其爆炸会对玩家（包括投掷者本人）造成伤害；
  * - 持久化 owner、fuse、爆炸半径，重载后行为保持一致。
  * <p>
@@ -161,6 +162,23 @@ public class TntStaffCreeper extends Creeper {
         super.tick();
 
         if (this.level().isClientSide) return;
+
+        // 生命值归零 = 已经死了：<b>一切引爆路径作废</b> —— 撞生物、撞方块、引信三条路全都不走。
+        // <p>
+        // 为什么这里必须单独拦：本类的引爆<b>不完全走 {@link FlyingBombControl}</b>。
+        // 上面 {@code super.tick()} 之后，下面还有一段自己的逻辑：
+        //   · 飞行模式 → 问 {@code bomb.shouldDetonate()}（那里已有一道同样的闸）；
+        //   · 抛掷模式 → 直接看 {@code onGround()/touchingSolidBlock()}，<b>完全不经过</b> FlyingBombControl；
+        //   · 最后 {@code fuse <= 1 → explodeNow()} 是条独立的出口。
+        // 所以只改 FlyingBombControl 会漏掉这只苦力怕 —— 实测正是如此。
+        // <p>
+        // 它平时免疫任何伤害（{@link #hurt} 直接返回 false，正常玩法打不死），但生命值仍可能被置零：
+        // 本模组的 /kill 调试指令就有 setHealth0 模式（ModMain 里 {@code entity.setHealth(0.0F)}），
+        // 别家模组、指令或将来新增的路径同理。原版生物死后还要播十几刻死亡动画、
+        // 期间 {@code tick()} 照常被调用，不拦的话它会在死亡动画里贴着方块/生物再炸一下。
+        if (this.isDeadOrDying()) {
+            return;
+        }
 
         // 每次 tick 后把私有 swell 压回安全区间并在下方做脉冲闪烁，
         // 使其一直保持“点燃”外观却不触发原版 30 刻自然爆炸。

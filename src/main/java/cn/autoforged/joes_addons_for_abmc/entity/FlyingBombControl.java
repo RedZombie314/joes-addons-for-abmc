@@ -16,7 +16,8 @@ import java.util.UUID;
 
 /**
  * "飞行炸弹"共用的飞行控制：<b>直线飞行、匀加速、撞到方块或生物即引爆、飞满
- * {@link #FLY_MAX_LIFETIME_TICKS} 游戏刻必爆</b>。
+ * {@link #FLY_MAX_LIFETIME_TICKS} 游戏刻必爆</b>；
+ * 但只要它的<b>生命值归零</b>（被打死），上述引爆条件就全部作废 —— 见 {@link #shouldDetonate}。
  *
  * <p>被附体空壳的几种"召唤物/弹药"共用它：苦力怕弹（{@link TntStaffCreeper}）、
  * 爆裂猫（{@link OrbExplosiveCat}）、爆裂僵尸（{@link OrbExplosiveZombie}）。
@@ -135,9 +136,22 @@ public final class FlyingBombControl {
      * <p>
      * 方块的判定复用 TNT 权杖那套（{@code onGround()} + {@code touchingSolidBlock}），
      * 生物的判定要求已解除保险（见 {@link #FLY_ARM_TICKS}）。
+     * <p>
+     * <b>生命值归零（被打死）之后一律不再引爆</b>，见下面那段注释。
      */
     public boolean shouldDetonate(Entity host) {
         if (!this.flying) {
+            return false;
+        }
+        // 生命值归零 = 已经死了：后面三种引爆条件全部作废。
+        // 为什么非拦不可：原版生物死后<b>不会立刻消失</b>，还要播十几刻死亡动画，
+        // 而 Entity#tick 在这段时间照常调用 —— 于是这个死掉的弹体仍然每刻跑一次
+        // tickSpeed（继续按原方向平移）和下面的判定。偏偏它此刻的位置最糟糕：
+        //   · 它是"追着目标飞"的，倒下时多半正贴在目标身上 → touchingLivingEntity 成立；
+        //   · 或者正好砸在方块上 → onGround / touchingSolidBlock 成立。
+        // 结果就是"你把它打死了，它照样在你脸上炸一下"，等于白打。
+        // 拦在这里而不是各召唤物里：四种爆裂生物 + 苦力怕弹的引爆全从这一处过。
+        if (host instanceof LivingEntity living && living.isDeadOrDying()) {
             return false;
         }
         if (this.ticks >= FLY_MAX_LIFETIME_TICKS) {

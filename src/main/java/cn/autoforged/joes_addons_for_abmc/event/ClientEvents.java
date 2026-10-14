@@ -3,7 +3,6 @@ package cn.autoforged.joes_addons_for_abmc.event;
 import cn.autoforged.joes_addons_for_abmc.ModMain;
 import cn.autoforged.joes_addons_for_abmc.block.entity.ModBlockEntities;
 import cn.autoforged.joes_addons_for_abmc.block.renderer.LuckyDimensionBlockRenderer;
-import cn.autoforged.joes_addons_for_abmc.block.renderer.LuckyPortalBlockRenderer;
 import cn.autoforged.joes_addons_for_abmc.entity.BedrockFallingBlockRenderer;
 import cn.autoforged.joes_addons_for_abmc.entity.DripstoneFallingBlockRenderer;
 import cn.autoforged.joes_addons_for_abmc.entity.HerobrineHeadRenderer;
@@ -779,6 +778,18 @@ public class ClientEvents {
 
     @SubscribeEvent
     public static void registerEntityRenderers(EntityRenderersEvent.RegisterRenderers event) {
+        // 幸运维度传送门：<b>cutout 层</b>（用户实测：不做这一步，贴图里本该透明的地方会被画成黑色）。
+        // 原因是 6.8.11 起传送门由方块模型渲染（以前是方块实体渲染器用 entityTranslucent 画的，认 alpha），
+        // 而方块模型默认走 solid 层 —— 那一层<b>忽略 alpha</b>，透明像素就按它的 RGB 画成了黑块。
+        // 选 cutout 而不是 translucent：这张贴图只有 alpha 0 / 255 两种像素（无半透明），
+        // cutout 正好"全透明像素直接丢弃、边缘干脆"，而且保留背面剔除（translucent 不剔除，会让共面的正反面互相 z-fighting）。
+        net.minecraft.client.renderer.ItemBlockRenderTypes.setRenderLayer(
+            cn.autoforged.joes_addons_for_abmc.block.ModBlocks.LUCKY_PORTAL.get(),
+            RenderType.cutout());
+        // 幸运维度传送门"屋里"那颗核心同款光球：方块实体渲染器，位置用<b>模型内部坐标</b>
+        // （json 的 (8,10,8) ÷ 16），所以与传送门建在哪个维度/坐标无关（用户指定）。
+        event.registerBlockEntityRenderer(ModBlockEntities.LUCKY_PORTAL_BLOCK_ENTITY.get(),
+            cn.autoforged.joes_addons_for_abmc.block.renderer.LuckyPortalOrbRenderer::new);
         // 音符传送门：与下界传送门一样用半透明渲染层
         net.minecraft.client.renderer.ItemBlockRenderTypes.setRenderLayer(
             cn.autoforged.joes_addons_for_abmc.block.ModBlocks.NOTE_PORTAL.get(),
@@ -882,7 +893,6 @@ public class ClientEvents {
         event.registerEntityRenderer(ModEntities.REFLECTING_SHIELD.get(),
             cn.autoforged.joes_addons_for_abmc.client.ReflectingShieldDisplayRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.LUCKY_DIMENSION_BLOCK_ENTITY.get(), LuckyDimensionBlockRenderer::new);
-        event.registerBlockEntityRenderer(ModBlockEntities.LUCKY_PORTAL_BLOCK_ENTITY.get(), LuckyPortalBlockRenderer::new);
     }
 
     /** 给所有 LivingEntityRenderer 附加“移植头/移植脚”层，使 spawner 权杖召唤的生物正确渲染外来头/外来脚。 */
@@ -1788,6 +1798,53 @@ public class ClientEvents {
         PacketDistributor.sendToServer(new cn.autoforged.joes_addons_for_abmc.network.DarkCloneRecordPayload());
     }
 
+    /**
+     * 幸运维度的掉落物（{@code LuckyItemEntity}）：<b>左键攻击它会被服务端当场踢出存档</b>，
+     * 所以这里把这一下左键整个取消掉。
+     *
+     * <h2>为什么会被踢</h2>
+     * 掉落物必须能被准星选中才谈得上"右键拿走"，所以那具实体把 {@code isPickable()} 覆写成了 true
+     * （{@code Entity#isPickable()} 的默认值就是 false，Entity.java:1667）。
+     * 但客户端挑准星目标用的<b>就是</b> {@code isPickable()}（GameRenderer.java:829），
+     * 于是左键也会被算成"命中了实体"——{@code Minecraft#startAttack} 里 {@code case ENTITY}
+     * 直接 {@code gameMode.attack(...)} 把攻击包发出去（Minecraft.java:1682-1685），
+     * 而 {@code MultiPlayerGameMode#attack} 是<b>无条件</b>发包的
+     * （{@code connection.send(createAttackPacket(...))}，MultiPlayerGameMode.java:424-429；
+     * 连旁观模式都照发，那行 {@code GameType.SPECTATOR} 判断只管本地预测），
+     * <b>全程不看 {@code isAttackable()}</b>（原版 {@code ItemEntity#isAttackable()} 明明返回 false，
+     * 它靠的是"掉落物永远选不中"来兜底，而我们把这个前提打破了）。
+     * 服务端收到针对 {@code ItemEntity} 的攻击包时，原版
+     * {@code ServerGamePacketListenerImpl#handleInteract} 的 {@code onAttack()} 会直接
+     * {@code disconnect("multiplayer.disconnect.invalid_entity_attacked")} 并打印
+     * "tried to attack an invalid entity"（ServerGamePacketListenerImpl.java:1631-1649）。
+     * 这就是"打一下掉落物就被踢出存档"——而且旁观者（附体期间的玩家）同样中招：
+     * 那个 {@code handleInteract} 里没有旁观判定。
+     *
+     * <h2>为什么必须拦在客户端</h2>
+     * 服务端<b>没有</b>可插手的事件：断线发生在 {@code Player#attack} 之前（连
+     * {@code AttackEntityEvent} 都还没轮到），所以只能不让这个包发出去。
+     * 而 {@code startAttack()} 在派发之前恰好会发一次本事件
+     * （{@code ClientHooks.onClickInput(0, keyAttack, MAIN_HAND)}，Minecraft.java:1680-1681），
+     * 取消它就等于 {@code gameMode.attack} 那一行不执行、包根本不发。
+     *
+     * <h2>只拦这一种情况</h2>
+     * 判据用 {@code mc.hitResult}：那正是 {@code startAttack()} 自己马上就要拿去攻击的那个目标，
+     * 所以"我们拦的"和"原版要打的"永远是同一个实体，不存在判错/漏判。
+     * 右键（{@code isUseItem()}）不动，"右键拿走"照常；也不去改 {@code isAttackable()}——
+     * 它挡不住客户端发包（见上），而 {@code Mob} 的索敌等逻辑也读它，动它风险更大。
+     * 连挥臂也一起取消：这一下本来就没有任何效果，挥了反而像"打中了但没反应"。
+     */
+    @SubscribeEvent
+    public static void onLuckyItemAttackKey(
+            net.neoforged.neoforge.client.event.InputEvent.InteractionKeyMappingTriggered event) {
+        if (!event.isAttack()) return;
+        Minecraft mc = Minecraft.getInstance();
+        if (!(mc.hitResult instanceof net.minecraft.world.phys.EntityHitResult hit)) return;
+        if (!(hit.getEntity() instanceof cn.autoforged.joes_addons_for_abmc.entity.LuckyItemEntity)) return;
+        event.setCanceled(true);
+        event.setSwingHand(false);
+    }
+
     @SubscribeEvent
     public static void registerClientPayloads(RegisterPayloadHandlersEvent event) {
         PayloadRegistrar registrar = event.registrar(ModMain.MODID);
@@ -2453,6 +2510,8 @@ public class ClientEvents {
             cn.autoforged.joes_addons_for_abmc.client.OmegaShaderRenderer.tickClient();
             // 红石块权杖：激光音效（laser_start → 循环 laser_middle → laser_end）状态机
             RedstoneLaserSounds.tick(isHoldingRedstoneStaff(), mc.options.keyUse.isDown());
+            // 命令方块权杖：飞行音效（客户端本地音效 + 开关在 client 配置的 [sound] 里）
+            cn.autoforged.joes_addons_for_abmc.client.CommandStaffFlySound.tick();
             // 女仆红石块权杖：清理已消失女仆的激光循环音效
             MaidRedstoneLaserSounds.tick();
             // 霜冰：客户端实体是独立副本，会自行随头部转向重算身体朝向（服务端已冻结但传不回渲染端）。
@@ -2687,8 +2746,7 @@ public class ClientEvents {
         ps.popPose();
     }
 
-    private static boolean isHoldingEndPortalStaffClient(net.minecraft.world.entity.player.Player player) {
-        net.minecraft.world.item.ItemStack[] hands = {
+    private static boolean isHoldingEndPortalStaffClient(net.minecraft.world.entity.player.Player player) {        net.minecraft.world.item.ItemStack[] hands = {
             player.getMainHandItem(), player.getOffhandItem() };
         for (net.minecraft.world.item.ItemStack stack : hands) {
             if (stack.getItem() instanceof StaffItem) {

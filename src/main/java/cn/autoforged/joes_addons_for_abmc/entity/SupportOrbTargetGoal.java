@@ -16,7 +16,7 @@ import java.util.List;
  * 幸运核心（附体的玩家），且永远不会索敌被幸运核心索敌的玩家。"
  * <ul>
  *   <li><b>只认核心</b>：每 {@link #RESCAN_TICKS} 刻重扫一次，取 {@link #ORB_RANGE} 格内<b>最近</b>的一具
- *       {@link PlayerShellEntity}（= 被核心附体的"玩家"，{@code isOrbAttached()}）。
+ *       {@link PlayerShellEntity}（= 被核心附体的"玩家"，{@code isCoreBackedShell()}）。
  *       附近没有核心时<b>不锁任何目标</b>（它就是来支援的，不干别的）。</li>
  *   <li><b>绝不锁被核心索敌的玩家</b>：靠 {@code SupportMobControl#forbidsTargeting} 那道硬闸
  *       （挂在 {@code LivingChangeTargetEvent} 上）。本 goal 本身压根不选玩家，所以那一关只是
@@ -70,7 +70,7 @@ public class SupportOrbTargetGoal extends Goal {
     @Override
     public boolean canContinueToUse() {
         PlayerShellEntity orb = this.lockedOrb;
-        if (orb == null || !orb.isAlive() || !orb.isOrbAttached()
+        if (orb == null || !orb.isAlive() || !orb.isCoreBackedShell()
             || orb.level() != this.mob.level()) {
             return false;
         }
@@ -112,7 +112,7 @@ public class SupportOrbTargetGoal extends Goal {
         }
         List<PlayerShellEntity> shells = level.getEntitiesOfClass(PlayerShellEntity.class,
             this.mob.getBoundingBox().inflate(ORB_RANGE),
-            shell -> shell.isAlive() && shell.isOrbAttached() && !shell.isSpectator());
+            shell -> shell.isAlive() && shell.isCoreBackedShell() && !shell.isSpectator());
         PlayerShellEntity nearest = null;
         double bestDistance = Double.MAX_VALUE;
         for (PlayerShellEntity shell : shells) {

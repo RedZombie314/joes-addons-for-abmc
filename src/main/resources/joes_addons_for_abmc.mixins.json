@@ -41,10 +41,12 @@
     "WitherBossSummonBossBarMixin",
     "WitchTransmutedPoisonMixin",
     "MobPersistenceAccessor",
+    "DistanceManagerAccessor",
     "EntityAirSwimMixin",
     "MobLuckyDespawnMixin",
     "MobLuckySunBurnMixin",
-    "EnderManTakeBlockMixin"
+    "EnderManTakeBlockMixin",
+    "NoiseBasedChunkGeneratorMixin"
   ],
   "client": [
     "ClientLevelMixin",

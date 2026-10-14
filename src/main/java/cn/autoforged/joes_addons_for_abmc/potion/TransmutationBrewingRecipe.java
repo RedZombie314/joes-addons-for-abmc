@@ -1,6 +1,7 @@
 package cn.autoforged.joes_addons_for_abmc.potion;
 
 import cn.autoforged.joes_addons_for_abmc.item.ModDataComponents;
+import cn.autoforged.joes_addons_for_abmc.item.ModPotionNames;
 import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -179,8 +180,7 @@ public class TransmutationBrewingRecipe implements IBrewingRecipe {
                     ItemStack tp = buildTransportSplash(0x000000);
                     tp.set(ModDataComponents.TRANSPORT_MODE.get(), "point");
                     tp.set(ModDataComponents.TARGET_POS.get(), target);
-                    tp.set(DataComponents.CUSTOM_NAME,
-                        Component.literal("传送至").append(Component.literal(name)).append(Component.literal("附近")));
+                    tp.set(DataComponents.CUSTOM_NAME, ModPotionNames.transportNear(name));
                     return tp;
                 }
                 // 定点传送药水（黑色，目标实体）：命名“传送至<实体名>”
@@ -201,11 +201,11 @@ public class TransmutationBrewingRecipe implements IBrewingRecipe {
                                 dn = ent.getType().getDescription();
                             }
                         }
-                        tp.set(DataComponents.CUSTOM_NAME, Component.literal("传送至").append(dn));
+                        tp.set(DataComponents.CUSTOM_NAME, ModPotionNames.transportTo(dn));
                     } else {
                         // 该实体当前不在服务器/未加载：存全零 UUID 哨兵，命名“传送至§kMissingno”，命中不创建传送门
                         tp.set(ModDataComponents.TARGET_ENTITY_UUID.get(), new UUID(0L, 0L));
-                        tp.set(DataComponents.CUSTOM_NAME, Component.literal("传送至§kMissingno"));
+                        tp.set(DataComponents.CUSTOM_NAME, ModPotionNames.transportMissing());
                     }
                     return tp;
                 }
@@ -215,14 +215,13 @@ public class TransmutationBrewingRecipe implements IBrewingRecipe {
                     ItemStack tp = buildTransportSplash(0xFFFFFF);
                     tp.set(ModDataComponents.TRANSPORT_MODE.get(), "directional");
                     tp.set(ModDataComponents.TARGET_DIST.get(), dist);
-                    tp.set(DataComponents.CUSTOM_NAME,
-                        Component.literal("传送至前方").append(Component.literal(name)).append(Component.literal("格")));
+                    tp.set(DataComponents.CUSTOM_NAME, ModPotionNames.transportForward(name));
                     return tp;
                 }
                 // 随机传送药水（灰色，名称不变）
                 ItemStack tp = buildTransportSplash(0x808080);
                 tp.set(ModDataComponents.TRANSPORT_MODE.get(), "random");
-                tp.set(DataComponents.CUSTOM_NAME, Component.literal("随机传送药水"));
+                tp.set(DataComponents.CUSTOM_NAME, ModPotionNames.transportRandom());
                 return tp;
             }
             return ItemStack.EMPTY; // 准传送药水不可用于其它酿造
@@ -270,9 +269,9 @@ public class TransmutationBrewingRecipe implements IBrewingRecipe {
                 new PotionContents(Optional.of(ModPotions.TRANSMUTATION),
                     Optional.of(0x50C878), List.of()));
             result.set(ModDataComponents.ITEM_TYPE.get(), encoded);
-            // 命名：“变形为 玩家名”（例：变形为 Dream）
+            // 命名：“变形为 玩家名”（例：变形为 Dream）；玩家名用字面量，前缀走语言文件
             result.set(DataComponents.CUSTOM_NAME,
-                Component.literal("变形为 " + shellName));
+                ModPotionNames.transmuteTo(Component.literal(shellName)));
             return result;
         }
 
@@ -289,9 +288,9 @@ public class TransmutationBrewingRecipe implements IBrewingRecipe {
                     new PotionContents(Optional.of(ModPotions.TRANSMUTATION),
                         Optional.of(0x8B4513), List.of()));
                 result.set(ModDataComponents.ITEM_TYPE.get(), encoded);
-                // 命名：“变形为 生物名”（例：变形为 尸壳），保留翻译组件按客户端语言解析
+                // 命名：“变形为 生物名”（例：变形为 尸壳），目标名保留翻译组件按客户端语言解析
                 result.set(DataComponents.CUSTOM_NAME,
-                    Component.literal("变形为 ").append(eggType.getDescription()));
+                    ModPotionNames.transmuteTo(eggType.getDescription()));
                 return result;
             }
         }
@@ -313,9 +312,9 @@ public class TransmutationBrewingRecipe implements IBrewingRecipe {
             new PotionContents(Optional.of(ModPotions.TRANSMUTATION),
                 Optional.of(medianColor), List.of()));
         result.set(ModDataComponents.ITEM_TYPE.get(), itemTypeStr);
-        // 命名：“变形为 物品/方块名”（例：变形为 骨头 / 变形为 黑石），保留翻译组件按客户端语言解析
+        // 命名：“变形为 物品/方块名”（例：变形为 骨头 / 变形为 黑石），目标名保留翻译组件按客户端语言解析
         result.set(DataComponents.CUSTOM_NAME,
-            Component.literal("变形为 ").append(ingredient.getHoverName()));
+            ModPotionNames.transmuteTo(ingredient.getHoverName()));
         return result;
     }
 

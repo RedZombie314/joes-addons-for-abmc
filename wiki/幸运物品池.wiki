@@ -1,0 +1,207 @@
+<!-- =====================================================================
+     页面：幸运物品池（Lucky Item Pool）
+     格式：MediaWiki wikitext（可直接粘贴到 MediaWiki / Fandom / Miraheze 页面源码）
+     适用模组版本：JOE's Addons for ABMC 6.7.35（Minecraft 1.21.1 / NeoForge 21.1.x）
+     内容依据源码：
+       item/ModItemTags.java（LUCKY_ITEMS 标签定义）
+       data/joes_addons_for_abmc/tags/item/lucky_items.json（成员表，本文的 8 件物品即来自该文件）
+       block/LuckyBlockEvents.java（luckyPoolItems / rollLuckyPoolItem）、block/LuckyEvents.java（池内物品的子事件注册）
+       entity/LuckyItemPool.java（幸运维度掉落物池：原版生存物品 + 幸运物品池）
+       entity/OrbInitialLaunch.java（幸运核心初始阶段的发射物品池）
+       entity/SelectorCollectGoal.java（幸运选择器按该标签收集掉落物）
+       item/ModItems.java（各件物品的耐久与属性）
+     链接约定：原版 Minecraft 的词条一律用完整 URL 外链到中文 Minecraft Wiki（zh.minecraft.wiki/w/页面名），
+           本模组自己的内容（各件物品、幸运方块、幸运维度等）用站内链接。
+           若本站已配好跨 wiki 前缀（Miraheze 见 Special:Interwiki/add，前缀建议 mcw、
+           URL 填 https://zh.minecraft.wiki/w/$1），可把 [https://zh.minecraft.wiki/w/X X] 批量替换成 [[mcw:X|X]]。
+     ===================================================================== -->
+
+{| class="wikitable" style="float:right; width:23em; margin:0 0 1em 1em; font-size:90%;"
+|+ style="font-size:115%; font-weight:bold;" | 幸运物品池
+|-
+! 类型
+| '''物品标签'''（[https://zh.minecraft.wiki/w/标签 标签]）
+|-
+! 标签 ID
+| <code>#joes_addons_for_abmc:lucky_items</code>
+|-
+! 成员数
+| '''8 件'''
+|-
+! 定义位置
+| <code>data/joes_addons_for_abmc/tags/item/lucky_items.json</code>
+|-
+! 可否扩展
+| '''可以'''——[https://zh.minecraft.wiki/w/数据包 数据包]往里加物品即可
+|-
+! 用途
+| [[幸运方块]]开出、[[幸运维度]]随机掉落、[[幸运选择器]]收集、[[幸运核心]]初始阶段发射
+|}
+
+'''幸运物品池'''（英文：Lucky Item Pool）是本模组用来登记"'''哪些是本模组的幸运物品'''"的一张[https://zh.minecraft.wiki/w/标签 物品标签]：<code>#joes_addons_for_abmc:lucky_items</code>。目前池里有 '''8 件'''物品，全部是本模组的特色道具；它们'''都没有合成配方'''，唯一成规模的来源就是这张池子。
+
+它是一条"'''数据驱动的名单'''"：模组代码只认标签名，里面具体有哪几件由[https://zh.minecraft.wiki/w/数据包 数据包]决定，所以你可以自己往里加东西。
+
+__TOC__
+
+== 成员 ==
+
+{| class="wikitable"
+! 物品
+! 物品 ID
+! 耐久
+! 一句话
+|-
+| [[烈焰弹发射器]]
+| <code>fire_charge_launcher</code>
+| 512
+| 长按连发烈焰人火球
+|-
+| [[烈焰手杖]]
+| <code>blaze_staff</code>
+| 512
+| 单发恶魂式火球，会爆炸
+|-
+| [[闪烁西瓜刀]]
+| <code>glistering_melon_knife</code>
+| 50
+| 亡灵 ×20 伤害的小刀
+|-
+| [[工作台帽子]]
+| <code>crafting_table_hat</code>
+| 无
+| 戴着空手右键即可自动合成
+|-
+| [[地狱疣生成器]]
+| <code>wart_on_a_stick</code>
+| 256
+| 凭空种成熟地狱疣 / 往别人头上扣疣
+|-
+| [[铁抓钩]]
+| <code>iron_hook</code>
+| 512
+| 甩铁链拉自己或拉生物
+|-
+| [[翅膀]]
+| <code>wings</code>
+| 1024
+| 穿在胸甲栏就能飞
+|-
+| [[爆炸之箭]]
+| <code>explosive_arrow</code>
+| —
+| 命中即爆（或 100 刻后爆）的箭
+|}
+
+== 它被用在哪里 ==
+
+这张标签在代码里被四处消费：
+
+{| class="wikitable"
+! 消费方
+! 用法
+|-
+| '''[[幸运方块]]的事件表'''
+| 池里'''每一件物品'''都会被注册成一个独立的子事件："给一件该物品"（数量 1、权重 1）。因此 8 件物品'''一共占了幸运方块事件表里的 8 个名额'''（当前事件表共 32 个子事件）
+|-
+| '''[[幸运维度]]的随机掉落物'''
+| 幸运维度自然生成的掉落物候选池 = "'''全部原版生存可获取物品''' + 幸运物品池里的物品"（池内物品会与几千件原版物品'''等概率'''出现）
+|-
+| '''[[幸运选择器]]'''
+| 选择器搜索周围 '''128 格'''内符合这张标签的'''掉落物'''并去收集——也就是说，把池里的物品丢在地上，[[幸运选择器]]会主动跑去捡
+|-
+| '''[[幸运核心]]（INITIAL 阶段）'''
+| 核心随机往外发射物品时，候选池同样是"原版可获取物品 + 幸运物品池"
+|}
+
+另外，代码里还有一个 <code>rollLuckyPoolItem()</code>：直接从池里等概率抽一件——它是给后续内容预留的接口。
+
+== 怎么把物品加进去 ==
+
+做一个数据包，新建 <code>data/&lt;你的命名空间&gt;/tags/item/lucky_items.json</code>：
+
+<pre>
+{
+  "replace": false,
+  "values": [
+    "minecraft:diamond",
+    "你的命名空间:某件物品"
+  ]
+}
+</pre>
+
+* <code>"replace": false</code> 表示'''追加'''到原名单，而不是替换掉模组默认的 8 件（写成 <code>true</code> 就会把默认名单整个顶掉）；
+* 用 <code>/reload</code> 即可生效（标签是数据包内容，每次抽取都是现解析的）；
+* 加进去之后，这件物品会'''自动'''出现在上面那四处用途里——包括在[[幸运方块]]的事件表里多出一个"给一件该物品"的子事件。
+
+== 四个容易混淆的概念 ==
+
+本模组里有好几份"名单/池子"，注意别混：
+
+{| class="wikitable"
+! 名字
+! 是什么
+! 谁在用
+|-
+| '''幸运物品池'''
+| 本页：物品标签 <code>#joes_addons_for_abmc:lucky_items</code>（8 件）
+| [[幸运方块]]的子事件、[[幸运维度]]掉落、[[幸运选择器]]、[[幸运核心]]发射
+|-
+| '''幸运名单'''（roster）
+| 一份"优先抽取"名单：'''名单非空时，开[[幸运方块]]优先从名单里取'''
+| 目前只有调试命令 <code>/jafa roster</code> 能往名单里加东西（正式入口未定）
+|-
+| '''被指定的产物'''
+| <code>/jafa luckyblockresult &lt;选项&gt;</code> 指定的那'''一项'''：开着 debug 模式时，开[[幸运方块]]'''只'''开出它、压过幸运名单
+| 默认没有指定；指定值写在主世界的 <code>jafa_debug_overrides</code> 里（落盘）
+|-
+| '''幸运维度掉落池'''
+| 代码里的 <code>LuckyItemPool</code>：'''全部原版生存可获取物品 + 幸运物品池'''
+| [[幸运维度]]的自然掉落物
+|}
+
+== 命令 ==
+
+* <code>/jafa lucky list</code>：列出当前'''全部子事件'''（按分类、带 id / 描述 / 权重 / 概率），并报出'''当前指定的产物'''；池里的 8 件物品就在这份列表的"幸运物品"分类里；
+* <code>/jafa lucky event</code>：随机触发一个子事件；
+* <code>/jafa lucky event &lt;id&gt;</code>：强制触发指定的某一个子事件（例如 <code>item/iron_hook</code>）；
+* <code>/jafa luckyblockresult &lt;选项&gt;</code>：指定"开[[幸运方块]]'''只'''开出它"（不是本页的幸运物品池）；候选只来自默认能开出的物品 / 生物 / 结构，写名字、id 路径或完整 id 都行；需要 <code>debug_mode = true</code>，指定值写入存档；
+* <code>/jafa luckyblockclear</code>：取消上面那条指定，回到正常规则（幸运名单 / 随机抽取）。
+
+== 数据与标识 ==
+
+{| class="wikitable"
+! 项目
+! 值
+|-
+| 标签 ID
+| <code>joes_addons_for_abmc:lucky_items</code>（注册类型：物品标签）
+|-
+| 定义文件
+| <code>data/joes_addons_for_abmc/tags/item/lucky_items.json</code>
+|-
+| 代码常量
+| <code>ModItemTags.LUCKY_ITEMS</code>（判断写法 <code>stack.is(ModItemTags.LUCKY_ITEMS)</code>）
+|-
+| 解析函数
+| <code>LuckyBlockEvents.luckyPoolItems(level)</code>（标签不存在或为空时返回空表）
+|-
+| 池内物品的子事件数量
+| 每件 1 个，共 8 个
+|-
+| 每件给几个
+| 1 个
+|-
+| 成员耐久
+| 512 / 512 / 50 / 无 / 256 / 512 / 1024 / —
+|}
+
+== 琐事 ==
+
+* 池里的 8 件物品'''全部没有合成配方'''：模组的配方表里只有[[幸运方块]]自己（8 [https://zh.minecraft.wiki/w/金锭 金锭] + [https://zh.minecraft.wiki/w/投掷器 投掷器]，且要先挖过一次幸运方块才会解锁）——所以"开出池里的东西"就是它们的主要获取方式；
+* 池子是可以'''被玩家改的'''：加一件自己的物品进标签，它就会立刻出现在[[幸运方块]]的抽取表、[[幸运维度]]的掉落池与[[幸运选择器]]的收集目标里；
+* [[爆炸之箭]]是个特例：它既在标签里，'''又在代码里被单独注册'''成一个同 id（<code>item/explosive_arrow</code>）的子事件（因为它需要"随机发放数量"）；池内注册会检测到同名事件并'''跳过'''，避免同一件物品出现两个子事件、变相把它的权重翻倍；
+* [[工作台帽子]]、[[翅膀]]与[[地狱疣生成器]]这几件同时还有"一次性"的获取途径（[[幸运核心]]的事件表里各能拿到一次），所以它们即使不在池里也能获得；
+
+[[Category:物品]]
+[[Category:JOE's Addons for ABMC]]

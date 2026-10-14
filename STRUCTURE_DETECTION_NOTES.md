@@ -89,7 +89,7 @@ DEBUG_STRUCTURE_LAST.put(key, now);
   所以「尝试生成」的密度和平原村庄在平原里的一致；建筑蓝图放哪一行由各结构自己的 `findGenerationPoint` 决定。
 - 游戏内查看新结构（旧区块不会补生成）：新世界或未探索区域里用 `/locate structure joes_addons_for_abmc:lucky_temple`。
 
-## 四、幸运宝珠神庙（orb_of_luck_temple）·幸运维度一次性生成（6.3.7 新增）
+## 四、幸运核心神庙（orb_of_luck_temple）·幸运维度一次性生成（6.3.7 新增）
 需求：把 `orb_of_luck_temple.nbt`（26×20×26 的阶梯石英神庙）生成到**幸运维度**；**尽量选高处的平缓地形（小山坡顶部）**；
 **每个存档只生成一座**；**不在玩家初次进入幸运维度所在坐标周围 5 个区块内**生成。
 
@@ -117,11 +117,11 @@ DEBUG_STRUCTURE_LAST.put(key, now);
   底面 26×26 里**最低**的地表方块 y 作为结构最小角 → 底面永远踩在地上、不悬空；高于该高度的地形会被模板里的
   **空气**替换掉（跟幸运之庙一个套路）。flag `2|16` 直接 setBlock，**没有掉落物**。
 - **只生成一次**：放完把 `orbTemplePlaced = true` 写进存档，之后每刻直接 return。
-- **神庙里的宝珠**：放置完模板后，从模板里**动态找**那处 2×2×2 雕纹石英块平台
+- **神庙里的幸运核心**：放置完模板后，从模板里**动态找**那处 2×2×2 雕纹石英块平台
   （`template.filterBlocks(..., Blocks.CHISELED_QUARTZ_BLOCK, false)`，不写死坐标），在它 `(minX+maxX+1)/2, (minZ+maxZ+1)/2`
   的中心、平台顶面往上 `ORB_HEIGHT_ABOVE_PLATFORM`(2) 格处生成一只 `orb_of_luck`（`setOrbState(INITIAL)`，
   核心碰撞箱底面对齐坐标 → 这个 y 就是它悬停的层）。**必须 `setPersistenceRequired()`**：
-  否则玩家在 128 格外时会被 `checkDespawn` 当野怪刷掉，宝珠就没了。
+  否则玩家在 128 格外时会被 `checkDespawn` 当野怪刷掉，幸运核心就没了。
 - 幸运维度 `lucky_plains` 生物群系**没有任何 features**（见 `ModBiomes`），所以高度图就是纯噪声地形，
   选址很干净；该维度也不会有原版结构（生物群系不匹配）。
 - 排查：日志里搜 `[orb-temple]`（会打印初入坐标、选址、最终原点与地形高差）。
@@ -139,5 +139,5 @@ DEBUG_STRUCTURE_LAST.put(key, now);
 ## 六、下一步（若新会话接手）
 - 多结构注册表（`DEBUG_STRUCTURES`）已接入检测输出。后续新增结构只需追加 `new DebugStructureTemplate(...)`（模板尺寸/方块/锚点均可配置）；用户后续可能补充更多结构或「特殊」类的遗漏方块。
 - 「幸运之庙」若要调概率只改 `worldgen/structure_set/lucky_temples.json`（spacing 调大 = 更稀有），要换生物群系只改 `worldgen/structure/lucky_temple.json` 的 `biomes`（也可换成 `#tag` 或数组，例如把 `minecraft:sunflower_plains` 一起加进来）。
-- 「幸运宝珠神庙」的选址常量都在 `OrbOfLuckTemple` 顶部（搜索半径/网格步长/允许高差/排除区块数/每刻加载区块数）；要重测可以删掉存档里的 `jafa_shared_counts`（`data/jafa_shared_counts.dat`）或把 `orb_temple_placed` 改回 0。
+- 「幸运核心神庙」的选址常量都在 `OrbOfLuckTemple` 顶部（搜索半径/网格步长/允许高差/排除区块数/每刻加载区块数）；要重测可以删掉存档里的 `jafa_shared_counts`（`data/jafa_shared_counts.dat`）或把 `orb_temple_placed` 改回 0。
 - 用户尚未提出新需求，但若有新结构检测/藏宝图相关改动，请先读本文档对应的类与方法，再按上述约定实现。

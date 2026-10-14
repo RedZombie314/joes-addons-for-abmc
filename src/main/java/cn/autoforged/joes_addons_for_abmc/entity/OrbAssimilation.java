@@ -52,7 +52,10 @@ import java.util.UUID;
  *
  * <p>注意：被同化的空壳<b>不</b>设 {@code possessedOrbUuid}（那是"我就是那颗核心的附体主空壳"的标记，
  * 打死了会判成"核心被击败"），
- * 它必须是一具能被打死的普通壳体，否则玩家永远复活不了。
+ * 它必须是一具能被打死的普通壳体。
+ * 两类壳体的来源区分请用 {@code PlayerShellEntity.ShellOrigin}：同化产生的壳走
+ * {@link PlayerShellEntity#configureAsAssimilatedShell(double)}，来源被标成 {@code ASSIMILATION}，
+ * 与附体事件的 {@code POSSESSION}、刷怪蛋的 {@code SPAWN_EGG} 一眼可分。
  */
 @EventBusSubscriber(modid = ModMain.MODID)
 public final class OrbAssimilation {
@@ -484,11 +487,14 @@ public final class OrbAssimilation {
         PlayerShellEntity shell = new PlayerShellEntity(ModEntities.PLAYER_SHELL.get(), level);
         shell.setSkinTexture(player.getGameProfile().getName());
         shell.moveTo(player.getX(), player.getY(), player.getZ(), player.getYRot(), 0.0F);
-        // 一具"由幸运核心支撑"的空壳：走位/索敌/抽签攻击 + 头顶光球
+        // 一具"由幸运核心支撑"的空壳，来源 = <b>同化事件</b>（见 PlayerShellEntity.ShellOrigin）：
+        // 走位/索敌/抽签攻击 + 头顶光球
         // + <b>生命上限 = 被同化前这位玩家的最大生命值</b>（用户指定）/ 20 护甲 / 12 韧性 / 保护 16
-        // + 靠附魔金苹果回血（与附体主空壳、刷怪蛋放出来的那一具共用同一套配置，
-        // 见 PlayerShellEntity#configureAsPossessedShell）
-        shell.configureAsPossessedShell(player.getMaxHealth());
+        // （与附体主空壳、刷怪蛋放出来的那一具共用同一套配置，
+        // 见 PlayerShellEntity#configureAsAssimilatedShell）。
+        // <b>附体专属的那几手它没有</b>（吃附魔金苹果/熟猪排、针对特定生物的特攻、反制重锤与变形药水，
+        // 见 PlayerShellEntity#hasPossessionExclusiveAbilities()）。
+        shell.configureAsAssimilatedShell(player.getMaxHealth());
         // 出手壳的核心归属（可能没有）：新壳记着它，于是"同化壳再同化别人"能追溯回同一颗核心
         UUID attackerOrb = attacker.getPossessedOrb() != null
             ? attacker.getPossessedOrb() : orbOfShell(attacker);
@@ -510,6 +516,14 @@ public final class OrbAssimilation {
             }
         }
         player.setGameMode(GameType.SPECTATOR);
+        // 用户指定：被同化的玩家（战败 / 挨够致命打击次数）也照样在 10~20 游戏刻后被强制"踢出"，
+        // 但用的是<b>另一句话</b>——"多么不幸！你成为了贪婪之徒的牵连者"，
+        // 他不是贪心的那位，只是被牵连进来的（见 ModMain#scheduleVictimKick）。
+        // 那句话里会点名"贪婪之徒"是谁（用户指定加入 ②）：名字顺着"这具出手空壳属于哪颗核心"去找，
+        // 见 greedyNameOf；取不到（没有核心的那具）就退回不带名字的说法。
+        // 只在这里排一次 —— 每刻维持旁观的那两处（tick / tickCorelessAssimilations）不排，
+        // 否则重进就会被连踢，而按需求玩家要能进来把倒计时走完。
+        ModMain.scheduleVictimKick(player, greedyNameOf(attacker));
         // <b>同化成功 = 出手空壳的致命打击额度回满</b>（用户指定）。
         // 含义：一具空壳的额度是"每同化一个人就重置一次"的 —— 攒够 4 次重击同化掉一个目标之后，
         // 它又能去同化下一个，而不会因为额度已经用光而对后续目标失去威胁。
@@ -519,9 +533,21 @@ public final class OrbAssimilation {
             player.getGameProfile().getName(), attacker.getId(), attacker.getFatalHits());
     }
 
-    /** 这具空壳是不是"被同化"产生的那一具（它身上记着属于哪颗核心）。 */
+    /**
+     * 这具空壳是不是"被同化"产生的那一具。
+     * <p>
+     * 判据是两个标记<b>任一</b>：
+     * <ul>
+     *   <li>{@link #TAG_ORB}（属于哪颗核心）—— 只在"出手那具空壳背后有核心"时才有；</li>
+     *   <li>{@link #TAG_PLAYER}（杀死它能复活哪名玩家）—— <b>每一具同化壳都有</b>。</li>
+     * </ul>
+     * 少了第二条，"<b>被刷怪蛋空壳同化</b>"的受害者留下的那具壳（背后没有核心，自然没有
+     * {@code TAG_ORB}）就会被误判成"刷怪蛋放出来的那一具" —— 两者在"杀它能复活谁"这件事上
+     * 完全相反。空壳自己的权威来源标记见 {@code PlayerShellEntity#getShellOrigin()}。
+     */
     public static boolean isAssimilationShell(Entity entity) {
-        return entity.getPersistentData().hasUUID(TAG_ORB);
+        CompoundTag data = entity.getPersistentData();
+        return data.hasUUID(TAG_ORB) || data.hasUUID(TAG_PLAYER);
     }
 
     /** 这名玩家是否正被同化（看<b>玩家自己</b>身上的记录，与场上有无核心无关）。 */
@@ -663,6 +689,161 @@ public final class OrbAssimilation {
         }
     }
 
+    // ====================== "贪婪之徒"是谁 / 给被同化者的线索 ======================
+
+    /**
+     * 这具空壳背后那位<b>贪婪之徒</b>（身体被附体夺走的那位玩家）的名字；取不到返回 null。
+     * <p>
+     * 判据顺序（三档）：
+     * <ol>
+     *   <li>空壳记着的核心（主壳的 {@code possessedOrbUuid}，或同化壳的 {@link #TAG_ORB}）
+     *       → 那颗核心的 {@code skinName}：附体开始时就写成了被附体玩家的名字，<b>这条最准</b>；</li>
+     *   <li>核心取不到（跑到没加载的区块里 / 已被清掉）但空壳<b>本身就是附体主壳</b>
+     *       （{@code isPossessionVessel()}）→ 它自己的皮肤名就是那位的名字；</li>
+     *   <li>都没有（例如刷怪蛋放出来的那具没有核心的空壳）→ null，调用方退回不带名字的说法。</li>
+     * </ol>
+     * <p>
+     * <b>为什么不能直接用出手空壳的皮肤名</b>：被同化的空壳，皮肤是<b>前一位受害者</b>的名字
+     * （{@link #assimilate} 里就是拿受害者名字给它设的皮肤），照它念会把账算到错的人头上；
+     * 所以必须顺着"这具空壳属于哪颗核心"往上找。
+     */
+    @Nullable
+    public static String greedyNameOf(PlayerShellEntity shell) {
+        UUID orbId = shell.getPossessedOrb() != null ? shell.getPossessedOrb() : orbOfShell(shell);
+        if (orbId != null && shell.level() instanceof ServerLevel level
+            && level.getEntity(orbId) instanceof OrbOfLuckEntity orb) {
+            String name = orb.getSkinName();
+            if (name != null && !name.isEmpty()) {
+                return name;
+            }
+        }
+        return shell.isPossessionVessel() ? shell.getSkinTexture() : null;
+    }
+
+    /**
+     * 待到重试的"登录线索"：UUID → 放弃时刻（游戏刻）。
+     * <p>登录那一刻那具空壳可能还没加载（它追着别的玩家跑远了），找不到就先登记，
+     * 由 {@link #tickJoinHints} 在接下来这段时间里继续找 —— 找到就发，只发一次。</p>
+     */
+    private static final java.util.Map<UUID, Long> HINT_PENDING = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 登录线索的重试窗口（游戏刻）：<b>5 分钟</b>。
+     * <p>原来给的是 10 秒，太短了：那具空壳只要还在没加载的区块里（它一直在追人，
+     * 跑出玩家的加载范围是常事），10 秒内根本不会出现，线索就<b>静默丢失</b>了 ——
+     * 玩家只看到"我被踢了、什么提示都没有"。现在放宽到 5 分钟，这期间每刻都在找，
+     * 找到即发、发完即销；真正"不用发了"由 {@link #trySendRevengeHint} 的其它判据负责
+     * （已经复活 / 玩家身上没有记录）。</p>
+     */
+    private static final int HINT_RETRY_TICKS = 5 * 60 * 20;
+
+    /** 登录线索文案键（用户指定加入 ③）：带名字 / 不带名字两句。 */
+    private static final String HINT_KEY = "message.joes_addons_for_abmc.assimilated_hint";
+    private static final String HINT_UNNAMED_KEY = "message.joes_addons_for_abmc.assimilated_hint_unnamed";
+
+    /**
+     * <b>被同化者重新进来时，给他一条线索</b>（用户指定：只加线索、不动规则）。
+     * <p>
+     * 他被"因太过贪婪"那套踢出去之后再回来，仍然是旁观，唯一能指望的就是
+     * "别人去把那具夺取他身体的空壳干掉" —— 那就得先知道那具空壳在哪儿、归谁。
+     * 这里私聊一条"贪婪之徒的名字 + 空壳坐标"。
+     * <p>
+     * 由 {@code OrbPossessionEvents#onPlayerLoggedIn} 在登录时调用
+     * （{@code PlayerList#placeNewPlayer} 的<b>最后一行</b>才发这个事件，那时玩家 NBT 已经读完，
+     * 所以 {@code persistentData} 里的"我被同化了 / 我的空壳是哪一个"都在）。
+     * 找不到空壳时登记重试（见 {@link #HINT_PENDING}）。
+     * 没有核心的同化（刷怪蛋那具空壳干的）同样会收到线索，只是名字那部分退回"一具空壳"。
+     */
+    public static void sendRevengeHintOnJoin(ServerPlayer player) {
+        if (!isAssimilating(player)) {
+            return;   // 不是被同化的玩家：不打扰
+        }
+        if (trySendRevengeHint(player)) {
+            return;
+        }
+        HINT_PENDING.put(player.getUUID(), player.level().getGameTime() + HINT_RETRY_TICKS);
+        ModMain.LOGGER.info("[同化] 登录线索：{} 名下的空壳此刻不在加载范围内，挂起重试（最多 {} 秒）",
+            player.getGameProfile().getName(), HINT_RETRY_TICKS / 20);
+    }
+
+    /** 每服务端刻重试一次登录线索（由 {@code ModMain#onServerTickPre} 调用）。 */
+    public static void tickJoinHints(net.minecraft.server.MinecraftServer server) {
+        if (HINT_PENDING.isEmpty()) {
+            return;
+        }
+        java.util.Iterator<java.util.Map.Entry<UUID, Long>> it = HINT_PENDING.entrySet().iterator();
+        while (it.hasNext()) {
+            java.util.Map.Entry<UUID, Long> entry = it.next();
+            ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+            if (player == null) {
+                it.remove();   // 又下线了
+                continue;
+            }
+            if (trySendRevengeHint(player) || player.level().getGameTime() >= entry.getValue()) {
+                it.remove();
+            }
+        }
+    }
+
+    /**
+     * 试着发一条登录线索。
+     *
+     * @return true = 已经处理完（发出去了，或者根本不需要发）；false = 那具空壳还没加载，等下一刻再试
+     */
+    private static boolean trySendRevengeHint(ServerPlayer player) {
+        if (!isAssimilating(player)) {
+            return true;   // 已经不是被同化状态（自己切创造/被别人复活了）：不用发了
+        }
+        CompoundTag data = player.getPersistentData();
+        if (!data.hasUUID(TAG_MY_SHELL)) {
+            return true;   // 没记着空壳（旧存档）：无从指路
+        }
+        PlayerShellEntity shell = findOwnShell(player, data.getUUID(TAG_MY_SHELL));
+        if (shell == null) {
+            return false;  // 空壳还在没加载的地方：等下一刻
+        }
+        String greedy = greedyNameOf(shell);
+        var pos = shell.blockPosition();
+        String where = pos.getX() + ", " + pos.getY() + ", " + pos.getZ();
+        if (shell.level() != player.level()) {
+            // 跨维度时只给坐标会把人指错地方：把维度 id 一并带上（原版没有维度名的本地化键，给 id 最诚实）
+            where = "[" + shell.level().dimension().location() + "] " + where;
+        }
+        player.displayClientMessage((greedy == null || greedy.isEmpty()
+            ? net.minecraft.network.chat.Component.translatable(HINT_UNNAMED_KEY, where)
+            : net.minecraft.network.chat.Component.translatable(HINT_KEY, greedy, where))
+            .withStyle(net.minecraft.ChatFormatting.GRAY), false);
+        ModMain.LOGGER.info("[同化] 已向 {} 发送复仇线索：空壳在 {}，贪婪之徒={}",
+            player.getGameProfile().getName(), where, greedy);
+        return true;
+    }
+
+    /**
+     * 找这位玩家名下的那具空壳：<b>先看他所在的维度，再遍历其它维度</b>。
+     * <p>为什么要跨维度：那具空壳会追着别的玩家跑，完全可能已经进了另一个维度 ——
+     * 只查 {@code player.serverLevel()} 的话，这种情况线索永远发不出去。
+     * 注意这里只能找到"已加载"的实体；还在没加载区块里的由 {@link #tickJoinHints} 继续重试。</p>
+     */
+    @Nullable
+    private static PlayerShellEntity findOwnShell(ServerPlayer player, UUID shellId) {
+        if (player.serverLevel().getEntity(shellId) instanceof PlayerShellEntity here) {
+            return here;
+        }
+        net.minecraft.server.MinecraftServer server = player.getServer();
+        if (server == null) {
+            return null;
+        }
+        for (ServerLevel level : server.getAllLevels()) {
+            if (level == player.serverLevel()) {
+                continue;
+            }
+            if (level.getEntity(shellId) instanceof PlayerShellEntity there) {
+                return there;
+            }
+        }
+        return null;
+    }
+
     // ====================== 查询辅助 ======================
 
     /** 空壳身上记的"属于哪颗核心"。 */
@@ -706,7 +887,8 @@ public final class OrbAssimilation {
      * <b>关键点：这里不再要求"能查到核心实体"。</b>
      * 用户指定"所有由幸运核心产生的玩家空壳（无论是本体还是同化产生的）都具备同化其它玩家的能力"，
      * 而<b>刷怪蛋放出来的那一具背后没有核心实体</b>（见 {@code OrbPlayerShellSpawnEggItem}：
-     * 它只调 {@code configureAsPossessedShell()}，从不 {@code setPossessedOrb}）。
+     * 它只调 {@code PlayerShellEntity#configureAsSpawnEggShell()}，来源标成 {@code SPAWN_EGG}，
+     * 从不 {@code setPossessedOrb}）。
      * 旧写法先查核心、查不到就整条链返回 null，于是致命打击计数与同化对刷怪蛋空壳完全失效
      * （实测日志里的 {@code orb=查不到} 就是这一步）。
      */
@@ -743,12 +925,15 @@ public final class OrbAssimilation {
     /**
      * 这具空壳是不是"由幸运核心产生的"那一类 —— 也就是<b>能同化别人</b>的空壳。
      * <p>
-     * 判据取 {@link PlayerShellEntity#isOrbAttached()}：三种生成入口
-     * （附体主空壳、被同化的、刷怪蛋放的）都把它置真，而变形药水造出来的临时空壳
-     * 与普通生物壳都是假 —— 正好就是"核心产生的"这一集合。
+     * 判据取 {@code PlayerShellEntity#isCoreBackedShell()}（来源为附体事件 / 同化事件 / 刷怪蛋）：
+     * 三个生成入口都会把它置真，而变形药水造出来的临时空壳与普通生物壳都是假
+     * —— 正好就是"核心产生的"这一集合。
+     * <p>
+     * <b>注意它与"哪一类"是两件事</b>：要分清"附体事件"与"同化事件 / 刷怪蛋"，
+     * 用 {@code PlayerShellEntity#isPossessionVessel()} / {@code #getShellOrigin()}。
      */
     public static boolean isPossessionShell(PlayerShellEntity shell) {
-        return shell.isOrbAttached();
+        return shell.isCoreBackedShell();
     }
 
     /**

@@ -1,0 +1,144 @@
+<!-- =====================================================================
+     页面：爆炸之箭（Explosive Arrow）
+     格式：MediaWiki wikitext（可直接粘贴到 MediaWiki / Fandom / Miraheze 页面源码）
+     适用模组版本：JOE's Addons for ABMC 6.7.35（Minecraft 1.21.1 / NeoForge 21.1.x）
+     内容依据源码：
+       item/ExplosiveArrowItem.java（弹药物品：威力 / 引信常量、createArrow / asProjectile）
+       entity/ExplosiveArrow.java（箭矢实体：命中实体即爆、命中方块 5 秒引信）
+       client/ExplosiveArrowRenderer.java（沿用原版箭贴图）
+       block/LuckyExplosiveArrowEvent.java（幸运事件一次 16~64 支）
+       ModMain.java onExplosionDetonate（把射手从受影响实体里剔除）
+       src/main/resources/data/minecraft/tags/item/arrows.json、tags/entity_type/arrows.json
+     链接约定：原版 Minecraft 的词条一律用完整 URL 外链到中文 Minecraft Wiki（zh.minecraft.wiki/w/页面名），
+           本模组自己的内容（幸运方块、幸运维度、闪烁西瓜刀等）用站内链接。
+           若本站已配好跨 wiki 前缀（Miraheze 见 Special:Interwiki/add，前缀建议 mcw、
+           URL 填 https://zh.minecraft.wiki/w/$1），可把 [https://zh.minecraft.wiki/w/X X] 批量替换成 [[mcw:X|X]]。
+     ===================================================================== -->
+
+{| class="wikitable" style="float:right; width:23em; margin:0 0 1em 1em; font-size:90%;"
+|+ style="font-size:115%; font-weight:bold;" | 爆炸之箭
+|-
+| colspan="2" style="text-align:center;" | [[File:Explosive arrow.png|150px]]
+|-
+! 类型
+| 弹药（[https://zh.minecraft.wiki/w/箭 箭]）
+|-
+! 堆叠上限
+| 64
+|-
+! 爆炸威力
+| '''4'''（与原版 [https://zh.minecraft.wiki/w/TNT TNT] 相同）
+|-
+! 是否破坏地形
+| '''否'''
+|-
+! 是否伤及射手
+| '''否'''
+|-
+! 可否拾回
+| 否
+|-
+! 引信（命中方块后）
+| '''100 刻 = 5 秒'''
+|-
+! 获取
+| [[幸运物品池]] / 创造模式物品栏（'''无合成配方'''）
+|-
+! 外观
+| 沿用原版箭的贴图
+|-
+! 物品 ID
+| <code>joes_addons_for_abmc:explosive_arrow</code>
+|-
+! 实体 ID
+| <code>joes_addons_for_abmc:explosive_arrow</code>
+|}
+
+'''爆炸之箭'''（英文：Explosive Arrow）是一支"会炸的箭"：命中生物'''当场爆炸'''，射在方块上则'''插在那里 5 秒'''然后爆炸。爆炸威力与原版 [https://zh.minecraft.wiki/w/TNT TNT] 相同，但'''不破坏地形'''，也'''不会伤到射箭的人'''——所以它是一件可以放心贴脸使用的重火力弹药。
+
+== 获取 ==
+
+{| class="wikitable"
+! 途径
+! 说明
+|-
+| [[幸运物品池]]事件
+| [[幸运方块]]的幸运物品子事件"爆炸之箭"一次给 '''16~64 支'''（这条事件是硬编码注册的，因为它要随机数量）
+|-
+| 创造模式物品栏
+| 直接拿取
+|-
+| 合成
+| '''没有配方'''
+|}
+
+== 使用 ==
+
+* '''任何弓、弩都能发射它'''——它继承了原版的箭类物品（<code>ArrowItem</code>），并且被登记进了 <code>#minecraft:item/arrows</code> 与 <code>#minecraft:entity_type/arrows</code> 两个原版标签，所以原版武器以及"检查箭标签"的其它模组武器都认它；
+* '''[https://zh.minecraft.wiki/w/发射器 发射器]也能发射'''（走的是弹射物那条路径）；
+* 射出去的就是本模组的'''爆炸之箭'''实体，不是普通箭。
+
+== 效果 ==
+
+{| class="wikitable"
+! 命中对象
+! 结果
+|-
+| 生物
+| 先照常结算'''箭矢伤害'''（与原版箭一样吃弓的蓄力、力量附魔等），紧接着'''立刻爆炸'''
+|-
+| 方块
+| 照常'''插在方块上'''，同时开始 '''100 刻（5 秒）'''倒计时，到点爆炸
+|}
+
+两种爆炸共有的规则：
+
+* '''威力 4'''（与原版 TNT 相同），<code>ExplosionInteraction.NONE</code>——'''只造成伤害与击退，不破坏任何方块'''；
+* '''不伤及射出者'''：爆炸结算时会把射箭的人从"受影响实体"列表里剔除，所以射手'''既不吃伤害也不吃击退'''（哪怕箭刚出手就贴脸炸）；
+* '''不可拾回'''（拾取模式为 <code>DISALLOWED</code>）——引信点着的箭不该被捡起来；
+* 爆炸之外的一切照旧：会被方块挡住、会受重力、水里会减速。
+
+== 细节 ==
+
+* 物品栏里的图标与飞行中的箭'''都沿用原版箭的贴图'''（模型与实体渲染都是），所以光看外观'''分辨不出它是不是爆炸之箭'''——这正是它危险的地方；
+* 它没有被加进本模组的"可格挡弹射物"默认名单（默认名单里只有 <code>minecraft:arrow</code> 等原版实体），所以默认情况下'''格挡挡不住它'''；需要的话可以在配置里把 <code>joes_addons_for_abmc:explosive_arrow</code> 加进小型或大型弹射物名单；
+* 命中生物的那次爆炸是'''在箭矢伤害之后立刻结算'''的，所以贴脸射自己脚下的生物时，两段伤害会一起吃到。
+
+== 数据与标识 ==
+
+{| class="wikitable"
+! 项目
+! 值
+|-
+| 物品 ID
+| <code>joes_addons_for_abmc:explosive_arrow</code>
+|-
+| 实体 ID
+| <code>joes_addons_for_abmc:explosive_arrow</code>
+|-
+| 注册标签
+| <code>#minecraft:item/arrows</code>、<code>#minecraft:entity_type/arrows</code>
+|-
+| 物品属性
+| <code>stacksTo(64)</code>
+|-
+| 物品模型
+| <code>models/item/explosive_arrow.json</code>（<code>layer0 = minecraft:item/arrow</code>）
+|-
+| 实体贴图
+| <code>minecraft:textures/entity/projectiles/arrow.png</code>
+|-
+| 幸运事件 id
+| <code>item/explosive_arrow</code>（权重 1，一次 16~64 支）
+|}
+
+== 琐事 ==
+
+* 它的爆炸威力与 TNT 相同，却'''不破坏方块'''——所以它更像"手雷"而不是"拆迁工具"；
+* 引信比 TNT 长：TNT 是 4 秒，它命中方块后是 '''5 秒'''，足够让近处的敌人走出爆炸范围（也足够让它们跑不掉）；
+* 因为"不伤射手"这条规则是在'''爆炸事件'''里剔除射手实现的，所以它对'''所有'''由这枚箭引发的爆炸都成立，包括射出去一瞬间就贴脸炸的情况；
+* 一支箭就会爆炸一次，用完即毁，不能捡回。
+
+[[Category:物品]]
+[[Category:战斗]]
+[[Category:JOE's Addons for ABMC]]

@@ -32,6 +32,15 @@ public class AwakeningFallingBlockRenderer extends FallingBlockRenderer {
     /** 酿造台三瓶药水的圆形排列半径（块）。 */
     private static final float BREW_RADIUS = 0.30F;
 
+    /** 三瓶圆形排列的初始旋转角（度）：0 = 有一瓶正对玩家。以前是配置项（默认 0）。 */
+    private static final double BREW_BOTTLES_ROTATION = 0.0D;
+
+    /** 药水瓶的渲染大小倍率：1.0 = 整格大小（约等于一个物品实体）。以前是配置项（默认 0.6）。 */
+    private static final double BREW_BOTTLES_SCALE = 0.6D;
+
+    /** 药水瓶的渲染中心高度（相对方块，单位格）。以前是配置项（默认 0.52）。 */
+    private static final double BREW_BOTTLES_HEIGHT = 0.52D;
+
     private final ItemRenderer itemRenderer;
 
     public AwakeningFallingBlockRenderer(EntityRendererProvider.Context context) {
@@ -100,10 +109,12 @@ public class AwakeningFallingBlockRenderer extends FallingBlockRenderer {
         if (bottles == null || bottles.isEmpty()) return;
         net.minecraft.core.HolderLookup.Provider reg = entity.level().registryAccess();
         net.minecraft.nbt.ListTag list = bottles.getList("Bottles", 10);
-        // 三瓶按俯视图圆形三等分排布；旋转角、缩放、高度均可由玩家配置调整
-        double baseDeg = cn.autoforged.joes_addons_for_abmc.config.ModConfig.AWAKE_BREW_BOTTLES_ROTATION.get();
-        double scale = cn.autoforged.joes_addons_for_abmc.config.ModConfig.AWAKE_BREW_BOTTLES_SCALE.get();
-        double bottleY = cn.autoforged.joes_addons_for_abmc.config.ModConfig.AWAKE_BREW_BOTTLES_HEIGHT.get();
+        // 三瓶按俯视图圆形三等分排布。
+        // 这三个值以前是配置项（awake_brew_bottles.rotation / scale / height）；用户指定"觉醒酿造台
+        // 那几项配置可以移除"，于是把当时的默认值固化成常量，不再进配置文件。
+        double baseDeg = BREW_BOTTLES_ROTATION;
+        double scale = BREW_BOTTLES_SCALE;
+        double bottleY = BREW_BOTTLES_HEIGHT;
         float baseRad = (float) Math.toRadians(baseDeg);
         for (int i = 0; i < list.size(); i++) {
             int slot = list.getCompound(i).getInt("Slot");

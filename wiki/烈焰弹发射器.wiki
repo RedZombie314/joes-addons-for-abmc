@@ -1,0 +1,188 @@
+<!-- =====================================================================
+     页面：烈焰弹发射器（Fire Charge Launcher）
+     格式：MediaWiki wikitext（可直接粘贴到 MediaWiki / Fandom / Miraheze 页面源码）
+     适用模组版本：JOE's Addons for ABMC 6.7.35（Minecraft 1.21.1 / NeoForge 21.1.x）
+     内容依据源码：
+       item/FireChargeLauncherItem.java（发射节奏、火球速度、耐久消耗）
+       item/ModItems.java（512 耐久、stacksTo(1)）
+       src/main/resources/data/minecraft/tags/item/enchantable/durability.json（可附魔标签）
+       原版 SmallFireball 源码（命中：5 点伤害 + 点燃 5 秒；命中方块在其相邻空气格放火）
+     链接约定：原版 Minecraft 的词条一律用完整 URL 外链到中文 Minecraft Wiki（zh.minecraft.wiki/w/页面名），
+           本模组自己的内容（幸运方块、烈焰手杖、幸运维度等）用站内链接。
+           若本站已配好跨 wiki 前缀（Miraheze 见 Special:Interwiki/add，前缀建议 mcw、
+           URL 填 https://zh.minecraft.wiki/w/$1），可把 [https://zh.minecraft.wiki/w/X X] 批量替换成 [[mcw:X|X]]。
+     ===================================================================== -->
+
+{| class="wikitable" style="float:right; width:23em; margin:0 0 1em 1em; font-size:90%;"
+|+ style="font-size:115%; font-weight:bold;" | 烈焰弹发射器
+|-
+| colspan="2" style="text-align:center;" | [[File:Fire charge launcher.png|150px]]
+|-
+! 类型
+| 物品（远程武器）
+|-
+! 耐久
+| '''512'''
+|-
+! 堆叠上限
+| 1
+|-
+! 发射物
+| 原版[https://zh.minecraft.wiki/w/烈焰人 烈焰人]火球（<code>small_fireball</code>）
+|-
+! 射速
+| 每 '''10 刻（0.5 秒）'''一发，可长按连发
+|-
+! 单发伤害
+| '''5 点''' + 点燃 5 秒
+|-
+! 手持姿势
+| '''拉弓'''（按住时移动变慢）
+|-
+! 可附魔
+| [https://zh.minecraft.wiki/w/耐久 耐久]、[https://zh.minecraft.wiki/w/经验修补 经验修补]、[https://zh.minecraft.wiki/w/消失诅咒 消失诅咒]
+|-
+! 获取
+| [[幸运物品池]] / 创造模式物品栏（'''无合成配方'''）
+|-
+! 物品 ID
+| <code>joes_addons_for_abmc:fire_charge_launcher</code>
+|}
+
+'''烈焰弹发射器'''（英文：Fire Charge Launcher）是一把"'''火球机关枪'''"：右键发射[https://zh.minecraft.wiki/w/烈焰人 烈焰人]那种火球，而且'''按住不放就能连发'''——每 0.5 秒一发，射速远胜原版任何远程武器。它的火球飞行速度是原版火球的 2 倍，命中后不爆炸，但会把目标'''点着'''、并在地面上'''放一把火'''。
+
+== 获取 ==
+
+* '''[[幸运物品池]]'''：开[[幸运方块]]时可以抽到（每件给 1 个）；
+* '''创造模式物品栏'''里也有一把；
+* '''没有合成配方'''。
+
+== 使用 ==
+
+{| class="wikitable"
+! 操作
+! 效果
+|-
+| 右键（单击）
+| '''立刻'''打出一发（不必等间隔）
+|-
+| 按住右键
+| 从按下那一刻起，每 '''10 刻（0.5 秒）'''自动补发一发
+|-
+| 手持姿势
+| 拉弓（与原版弓一致：按住期间移动速度下降）
+|-
+| 射击方向
+| 玩家'''视线方向'''；火球从眼前 1.2 格处出现，不会糊在自己脸上
+|}
+
+* 每一发消耗 '''1 点耐久'''（共 512 点）；打空时物品损坏，自动停止发射；
+* 发射音效是原版'''烈焰弹'''的使用音。
+
+== 发射物：烈焰人火球 ==
+
+射出去的是'''原版烈焰人火球'''（<code>Minecraft:small_fireball</code>），行为完全照搬原版：
+
+{| class="wikitable"
+! 项目
+! 表现
+|-
+| 命中生物
+| '''5 点伤害'''，并把目标'''点燃 5 秒'''（如果伤害被闪避/免疫，则连点燃一起撤销）
+|-
+| 命中方块
+| 在命中面的'''相邻空气格放一把火'''（原版行为：会烧起来）
+|-
+| 爆炸
+| '''不会爆炸'''
+|-
+| 重力
+| '''无重力'''，沿发射方向直线飞行
+|-
+| 速度
+| 初速 0.2 格/刻，并每刻沿飞行方向继续加速（相当于原版火球速度曲线的 '''2 倍'''）
+|-
+| 能否被打掉
+| 不能：它免疫一切伤害（<code>hurt</code> 恒为 false），只能等它自己撞上东西
+|}
+
+== 耐久与附魔 ==
+
+* 耐久 '''512'''，每发消耗 1 点，可发射 512 次；
+* 附魔能力 14，可附 [https://zh.minecraft.wiki/w/耐久 耐久]、[https://zh.minecraft.wiki/w/经验修补 经验修补]、[https://zh.minecraft.wiki/w/消失诅咒 消失诅咒]（与原版弓/弩同一套标签）；
+* '''没有修理材料'''：铁砧上只能用"两件同名物品合并"或经验修补来补耐久。
+
+== 细节与对比 ==
+
+* 它的火球实体类型就是原版的 <code>minecraft:small_fireball</code>，因此本模组"可格挡弹射物"的默认名单（<code>minecraft:small_fireball</code> 等）'''覆盖它'''——用[[闪烁西瓜刀]]或权杖格挡可以把火球挡下来；
+* 物品栏里的图标沿用'''原版[https://zh.minecraft.wiki/w/烈焰弹 烈焰弹]'''的贴图，所以单看背包很难分辨它是什么；
+* 想要"单发、更狠、有爆炸"的版本，看[[烈焰手杖]]——它是本物品的子类，只换了发射物与速度：
+
+{| class="wikitable"
+! 项目
+! 烈焰弹发射器
+! [[烈焰手杖]]
+|-
+| 发射物
+| 原版烈焰人火球
+| 恶魂火球式火球（自定义）
+|-
+| 单发伤害
+| 5 点 + 点燃 5 秒
+| '''6 点'''
+|-
+| 爆炸
+| 无（只在命中处放火）
+| '''威力 2'''
+|-
+| 受重力
+| 否
+| '''是'''
+|-
+| 射速
+| 每 10 刻一发（可连发）
+| 每次按键一发（不连发）
+|-
+| 手持动作
+| 拉弓
+| 挥臂
+|}
+
+== 数据与标识 ==
+
+{| class="wikitable"
+! 项目
+! 值
+|-
+| 物品 ID
+| <code>joes_addons_for_abmc:fire_charge_launcher</code>
+|-
+| 物品属性
+| <code>durability(512)</code>、<code>stacksTo(1)</code>
+|-
+| 附魔标签
+| <code>#minecraft:enchantable/durability</code>（→ 同时获得"消失诅咒"资格，因为原版的 vanish 标签包含它）
+|-
+| 发射物实体
+| 原版 <code>minecraft:small_fireball</code>
+|-
+| 发射间隔
+| 10 刻（<code>FIRE_INTERVAL_TICKS</code>）
+|-
+| 火球速度
+| 0.2（<code>FIREBALL_SPEED</code>，原版基准 0.1 的 2 倍）
+|-
+| 物品模型
+| <code>models/item/fire_charge_launcher.json</code>（<code>layer0 = minecraft:item/fire_charge</code>）
+|}
+
+== 琐事 ==
+
+* 它大概是本模组'''射速最快'''的一件武器：'''每秒 2 发'''（每 10 刻一发），而且不需要任何弹药；
+* 火球本身不爆炸，所以它更像"'''火焰喷射器'''"——靠点燃与放火持续压血，而不是一发入魂；
+* 因为火球无重力、又会越飞越快，远距离射击时准星要'''略微往下压'''（火球会沿直线飞，不会下坠）；
+* 按住右键连发时移动会变慢（拉弓姿势的代价），想边走边打只能一下一下点。
+
+[[Category:物品]]
+[[Category:武器]]
+[[Category:JOE's Addons for ABMC]]

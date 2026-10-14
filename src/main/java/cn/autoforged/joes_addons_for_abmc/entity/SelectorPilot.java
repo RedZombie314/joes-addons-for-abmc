@@ -186,7 +186,7 @@ public final class SelectorPilot {
     private static boolean isNearPossessedShell(ServerPlayer player) {
         return !player.serverLevel().getEntitiesOfClass(PlayerShellEntity.class,
             player.getBoundingBox().inflate(SupportGift.SHELL_RADIUS),
-            shell -> shell.isAlive() && shell.isOrbAttached()).isEmpty();
+            shell -> shell.isAlive() && shell.isCoreBackedShell()).isEmpty();
     }
 
     /**

@@ -171,7 +171,14 @@ public final class LuckyDimensionSectionRenderer {
         var pose = poseStack.last();
 
         for (Direction direction : Direction.values()) {
-            if (region.getBlockState(pos.relative(direction)).canOcclude()) continue;
+            // 这一面该不该画：<b>交给原版 {@code Block#shouldRenderFace} 的完整判据</b>
+            // （见 LuckyDimensionBlockRenderer#shouldDrawFace 里"只判 canOcclude() 会让雪/半砖接触面变透明"那段）。
+            // 这里一个面都不能少画：幸运维度方块的自身模型是 RenderShape.INVISIBLE，
+            // 外观 100% 靠下面这些四边形撑着，剃错一面就是玩家从那一面看穿地形（透视）。
+            // 注意这一步会顺带读一次邻居状态 —— 越界防护已由上面那次 getBlockState 完成：
+            // 区块网格与本次回调对不上时，本格自己的读取就先失败并 continue 了，
+            // 而只要对得上，邻居最多落在相邻区块里，仍在 3×3 区块网格范围内。
+            if (!LuckyDimensionBlockRenderer.shouldDrawFace(region, mimic, pos, direction)) continue;
             for (var quad : model.getQuads(mimic, direction, random)) {
                 buffer.putBulkData(pose, quad, 1.0F, 1.0F, 1.0F, 1.0F, light, OverlayTexture.NO_OVERLAY);
             }

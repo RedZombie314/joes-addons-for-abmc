@@ -1,0 +1,144 @@
+<!-- =====================================================================
+     页面：翅膀（Wings）
+     格式：MediaWiki wikitext（可直接粘贴到 MediaWiki / Fandom / Miraheze 页面源码）
+     适用模组版本：JOE's Addons for ABMC 6.7.35（Minecraft 1.21.1 / NeoForge 21.1.x）
+     内容依据源码：
+       item/WingsItem.java（胸甲栏装备、耐久 1024、isUsable 规则、羽毛修理）
+       ModMain.java handleWingsTick / hasOtherFlightSource（授予 mayfly、耐久消耗、飞行来源互不干扰）
+       client/WingsLayer.java、client/WingsModel.java（鞘翅模型 + 本模组贴图 + 正弦扇动）
+       event/ClientEvents.java addWingsLayers（渲染层注册到玩家与盔甲架）
+       src/main/resources/data/minecraft/tags/item/enchantable/durability.json、enchantable/vanishing.json
+     链接约定：原版 Minecraft 的词条一律用完整 URL 外链到中文 Minecraft Wiki（zh.minecraft.wiki/w/页面名），
+           本模组自己的内容（幸运方块、幸运维度、幸运核心等）用站内链接。
+           若本站已配好跨 wiki 前缀（Miraheze 见 Special:Interwiki/add，前缀建议 mcw、
+           URL 填 https://zh.minecraft.wiki/w/$1），可把 [https://zh.minecraft.wiki/w/X X] 批量替换成 [[mcw:X|X]]。
+     ===================================================================== -->
+
+{| class="wikitable" style="float:right; width:23em; margin:0 0 1em 1em; font-size:90%;"
+|+ style="font-size:115%; font-weight:bold;" | 翅膀
+|-
+| colspan="2" style="text-align:center;" | [[File:Wings.png|150px]]
+|-
+! 类型
+| 装备（穿在'''胸甲'''栏）
+|-
+! 耐久
+| '''1024'''
+|-
+! 堆叠上限
+| 1
+|-
+! 效果
+| 装备后获得'''飞行能力'''（不是滑翔）
+|-
+! 耐久消耗
+| 生存 / 冒险模式'''飞行中'''每 '''3 秒'''扣 1 点
+|-
+! 铁砧修理
+| [https://zh.minecraft.wiki/w/羽毛 羽毛]
+|-
+! 附魔能力
+| 14
+|-
+! 可附魔
+| [https://zh.minecraft.wiki/w/耐久 耐久]、[https://zh.minecraft.wiki/w/经验修补 经验修补]、[https://zh.minecraft.wiki/w/消失诅咒 消失诅咒]
+|-
+! 获取
+| [[幸运物品池]] / 创造模式物品栏（'''无合成配方'''）
+|-
+! 物品 ID
+| <code>joes_addons_for_abmc:wings</code>
+|}
+
+'''翅膀'''（英文：Wings）是一件穿在'''[https://zh.minecraft.wiki/w/胸甲 胸甲]栏'''的装备：外形用[https://zh.minecraft.wiki/w/鞘翅 鞘翅]的模型渲染，但给出的效果不是滑翔，而是'''真正的飞行能力'''——穿上它，你在生存模式里也能像创造模式那样自由飞。
+
+代价是它'''只有 1024 点耐久'''，而且'''只在"正在飞"的时候掉耐久'''：每 3 秒扣 1 点。耐久只剩最后 1 点时它就算"用坏了"，不再给飞行能力——所以它'''永远不会被飞坏'''，只会变成一件飞不动的翅膀等着你修。
+
+== 获取 ==
+
+* '''[[幸运物品池]]'''：开[[幸运方块]]时可以抽到（每件给 1 个）；
+* '''创造模式物品栏'''里也有一件；
+* '''没有合成配方'''。
+
+== 穿戴与外观 ==
+
+* 拿在手里'''右键即可穿上'''（穿到胸甲栏）；'''[https://zh.minecraft.wiki/w/发射器 发射器]'''也能把它装到胸甲栏上；穿戴音效与鞘翅相同；
+* 外形按'''原版鞘翅的模型'''渲染，但用的是本模组自己的贴图（<code>textures/entity/wings.png</code>，分辨率是原版鞘翅贴图的 10 倍）；
+* 物品栏里的图标沿用'''原版鞘翅'''的贴图；
+* 渲染层挂在'''玩家（两种手臂模型）与盔甲架'''上——和原版鞘翅的覆盖范围一致。
+
+== 效果：飞行 ==
+
+* 只要胸甲栏穿着翅膀、并且耐久没用坏，服务端每刻会给你'''<code>mayfly</code>（飞行能力）'''——也就是创造模式那种飞行：双击空格起飞、自由上下、'''不消耗饥饿值'''；
+* 它'''不提供鞘翅滑翔'''：翅膀的滑翔开关被显式关掉了，飞行完全由上面那条能力实现，所以不会出现"两种飞行叠在一起"的怪状态；
+* '''创造模式与旁观模式不参与'''这套授受（它们本来就自带飞行）；
+* 它'''不会和本模组其它飞行来源打架'''：青金石/命令方块/Herobrine 权杖、Omega 各自管各自的飞行；翅膀撤销时只会收回'''自己授予的那一次'''，如果发现还有别的来源在生效就完全不碰——所以你可以一边握着权杖一边穿翅膀，不会"飞一下就被打断"；
+* 玩家退出游戏、离开世界（含换维度、死亡重生）时会清掉这条"翅膀在给你飞行"的记录。
+
+== 耐久 ==
+
+{| class="wikitable"
+! 项目
+! 规则
+|-
+| 最大耐久
+| '''1024'''
+|-
+| 消耗
+| '''装备 + 生存/冒险模式 + 正在飞行'''（不是"会飞"，而是"真的在飞"）→ 每 '''60 刻（3 秒）'''扣 1 点
+|-
+| 用坏
+| 耐久 ≤ 最大值 − 1（也就是只剩最后 1 点）时判定为"用坏"：'''不再提供飞行能力'''，因此也不会继续掉耐久
+|-
+| 修理
+| 铁砧 + [https://zh.minecraft.wiki/w/羽毛 羽毛]
+|-
+| 附魔
+| [https://zh.minecraft.wiki/w/耐久 耐久]、[https://zh.minecraft.wiki/w/经验修补 经验修补]、[https://zh.minecraft.wiki/w/消失诅咒 消失诅咒]（与鞘翅同一套）
+|}
+
+也就是说：'''站着不动、走路、滑翔都不掉耐久'''，只有真正在天上飞才掉。按 3 秒 1 点算，1024 点耐久≈'''50 分钟'''的纯飞行时间。
+
+== 动画 ==
+
+翅膀有一点点"活"的表现：
+
+* '''站在地上'''时，两翼保持原版鞘翅"未滑翔"的角度；'''潜行'''时改用原版潜行姿态（并且整体上移一点）；
+* '''在空中'''（判定用的是"是否离地"，而不是"是否在飞"）时，两翼会在"未滑翔"与"滑翔"两套角度之间'''按正弦曲线来回插值'''，一个来回 '''2 秒'''——看起来就是在缓缓扇动；
+* 用"离地"而不是"飞行状态"来判断，是为了让'''别的玩家也能看到动画'''：飞行状态只同步给本人，离地状态所有客户端都知道。
+
+== 数据与标识 ==
+
+{| class="wikitable"
+! 项目
+! 值
+|-
+| 物品 ID
+| <code>joes_addons_for_abmc:wings</code>
+|-
+| 物品属性
+| <code>durability(1024)</code>、<code>stacksTo(1)</code>
+|-
+| 装备栏位
+| 胸甲（<code>EquipmentSlot.CHEST</code>）
+|-
+| 附魔标签
+| <code>#minecraft:enchantable/durability</code>、<code>#minecraft:enchantable/vanishing</code>
+|-
+| 物品模型
+| <code>models/item/wings.json</code>（<code>layer0 = minecraft:item/elytra</code>）
+|-
+| 实体贴图
+| <code>joes_addons_for_abmc:textures/entity/wings.png</code>
+|}
+
+== 琐事 ==
+
+* 它和[https://zh.minecraft.wiki/w/鞘翅 鞘翅]'''同栏位、同模型、同附魔、同修理音效'''，区别只有两点：翅膀给的是'''飞行'''（随时悬停），鞘翅给的是'''滑翔'''（只能往下滑）；
+* 因为最大耐久只有 1024、而且只在飞行时掉，它的定位更像"'''战略道具'''"：赶路、逃命、上天下矿时穿上，平时放在背包里省耐久；
+* 它会"用坏但不会消失"——耐久见底时只是不再给飞行，所以不用担心某一刻突然失去一双翅膀；
+* 翅膀的贴图是 10 倍分辨率的手绘原图，放大看比原版鞘翅清晰得多。
+
+[[Category:物品]]
+[[Category:装备]]
+[[Category:JOE's Addons for ABMC]]

@@ -1,0 +1,159 @@
+<!-- =====================================================================
+     页面：Category:生物（分类页）
+     ★ 上传到 MediaWiki 时，页面标题必须是「Category:生物」（分类命名空间）。
+       本文件名里的「分类-」只是为了绕开 Windows 不允许文件名含冒号的限制，
+       粘贴正文到 [[Category:生物]] 页面即可，页面内容里的分类标签不需要改。
+     ---------------------------------------------------------------------
+     格式：MediaWiki wikitext（可直接粘贴到 MediaWiki / Fandom / Miraheze 页面源码）
+     适用模组版本：JOE's Addons for ABMC 6.7.35（Minecraft 1.21.1 / NeoForge 21.1.x）
+     内容依据：
+       entity/ModEntities.java（全部 32 个实体注册：本文的"自有生物"表来自它）
+       lang/zh_cn.json、lang/en_us.json（实体显示名；无显示名的即为内部/技术实体）
+       entity/BeeperEntity、PlayerShellEntity、OrbOfLuckEntity、LuckySelectorEntity、EnchantedOrigamiEntity、
+       GoldNuggetPig、FireworkPig、PilotGoldenHorseEntity、OrbExplosive*（各生物的一句话说明）
+       BeeBossData.java、ModMain（BeeBoss / 女巫Boss 是"原版实体 + 标记"，不是新实体类型）
+       block/LuckyCreatureTypes.java（幸运生物事件与生物类型的对应关系）
+     链接约定：原版 Minecraft 的词条一律用完整 URL 外链到中文 Minecraft Wiki（zh.minecraft.wiki/w/页面名），
+           本模组自己的内容用站内链接。若本站配好跨 wiki 前缀（Miraheze：Special:Interwiki/add，
+           前缀建议 mcw、URL 填 https://zh.minecraft.wiki/w/$1），可把 [https://zh.minecraft.wiki/w/X X]
+           批量替换成 [[mcw:X|X]]。
+     ===================================================================== -->
+
+'''生物'''分类收录 JOE's Addons for ABMC 添加的'''生物实体'''，以及被它'''改造过的原版生物'''。
+
+页面只要在末尾加上 <code><nowiki>[[Category:生物]]</nowiki></code> 就会出现在下面的成员列表里（列表由 MediaWiki 自动生成，排在最下方）。纯技术实体（弹射物、传送门、掉落物、坠落方块、展示实体等）请归入 <code>[[:Category:实体]]</code>，不要放进本分类。
+
+== 本模组自有的生物 ==
+
+{| class="wikitable"
+! 生物
+! 实体 ID
+! 类型
+! 一句话
+! 页面
+|-
+| '''[[苦力蜂]]'''
+| <code>beeper</code>
+| [https://zh.minecraft.wiki/w/蜜蜂 蜜蜂]类
+| 飞到玩家身边'''自爆'''（威力 10），喂花可以降低它的"耐心"
+| ✔
+|-
+| '''[[玩家空壳]]'''
+| <code>player_shell</code>
+| 类玩家身体（PathfinderMob）
+| 用玩家模型渲染的身体：[[幸运核心]]附体的"体外生命"、[[变形药水]]的"体验卡"
+| ✔
+|-
+| '''[[幸运核心]]'''
+| <code>orb_of_luck</code>
+| 动物类（无 AI）
+| 整套附体系统的本体；INITIAL 阶段会随机往外扔东西
+| ✔
+|-
+| '''[[幸运选择器]]'''
+| <code>lucky_selector</code>
+| 动物类
+| 由[[幸运选择器|旁观操控]]的"选区框"，可框选结构并抓走幸运生物
+| ✔
+|-
+| '''[[蜜蜂Boss]]'''
+| <code>minecraft:bee</code>（带 <code>jafa_beeboss</code> 标记）
+| 原版蜜蜂的强化版
+| 50 血、5 倍体型、持[[蜂巢权杖]]放蜂群
+| ✔
+|-
+| '''附魔千纸鹤'''
+| <code>enchanted_origami</code>
+| 飞行召唤物
+| 在天空盘旋：远程发射魔咒子弹、近战每 30 刻造成 1 点伤害；无视重力、有"收容者"
+| —
+|-
+| '''金粒喷泉猪'''<br><small>（Gold Nugget Fountain Pig）</small>
+| <code>gold_nugget_pig</code>
+| 猪的变体
+| 每 4 刻（每秒 5 颗）喷一次金粒
+| —
+|-
+| '''烟花猪'''<br><small>（无独立显示名）</small>
+| <code>firework_pig</code>
+| 猪的变体
+| 以 20 格/秒直线飞行（烟花式冲刺）
+| —
+|-
+| '''[[金马铠马]]'''<br><small>（Golden Armored Horse）</small>
+| <code>pilot_golden_horse</code>
+| 马的变体
+| '''会飞、可操控'''（操控方式与旁观操控[[幸运选择器]]相同）
+| —
+|-
+| '''爆裂猫'''
+| <code>orb_explosive_cat</code>
+| 附体召唤物
+| 直线匀加速飞行、撞到即爆（威力 1）；飞满 10 秒必爆
+| —
+|-
+| '''爆裂僵尸'''
+| <code>orb_explosive_zombie</code>
+| 附体召唤物
+| 同上，爆炸威力 '''2'''
+| —
+|-
+| '''爆裂史莱姆'''
+| <code>orb_explosive_slime</code>
+| 附体召唤物
+| 同上，爆炸威力 '''1'''
+| —
+|-
+| '''爆裂骷髅'''
+| <code>orb_explosive_skeleton</code>
+| 附体召唤物
+| 同上，爆炸威力 '''2'''
+| —
+|-
+| '''权杖 TNT 苦力怕'''<br><small>（无独立显示名）</small>
+| <code>tnt_staff_creeper</code>
+| 苦力怕的变体
+| [[权杖|TNT 权杖]]扔出去的自爆苦力怕（有专属死亡消息）
+| —
+|-
+| '''女巫Boss'''
+| <code>minecraft:witch</code>（带标记）
+| 原版女巫的强化版
+| 被改造过的[https://zh.minecraft.wiki/w/女巫 女巫]小屋里的 Boss 形态
+| —
+|}
+
+== 由原版生物"扮演"的成员 ==
+
+本模组有不少"看起来很新、其实是原版生物 + 标记/装备"的角色，它们不占用新的实体 ID，因此没有独立的生物条目，但读者的搜索习惯上会当成生物：
+
+* '''[[蜜蜂Boss]]'''：一只原版蜜蜂，靠 NBT 标记 <code>jafa_beeboss</code> 获得 50 血 / 5 倍体型 / 200 格索敌；
+* '''女巫Boss'''：一只原版女巫，出现在被改造过的[https://zh.minecraft.wiki/w/女巫 女巫]小屋里；
+* '''Bob'''：[[幸运核心]]与[[幸运方块]]召唤的'''原版僵尸'''（穿了一整套强化钻石装备）；
+* '''骷髅马骑士'''：原版[https://zh.minecraft.wiki/w/骷髅马 骷髅马] + 原版[https://zh.minecraft.wiki/w/骷髅 骷髅]的组合，由[[幸运核心]]召唤。
+
+== 不算"生物"的模组实体 ==
+
+下面这些同样是本模组注册的实体，但它们是弹射物或技术实体，属于 <code>[[:Category:实体]]</code>：
+
+* 弹射物：闪烁西瓜刀投掷物、海晶箭、[[爆炸之箭]]、[[烈焰手杖]]火球、幸运烟花火箭、掷出的奶桶、魔咒子弹、Him 头颅；
+* 技术实体：[[幸运维度]]传送门、药水传送门、可持有的结构、幸运物品（只能右键拾取的掉落物）、反弹盾牌展示体、水井/岩浆牢笼等结构展示物；
+* 坠落方块：基岩 / 青金石 / 变形 / 唤醒 / 尖滴水石五种"下落的方块"。
+
+== 相关分类 ==
+
+* <code>[[:Category:Boss]]</code>：本分类中的 Boss 级成员（[[蜜蜂Boss]]、[[幸运核心]]）；
+* <code>[[:Category:实体]]</code>：上一条里的弹射物与技术实体；
+* <code>[[:Category:JOE's Addons for ABMC]]</code>：全部页面。
+
+== 成员一览（手工副本） ==
+
+* [[苦力蜂]]
+* [[玩家空壳]]
+* [[幸运核心]]
+* [[幸运选择器]]
+* [[蜜蜂Boss]]
+
+（本页最下方由 MediaWiki 自动生成的列表才是权威名单；上面这份只是方便在没有成员时也能看到内容。）
+
+[[Category:JOE's Addons for ABMC]]

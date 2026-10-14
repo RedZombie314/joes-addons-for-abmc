@@ -158,6 +158,11 @@ public final class OrbPossessionFlightAI {
      * （正是用户反馈的"被打到高处之后一直不下来"）。所以除了 {@link #tick} 里那一处，
      * {@code PlayerShellEntity#tick()} 也每刻问一次这个方法（见那边的调用点）。
      *
+     * <h2>下降期间必须每刻清空坠落距离</h2>
+     * 这是一次<b>飞行形态自己控的缓降</b>，不是自由落体，不该因为"从高处下来"就攒一记摔落伤害 ——
+     * 与 {@link #descendToIdleHover} 完全同一个道理（那边一直有这一句，有目标这一路原先漏了）。
+     * 漏了的表现就是实测反馈的那条：<b>带翅膀的空壳下降落地时会挨摔</b>。
+     *
      * @return true = 这条规则生效了（竖直速度已被钉成匀速下降）
      */
     static boolean descendIfTooHigh(PlayerShellEntity shell) {
@@ -166,6 +171,7 @@ public final class OrbPossessionFlightAI {
         }
         Vec3 movement = shell.getDeltaMovement();
         shell.setDeltaMovement(movement.x, -DESCEND_SPEED_PER_TICK, movement.z);
+        shell.fallDistance = 0.0F;
         shell.hasImpulse = true;
         return true;
     }

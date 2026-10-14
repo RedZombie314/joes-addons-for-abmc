@@ -391,8 +391,8 @@ public class ModMain {
     private static final java.util.Map<java.util.UUID, net.minecraft.server.level.ServerBossEvent> WITCH_BOSS_EVENTS =
         new java.util.concurrent.ConcurrentHashMap<>();
     /** 女巫Boss 血条上显示的名字：只显示「女巫」，不带任何阶段后缀（阶段差异由血条颜色体现）。
-     *  <p>注意不要拿 {@link #witchBossStageName(int)} 来当血条名——那个方法返回的是
-     *  「女巫Boss-生物阶段」这类带阶段字样的文本，它现在只给 Jade 提示插件用。 */
+     *  <p>注意不要拿 {@link #witchBossStageLangKey(int)} 来当血条名——那个方法给的是
+     *  「女巫Boss-生物阶段」这类带阶段字样的文案<b>键</b>，它现在只给 Jade 提示插件用。 */
     private static final String WITCH_BOSS_BAR_NAME = "女巫";
     /** 已登记的女巫Boss UUID 集：由 {@link #updateWitchBossBar} 每刻遍历，替代“全世界扫描所有女巫”。
      *  每个被标记为女巫Boss 的实体在此登记，避免每刻 getEntitiesOfClass 全图遍历造成卡顿。 */
@@ -582,9 +582,9 @@ public class ModMain {
         public int luckyDimEntryX = Integer.MIN_VALUE;
         /** 幸运维度：玩家<b>初次</b>进入时所在的 Z 坐标。 */
         public int luckyDimEntryZ = Integer.MIN_VALUE;
-        /** 「幸运宝珠神庙」是否已经生成过（每个存档只生成一座）。 */
+        /** 「幸运核心神庙」是否已经生成过（每个存档只生成一座）。 */
         public boolean orbTemplePlaced = false;
-        /** 已选定但尚未放置的「幸运宝珠神庙」原点 [ox, oy, oz]；null = 还没选址。 */
+        /** 已选定但尚未放置的「幸运核心神庙」原点 [ox, oy, oz]；null = 还没选址。 */
         public int[] orbTempleTarget = null;
 
         /** 是否已记录过「玩家初次进入幸运维度」的坐标。 */
@@ -750,8 +750,6 @@ public class ModMain {
     private static final Set<BlockPos> areaMiningInProgress = new HashSet<>();
     private static final List<StaffMoveTask> PENDING_STAFF_MOVES = new ArrayList<>();
     private static final List<BonemealTask> PENDING_BONEMEAL_TASKS = new ArrayList<>();
-    // 幸运维度传送门激活延迟任务：投掷器入水后延迟 1~1.5 秒再召唤闪电并激活
-    private static final List<PortalActivationTask> PENDING_PORTAL_ACTIVATIONS = new ArrayList<>();
     private static final Map<java.util.UUID, Integer> SMELT_COOLDOWNS = new java.util.HashMap<>();
     private static final java.util.Map<BlockPos, Integer> FURNACE_BLOCK_COOLDOWNS = new java.util.HashMap<>();
 
@@ -1218,7 +1216,15 @@ public class ModMain {
         // 所以原版与其它 mod 的生物一视同仁；sync 由 NeoForge 自动下发，无需自定义网络包）
         cn.autoforged.joes_addons_for_abmc.entity.DarkCloneAttachments.ATTACHMENT_TYPES.register(modEventBus);
 
-        modContainer.registerConfig(Type.COMMON, ModConfig.SPEC);
+        // 配置按"谁读它"分成两份（见 ModConfig 类注释）：
+        //   COMMON = 玩法 + 服务端判定用到的值 + 判定与渲染共用的权杖偏移（双端都注册）；
+        //   CLIENT = 只有客户端才读的视觉 / 客户端音效 / HUD 微调（只在客户端注册 —— 专用服务器
+        //            上没有客户端配置可加载，注册它没意义）。
+        // 注意：把服务端会读的键放进 CLIENT 会让专用服务器一读就抛异常，挪键前先查读取点。
+        modContainer.registerConfig(Type.COMMON, ModConfig.COMMON_SPEC);
+        if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient()) {
+            modContainer.registerConfig(Type.CLIENT, ModConfig.CLIENT_SPEC);
+        }
 
         // 在 Neoforge 模组菜单中为该 mod 显示“配置”按钮，点击进入基于 ModConfigSpec 生成的配置编辑界面。
         // ConfigurationScreen 为客户端类，仅存在于客户端分发；专用服务器上不注册以免解析客户端类。
@@ -1260,8 +1266,8 @@ public class ModMain {
         NeoForge.EVENT_BUS.addListener(ModMain::onEntityTickPost);
         NeoForge.EVENT_BUS.addListener(ModMain::onTransmutedRightClickGuard);
         NeoForge.EVENT_BUS.addListener(ModMain::onTransmutedRightClickBlock);
-        // 调试棒（原版 debug stick）右击幸运方块 → 替换成幸运传送门
-        NeoForge.EVENT_BUS.addListener(ModMain::onDebugStickRightClickLuckyBlock);
+        // 木棍右击幸运方块 → 替换成幸运传送门（用户指定：原来是调试棒，改成木棍）
+        NeoForge.EVENT_BUS.addListener(ModMain::onStickRightClickLuckyBlock);
         NeoForge.EVENT_BUS.addListener(ModMain::onMorphProjectileRightClick);
         NeoForge.EVENT_BUS.addListener(ModMain::onMorphEntityInteract);
         NeoForge.EVENT_BUS.addListener(ModMain::onMorphEntityInteractSpecific);
@@ -5407,7 +5413,8 @@ public class ModMain {
      *   <li>「知错就改」(get_rid_of_greed)：击败**附体母体**（被核心附体真玩家时产生的那具 boss 空壳）。
      *       判定放在 {@link #onLivingDeath}：只有母体走 {@code PlayerShellEntity.die()}
      *       （附体超时/切创造/核心自己血量归零都是 {@code discard()} 的正常收场，不会触发）；
-     *       刷怪蛋放出的、被同化产生的空壳没有 {@code possessedOrbUuid}，同样不算；</li>
+     *       刷怪蛋放出的、被同化产生的空壳来源不是 {@code ShellOrigin.POSSESSION}
+     *       （见 {@link cn.autoforged.joes_addons_for_abmc.entity.PlayerShellEntity#getShellOrigin()}），同样不算；</li>
      *   <li>「见证奇迹」(witness_the_impossible)：「知错就改」的子节点，隐藏 + 挑战进度。
      *       击杀了末影龙/凋灵的那一击出自附体这一侧时，位于**出手那具空壳** 50 格以内的在线玩家
      *       点亮**对应那一只**的条件，见 {@link #onLivingDeath}；不限空壳类型
@@ -5492,7 +5499,7 @@ public class ModMain {
     @Nullable
     private static PlayerShellEntity possessionShellOf(@Nullable Entity attacker) {
         if (attacker instanceof PlayerShellEntity shell) {
-            return shell.isOrbAttached() ? shell : null;
+            return shell.isCoreBackedShell() ? shell : null;
         }
         if (attacker == null || attacker.level().getServer() == null) return null;
         UUID orbUuid = cn.autoforged.joes_addons_for_abmc.entity.OrbPossessionSummons.orbOf(attacker);
@@ -5662,7 +5669,6 @@ public class ModMain {
         player.setInvisible(false);
         player.fallDistance = 0.0F;
         restoreTransmutationScale(player);
-        restoreTransmutationCamera(player);
         sendTransmutationState(player, false, -1);
         cleanupPlayerTransmutation(uid);
     }
@@ -6785,10 +6791,12 @@ public class ModMain {
                     toRemove.add(s);
                 } else if (it == Items.SPLASH_POTION) {
                     s.set(ModDataComponents.TRANSPORT_MODE.get(), "random");
-                    s.set(DataComponents.CUSTOM_NAME, net.minecraft.network.chat.Component.literal("随机传送药水"));
+                    s.set(DataComponents.CUSTOM_NAME,
+                        cn.autoforged.joes_addons_for_abmc.item.ModPotionNames.transportRandom());
                 }
             } else if (isPotionOf(s, ModPotions.TRANSMUTATION)) {
-                s.set(DataComponents.CUSTOM_NAME, net.minecraft.network.chat.Component.literal("变形为§krandom"));
+                s.set(DataComponents.CUSTOM_NAME,
+                    cn.autoforged.joes_addons_for_abmc.item.ModPotionNames.transmuteRandom());
             }
         }
         var vis = net.minecraft.world.item.CreativeModeTab.TabVisibility.PARENT_AND_SEARCH_TABS;
@@ -8225,15 +8233,20 @@ public class ModMain {
     }
 
     /**
-     * 调试棒（原版 {@code minecraft:debug_stick}）右击<b>幸运方块</b>：把该方块替换成幸运传送门。
+     * <b>木棍</b>（原版 {@code minecraft:stick}）右击<b>幸运方块</b>：把该方块替换成幸运传送门。
      *
-     * <p>调试棒平时用来循环方块状态，所以替换后取消事件，避免它继续改状态。
+     * <p>用户指定：以前用的是调试棒（{@code debug_stick}），改成木棍。
+     * 之所以原来要取消事件，是因为调试棒平时用来循环方块状态；换成木棍之后取消事件仍然保留 ——
+     * 免得这次右键再走一遍原版/别的模组的"使用方块"逻辑（也让动作干脆、不会顺带挥手用掉别的东西）。
      * 只在服务端执行（客户端由方块更新同步）。
+     *
+     * <p>这是现在<b>唯一</b>手工开传送门的办法（另一条"2×2 水 + 金块围一圈、扔投掷器进去"的摆法
+     * 已按用户要求移除，见 {@code LuckyPortalBlockEntity}）。
      */
-    private static void onDebugStickRightClickLuckyBlock(
+    private static void onStickRightClickLuckyBlock(
         net.neoforged.neoforge.event.entity.player.PlayerInteractEvent.RightClickBlock event) {
         if (event.getLevel().isClientSide()) return;
-        if (!event.getItemStack().is(net.minecraft.world.item.Items.DEBUG_STICK)) return;
+        if (!event.getItemStack().is(net.minecraft.world.item.Items.STICK)) return;
         BlockPos pos = event.getPos();
         if (!event.getLevel().getBlockState(pos)
             .is(cn.autoforged.joes_addons_for_abmc.block.ModBlocks.LUCKY_BLOCK.get())) {
@@ -8697,32 +8710,70 @@ public class ModMain {
     // 正式入口定下来之后，这一组连同注册处那几行一起删掉即可，LuckyRoster 本身不用动。
 
     /**
-     * debug 池当前内容的可读文本（{@code /jafa luckyblockresult} 的反馈用）。
+     * 当前"幸运方块被指定开出的东西"的可读文本（{@code /jafa luckyblockresult} 的反馈用）。
      *
-     * <p>这里读的是 <b>debug 池本体</b>（{@code LuckyEvents#debugPool()}）而不是那份物品名单：
-     * 池子才是"DEBUG_MODE 下真正会开出什么"的唯一依据。池内的"物品池物品"子事件是惰性注册的，
-     * 所以先补一次 {@code registerPoolItemEvents}（幂等，重复调用安全）再读，免得看到空池。
+     * <p>语义（用户指定 6.8.9 起）：不再是"往池子里塞几件、等概率抽"，而是<b>指定哪一个就只开出哪一个</b>。
+     * 指定值存在 {@code DebugOverrides} 里（<b>落盘</b>，退出重进还在），候选只围绕默认能开出的
+     * 物品 / 生物 / 结构展开（见 {@code LuckyOutcomeCatalog}）。
+     *
+     * <p>这里同时把整份候选表列出来（按分类分组）—— 输入名字、id 路径或完整 id 都能指定，
+     * 所以直接在反馈里给出可用写法，省得再敲一条 list 命令。
      */
     private static String luckyBlockResultText(ServerLevel level) {
-        cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.registerPoolItemEvents(level);
-        java.util.List<cn.autoforged.joes_addons_for_abmc.block.LuckyEvent> pool =
-            cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.debugPool();
+        cn.autoforged.joes_addons_for_abmc.block.LuckyOutcomeCatalog.Entry forced =
+            forcedLuckyOutcome(level);
         StringBuilder text = new StringBuilder();
-        if (pool.isEmpty()) {
-            text.append("debug 池现在是空的（DEBUG_MODE 下会退回幸运名单 / 随机抽取）；"
-                + "用 /jafa luckyblockresult <物品名> 往里加物品");
+        if (forced == null) {
+            text.append("当前未指定：破坏幸运方块按正常规则（幸运名单 / 随机抽取）");
         } else {
-            text.append("debug 池：共 ").append(pool.size()).append(" 个（DEBUG_MODE 下破坏幸运方块时等概率抽一个，各 1/")
-                .append(pool.size()).append("）");
-            for (int i = 0; i < pool.size(); i++) {
-                text.append("\n  ").append(i + 1).append(". [").append(pool.get(i).id()).append("] ")
-                    .append(pool.get(i).description());
-            }
+            text.append("当前指定：").append(forced.name())
+                .append("（id=").append(forced.id()).append("）—— 破坏幸运方块只会开出它");
         }
         if (!cn.autoforged.joes_addons_for_abmc.config.ModConfig.DEBUG_MODE.get()) {
-            text.append("\n（注意：当前 debug 模式未开启，池里的东西不会被抽到）");
+            text.append("\n（注意：debug 模式未开启，指定的东西不会被使用；指定值仍留在存档里）");
         }
+        text.append("\n可指定项（写成名字、id 路径或完整 id 都行）：");
+        for (cn.autoforged.joes_addons_for_abmc.block.LuckyEventCategory category
+            : cn.autoforged.joes_addons_for_abmc.block.LuckyEventCategory.values()) {
+            java.util.List<cn.autoforged.joes_addons_for_abmc.block.LuckyOutcomeCatalog.Entry> entries =
+                new java.util.ArrayList<>();
+            for (cn.autoforged.joes_addons_for_abmc.block.LuckyOutcomeCatalog.Entry entry
+                : cn.autoforged.joes_addons_for_abmc.block.LuckyOutcomeCatalog.all(level)) {
+                if (entry.category() == category) {
+                    entries.add(entry);
+                }
+            }
+            if (entries.isEmpty()) {
+                continue;
+            }
+            text.append("\n【").append(category.displayName()).append("】");
+            for (cn.autoforged.joes_addons_for_abmc.block.LuckyOutcomeCatalog.Entry entry : entries) {
+                text.append("\n  - ").append(entry.name()).append("  [").append(entry.id().getPath()).append("]");
+            }
+        }
+        text.append("\n清空指定：/jafa luckyblockclear");
         return text.toString();
+    }
+
+    /** 当前指定的产物（从存档读；未指定、或那个 id 现在不存在则返回 null）。 */
+    private static cn.autoforged.joes_addons_for_abmc.block.LuckyOutcomeCatalog.Entry
+            forcedLuckyOutcome(ServerLevel level) {
+        String raw = cn.autoforged.joes_addons_for_abmc.block.LuckyEvents
+            .forcedEventId(level.getServer());
+        if (raw == null) {
+            return null;
+        }
+        net.minecraft.resources.ResourceLocation id = net.minecraft.resources.ResourceLocation.tryParse(raw);
+        if (id == null) {
+            return null;
+        }
+        for (cn.autoforged.joes_addons_for_abmc.block.LuckyOutcomeCatalog.Entry entry
+            : cn.autoforged.joes_addons_for_abmc.block.LuckyOutcomeCatalog.all(level)) {
+            if (entry.id().equals(id)) {
+                return entry;
+            }
+        }
+        return null;
     }
 
     /** 幸运名单命令的统一 debug 闸门。 */
@@ -9122,9 +9173,12 @@ public class ModMain {
                     })
                     // /jafa lucky event <id>：指定 id 强制触发某一个子事件（调试用）。
                     // id 写全名（joes_addons_for_abmc:entity/cats）或只写路径（entity/cats，自动补本模组命名空间）。
-                    // 6.5.5 一次加了 12 个子事件，光靠 DEBUG_MODE 的 debug 池只能"抽"，验不了指定那一个，
-                    // 所以补了这个入口（debug 池见 LuckyEvents#markDebug）。
-                    .then(Commands.argument("id", StringArgumentType.string())
+                    // 6.5.5 一次加了 12 个子事件，光靠"随机抽"验不了指定那一个，
+                    // 所以补了这个入口（指定单项见 /jafa luckyblockresult）。
+                    // 参数必须用 greedyString，见下面 luckyblockresult 那条注释：
+                    // id 里带 '/' 与 ':'（joes_addons_for_abmc:entity/cats），string() 会在第一个
+                    // 非法字符处断掉并报 "Expected whitespace to end one argument, but found trailing data"。
+                    .then(Commands.argument("id", StringArgumentType.greedyString())
                         .suggests((ctx, builder) -> {
                             ServerLevel level = ctx.getSource().getLevel();
                             for (cn.autoforged.joes_addons_for_abmc.block.LuckyEventCategory category
@@ -9176,135 +9230,122 @@ public class ModMain {
                                 "【" + category.displayName() + "】" + events.size() + " 个子事件"), false);
                             for (cn.autoforged.joes_addons_for_abmc.block.LuckyEvent lucky : events) {
                                 int weight = lucky.weight();
-                                boolean isDebug =
-                                    cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.isDebugEvent(lucky);
                                 ctx.getSource().sendSuccess(() -> Component.literal(
                                     "  - [" + lucky.id() + "] " + lucky.description() + "（权重 " + weight
-                                        + "，概率 " + weight + "/" + denominator + "）"
-                                        + (isDebug ? " 【debug 池：DEBUG_MODE 下等概率抽出】" : "")), false);
+                                        + "，概率 " + weight + "/" + denominator + "）"), false);
                             }
                         }
                         ctx.getSource().sendSuccess(() -> Component.literal(
                             "合计 " + denominator + " 个子事件（全局平铺，各自 " + (denominator == 0 ? "-" : "1/" + denominator) + "）"), false);
-                        // debug 池：DEBUG_MODE 打开时，破坏幸运方块 / /jafa lucky event 会从这里等概率抽一个。
-                        // 池内的"物品池物品"是惰性注册的，所以先补一次 registerPoolItemEvents（幂等）再读池子，
-                        // 免得列表看到空池。注意 getLevel() 用的是命令执行者（不一定是玩家，但一定有维度）。
-                        cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.registerPoolItemEvents(
-                            ctx.getSource().getLevel());
-                        java.util.List<cn.autoforged.joes_addons_for_abmc.block.LuckyEvent> debugPool =
-                            cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.debugPool();
+                        // 当前"被指定开出的东西"：指定了就只会开出它（见 DebugOverrides，落盘）
+                        cn.autoforged.joes_addons_for_abmc.block.LuckyOutcomeCatalog.Entry forced =
+                            forcedLuckyOutcome(ctx.getSource().getLevel());
+                        ctx.getSource().sendSuccess(() -> Component.literal(forced == null
+                            ? "当前未指定产物：破坏幸运方块按正常规则（幸运名单 / 随机抽取）"
+                            : "当前指定产物：" + forced.name() + "（" + forced.id()
+                                + "）—— 破坏幸运方块只会开出它"), false);
                         ctx.getSource().sendSuccess(() -> Component.literal(
-                            "debug 池：共 " + debugPool.size() + " 个（DEBUG_MODE 打开时破坏幸运方块 / /jafa lucky event"
-                                + " 会从这些里等概率抽一个"
-                                + (debugPool.isEmpty() ? "；池空时退回名单/随机" : "，各 1/" + debugPool.size()) + "）"),
-                            false);
-                        for (cn.autoforged.joes_addons_for_abmc.block.LuckyEvent lucky : debugPool) {
-                            ctx.getSource().sendSuccess(() -> Component.literal(
-                                "  · [" + lucky.id() + "] " + lucky.description()), false);
-                        }
-                        ctx.getSource().sendSuccess(() -> Component.literal(
-                            "（改这份池子：/jafa luckyblockresult <物品名> 加物品、/jafa luckyblockclear 清空；"
-                                + "只看池子可单敲 /jafa luckyblockresult）"), false);
+                            "（改指定：/jafa luckyblockresult <名字/id>；清空：/jafa luckyblockclear）"), false);
                         return denominator;
                     })))
-            // /jafa luckyblockresult <物品名>：debug 模式下指定"破坏幸运方块能开出什么物品"。
-            //   每输入一次就往列表里加一件，抽的时候按下标等概率取（与权重无关），所以
-            //   "加几件就是几选一"—— 反复输入就能把想测的几件物品平均分配概率。
-            //   物品名三种写法都认：
-            //     1) 完整 id：minecraft:diamond / joes_addons_for_abmc:iron_hook；
-            //     2) 裸路径：diamond（先按本模组命名空间找，再按 minecraft 找）；
-            //     3) 游戏内名字：钻石 / 铁抓钩（唯一命中才用，多件同名会列候选让你改用 id）。
-            //   不带参数时只列出当前列表。
-            //   注意：命令加的物品不会进常规事件表（只影响 debug 抽取），要让它成为正式幸运物品
-            //   得加进幸运物品池标签；另外这份名单是内存态，重启游戏会回到代码里的默认值。
+            // /jafa luckyblockresult <选项>：指定"破坏幸运方块开出什么"（用户指定 6.8.9 起的新语义）。
+            //   与旧版的区别（旧版是"池"）：
+            //     1) 不再支持所有物品 —— 候选只围绕默认能开出的东西展开（物品/生物/结构），
+            //        见 LuckyOutcomeCatalog（生物与结构在那里起了中文名，例如"猫群""女巫骑恶魂""幸运水井"）；
+            //     2) 不再是"塞几件就是几选一"，而是<b>指定哪一个就只开出哪一个</b>；
+            //     3) 指定值<b>落盘</b>（DebugOverrides），退出重进存档仍然生效。
+            //   三种写法都认：完整 id / id 路径（entity/cats、cats）/ 名字（猫群、钻石）。
+            //   不带参数时列出当前指定 + 全部可选项。
+            //   仍然要求 debug 模式打开才允许"指定"（查询不受限）；关掉 debug 只是让它搁置，存档里仍留着。
             .then(Commands.literal("luckyblockresult")
                 .executes(ctx -> {
                     ctx.getSource().sendSuccess(() -> Component.literal(
                         luckyBlockResultText(ctx.getSource().getLevel())), false);
-                    return cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.debugPoolItemIds().size();
+                    return forcedLuckyOutcome(ctx.getSource().getLevel()) == null ? 0 : 1;
                 })
-                .then(Commands.argument("item", StringArgumentType.string())
+                // 参数用 greedyString，不能用 string()/word()：
+                // 这一项要能写 id 路径（item/hero_set）、完整 id（joes_addons_for_abmc:item/hero_set），
+                // 还有带空格的中文名（僵尸 Bob）。而 Brigadier 的 string() 在不加引号时
+                // 只会走 StringReader#readUnquotedString，字符集仅 [A-Za-z0-9_.+-] ——
+                // 碰到 '/'、':' 或空格就当场停下，随后被判定成"参数后面还有多余内容"，
+                // 报 "Expected whitespace to end one argument, but found trailing data"
+                // （6.8.29 实测：/jafa luckyblockresult item/hero_set 就是这么失败的）。
+                // greedyString 直接吃下整行剩余内容；/revive <entity_id> 当初也是因为这个原因选的它。
+                .then(Commands.argument("选项", StringArgumentType.greedyString())
                     .suggests((ctx, builder) -> {
+                        // 候选只来自"默认能开出的东西"（LuckyOutcomeCatalog），不再遍历整个物品注册表。
+                        // 名字与 id 路径都提示：名字好读，id 路径跨语言稳定。
                         String remaining = builder.getRemainingLowerCase();
-                        for (Item candidate : BuiltInRegistries.ITEM) {
-                            if (candidate == Items.AIR) continue;
-                            ResourceLocation id = BuiltInRegistries.ITEM.getKey(candidate);
-                            if (id == null) continue;
-                            String full = id.toString().toLowerCase(java.util.Locale.ROOT);
-                            String path = id.getPath().toLowerCase(java.util.Locale.ROOT);
-                            if (full.startsWith(remaining) || path.startsWith(remaining)) {
-                                builder.suggest(id.toString());
+                        for (cn.autoforged.joes_addons_for_abmc.block.LuckyOutcomeCatalog.Entry entry
+                            : cn.autoforged.joes_addons_for_abmc.block.LuckyOutcomeCatalog
+                                .all(ctx.getSource().getLevel())) {
+                            String name = entry.name().toLowerCase(java.util.Locale.ROOT);
+                            String path = entry.id().getPath().toLowerCase(java.util.Locale.ROOT);
+                            if (name.startsWith(remaining)) {
+                                builder.suggest(entry.name());
                             }
                             if (path.startsWith(remaining)) {
-                                builder.suggest(id.getPath());
+                                builder.suggest(entry.id().getPath());
+                            }
+                            if (entry.id().toString().toLowerCase(java.util.Locale.ROOT).startsWith(remaining)) {
+                                builder.suggest(entry.id().toString());
                             }
                         }
                         return builder.buildFuture();
                     })
                     .executes(ctx -> {
-                        // 需求：只有 debug 模式为 true 时才允许指定
+                        // 需求：只有 debug 模式为 true 时才允许"指定"
                         if (!cn.autoforged.joes_addons_for_abmc.config.ModConfig.DEBUG_MODE.get()) {
                             ctx.getSource().sendFailure(Component.literal(
-                                "debug 模式未开启（config: debug.debug_mode），无法指定幸运方块开出的物品"));
+                                "debug 模式未开启（config: debug.debug_mode），无法指定幸运方块开出的东西"));
                             return 0;
                         }
-                        String raw = StringArgumentType.getString(ctx, "item");
-                        cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.ItemQuery query =
-                            cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.resolveItem(raw);
-                        if (query.item() == null) {
+                        String raw = StringArgumentType.getString(ctx, "选项");
+                        cn.autoforged.joes_addons_for_abmc.block.LuckyOutcomeCatalog.Query query =
+                            cn.autoforged.joes_addons_for_abmc.block.LuckyOutcomeCatalog
+                                .find(ctx.getSource().getLevel(), raw);
+                        if (query.entry() == null) {
                             if (query.ambiguous()) {
                                 StringBuilder names = new StringBuilder();
-                                for (ResourceLocation id : query.matches()) {
+                                for (cn.autoforged.joes_addons_for_abmc.block.LuckyOutcomeCatalog.Entry entry
+                                    : query.matches()) {
                                     if (names.length() > 0) names.append("、");
-                                    names.append(id);
+                                    names.append(entry.name()).append("（").append(entry.id().getPath()).append("）");
                                 }
                                 ctx.getSource().sendFailure(Component.literal(
-                                    "「" + raw + "」对应多件物品：" + names + " —— 请改用物品 id 指定"));
+                                    "「" + raw + "」对应多项：" + names + " —— 请改用 id 路径或完整 id 指定"));
                             } else {
                                 ctx.getSource().sendFailure(Component.literal(
-                                    "找不到物品：" + raw + "（可写物品 id，如 diamond、minecraft:diamond、"
-                                        + MODID + ":iron_hook；也可写游戏内名字，如 钻石、铁抓钩）"));
+                                    "找不到这项：" + raw + "（只支持默认能开出的物品/生物/结构，"
+                                        + "用 /jafa luckyblockresult 不带参数看全部候选；"
+                                        + "也可以写 id 路径，如 entity/cats）"));
                             }
                             return 0;
                         }
-                        Item item = query.item();
-                        ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(item);
-                        boolean already = cn.autoforged.joes_addons_for_abmc.block.LuckyEvents
-                            .debugPoolItemIds().contains(itemId);
-                        cn.autoforged.joes_addons_for_abmc.block.LuckyEvent luckyEvent =
-                            cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.addDebugItem(item);
-                        if (luckyEvent == null) {
-                            ctx.getSource().sendFailure(Component.literal(
-                                "这个物品加不进 debug 抽取列表：" + itemId));
-                            return 0;
-                        }
-                        if (already) {
-                            ctx.getSource().sendSuccess(() -> Component.literal(
-                                "该物品已经在 debug 抽取列表里了：" + itemId
-                                    + "（重复输入不会提高它的概率，列表始终等概率）"), false);
-                        } else {
-                            ctx.getSource().sendSuccess(() -> Component.literal(
-                                "已加入 debug 抽取列表：" + luckyEvent.description()
-                                    + "（id=" + luckyEvent.id() + "）"), true);
-                        }
+                        cn.autoforged.joes_addons_for_abmc.block.LuckyOutcomeCatalog.Entry entry = query.entry();
+                        cn.autoforged.joes_addons_for_abmc.block.DebugOverrides
+                            .get(ctx.getSource().getLevel())
+                            .setLuckyBlockResult(entry.id().toString());
                         ctx.getSource().sendSuccess(() -> Component.literal(
-                            luckyBlockResultText(ctx.getSource().getLevel())), false);
-                        return cn.autoforged.joes_addons_for_abmc.block.LuckyEvents
-                            .debugPoolItemIds().size();
+                            "已指定：破坏幸运方块只会开出 " + entry.name()
+                                + "（" + entry.id() + "）—— 已写入存档，退出重进仍然生效"), true);
+                        ModMain.LOGGER.info("[幸运] 指定幸运方块产物: {} ({}) by {}",
+                            entry.id(), entry.name(), ctx.getSource().getTextName());
+                        return 1;
                     })))
-            // /jafa luckyblockclear：清空上面那份"指定物品"列表（debug 池里由物品构成的部分一起摘掉）。
-            //   清空后 debug 池若为空，DEBUG_MODE 下就退回"幸运名单 / 随机抽取"，不会开出空事件。
-            //   代码里写死的（markDebug 登记的）事件不动 —— 那些清了下次启动也会回来。
+            // /jafa luckyblockclear：取消"指定产物"，回到正常抽取（幸运名单 / 随机）。
+            //   同样会落盘：清掉之后退出重进也不会自己回来。
             .then(Commands.literal("luckyblockclear")
                 .executes(ctx -> {
-                    int removed = cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.clearDebugItems();
-                    int left = cn.autoforged.joes_addons_for_abmc.block.LuckyEvents.debugPool().size();
-                    ctx.getSource().sendSuccess(() -> Component.literal(
-                        "已清空 debug 抽取列表（移除 " + removed + " 项）"
-                            + (left == 0
-                                ? "；debug 池现在是空的，DEBUG_MODE 下会退回幸运名单 / 随机抽取"
-                                : "；debug 池里还剩 " + left + " 项代码里写死的事件")), true);
-                    return removed;
+                    cn.autoforged.joes_addons_for_abmc.block.DebugOverrides overrides =
+                        cn.autoforged.joes_addons_for_abmc.block.DebugOverrides
+                            .get(ctx.getSource().getLevel());
+                    boolean had = overrides.luckyBlockResult() != null;
+                    overrides.setLuckyBlockResult(null);
+                    ctx.getSource().sendSuccess(() -> Component.literal(had
+                        ? "已取消指定：破坏幸运方块回到正常规则（幸运名单 / 随机抽取）"
+                        : "本来就没有指定过产物"), true);
+                    return had ? 1 : 0;
                 }))
             // /jafa beeboss：召唤一只 BeeBoss 蜜蜂（scale 5、主手默认持蜂巢权杖，权杖内预装 20~30 只蜜蜂）
             .then(Commands.literal("beeboss")
@@ -9457,7 +9498,8 @@ public class ModMain {
      *       其余照常抽签；用于调试"场上不出现召唤物"时的攻击流程；</li>
      *   <li>{@code clear} / {@code none} —— 取消强制，回到正常抽签。</li>
      * </ul>
-     * 模式是<b>全局</b>的（对所有被附体空壳生效）、且不落盘（重启即失效）。
+     * 模式是<b>全局</b>的（对所有被附体空壳生效）、且<b>落盘</b>（用户指定：退出重进存档后仍然保留，
+     * 见 {@code DebugOverrides}）。
      */
     private static int setLuckAttack(CommandSourceStack source, String name) {
         cn.autoforged.joes_addons_for_abmc.entity.OrbPossessedAttackEvents.ForcedAttack mode =
@@ -9467,7 +9509,8 @@ public class ModMain {
                 + "（可选 mace / lava_cage / firework / fly / guardian_beam / nosummons / clear）"));
             return 0;
         }
-        cn.autoforged.joes_addons_for_abmc.entity.OrbPossessedAttackEvents.setForcedAttack(mode);
+        cn.autoforged.joes_addons_for_abmc.entity.OrbPossessedAttackEvents.setForcedAttack(
+            source.getServer(), mode);
         ModMain.LOGGER.info("[附体] 强制攻击模式: {}（{}）by {}", mode.commandName(), mode.description(),
             source.getTextName());
         source.sendSuccess(() -> Component.literal("强制攻击模式 = " + mode.commandName()
@@ -9524,6 +9567,9 @@ public class ModMain {
      * <p>
      * {@code 走位} 是附体空壳此刻的走位状态（环绕 / 直冲 / 僵直 / 架势），见
      * {@link #orbVesselKiteState}。
+     * <p>
+     * {@code 来源} 是这具空壳的生成入口（{@code POSSESSION} / {@code ASSIMILATION} /
+     * {@code SPAWN_EGG} / {@code TRANSMUTED}），见 {@link #orbVesselOrigin}。
      */
     private static int orbInfo(CommandSourceStack source) {
         if (!(source.getEntity() instanceof ServerPlayer sp)) {
@@ -9547,6 +9593,7 @@ public class ModMain {
                 + " 对generic免疫=" + orb.isInvulnerableTo(sp.damageSources().generic())
                 + " 附体玩家=" + (orb.getPossessorUuid() == null ? "无" : orb.getPossessorUuid().toString().substring(0, 8))
                 + " 骑乘=" + (orb.getVehicle() == null ? "无" : ("id=" + orb.getVehicle().getId()))
+                + " 来源=" + orbVesselOrigin(orb)
                 + " 抽签=" + orbDrawnEventName(orb)
                 + " 走位=" + orbVesselKiteState(orb)
                 + " 饥饿=" + orbVesselFood(orb)
@@ -9581,7 +9628,13 @@ public class ModMain {
     /**
      * /jafa orbinfo 的辅助：附体倒计时剩余时间（mm:ss）。
      * <p>
-     * 倒计时以游戏刻计算（基础 20 分钟，每发现一个新索敌目标 +1 分钟），
+     * 倒计时以游戏刻计算（基础 20 分钟，每发现一个新索敌目标 +1 分钟），暂停有两种原因
+     * （见 {@code OrbOfLuckEntity#isPossessionCountdownPaused}）：
+     * <ul>
+     *   <li><b>主人不在这个存档里</b>（用户指定：多人里他被附体后会被踢出存档）；</li>
+     *   <li><b>玩家还在幸运维度里</b>（用户指定：那条倒计时只在离开幸运维度之后才走）。</li>
+     * </ul>
+     * 两种都跟着显示"（暂停：…）"，免得看起来像倒计时卡死了。
      * 不在附体阶段时显示"无"。想快速验证可以用 {@code /tick sprint 24000} 之类把游戏刻快进。
      */
     private static String orbPossessionCountdown(cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity orb) {
@@ -9590,7 +9643,141 @@ public class ModMain {
             return "无";
         }
         long seconds = ticksLeft / 20L;
-        return String.format("%d:%02d", seconds / 60L, seconds % 60L);
+        String text = String.format("%d:%02d", seconds / 60L, seconds % 60L);
+        if (!orb.isPossessionCountdownPaused()) {
+            return text;
+        }
+        return text + (orb.isCountdownPausedByOwnerAbsent()
+            ? "（暂停：主人不在本存档中）" : "（暂停：玩家在幸运维度内）");
+    }
+
+    // ====================== "太过贪婪"：被附体/被同化后延迟踢出 ======================
+
+    /**
+     * 一次待执行的踢出：什么时候踢（游戏刻）、日志里怎么称呼、以及<b>已经拼好的整段理由</b>。
+     * <p>
+     * 两种身份理由不同（用户指定）：<b>贪婪者</b>（身体被附体夺走的那位）与
+     * <b>被牵连者</b>（战败 / 挨够致命打击次数而被同化的那位）。理由在排程时就拼好，
+     * 免得踢出那一刻再回头查"他是谁"。
+     */
+    private record GreedKick(long atTick, String logKind, Component message) {
+    }
+
+    /**
+     * 待踢出名单：附体/同化把玩家变成旁观者之后，延迟
+     * {@value #GREED_KICK_MIN_TICKS}~{@value #GREED_KICK_MAX_TICKS} 游戏刻再把他请出存档。
+     */
+    private static final Map<UUID, GreedKick> GREED_KICK_AT = new ConcurrentHashMap<>();
+
+    /** 踢出延迟下限（游戏刻）。 */
+    private static final int GREED_KICK_MIN_TICKS = 10;
+
+    /** 踢出延迟上限（游戏刻）。用户指定 10~20 刻，闭区间均匀取。 */
+    private static final int GREED_KICK_MAX_TICKS = 20;
+
+    /** <b>贪婪者</b>（身体被附体夺走）的踢出理由（正文在 lang 文件里）。 */
+    private static final String GREED_KICK_MESSAGE_KEY = "message.joes_addons_for_abmc.greed_kick";
+
+    /** 贪婪者那句下面追加的"怎么解除"（用户指定加入，见 {@link #greedKickReason}）。 */
+    private static final String GREED_KICK_HINT_KEY = "message.joes_addons_for_abmc.greed_kick_hint";
+
+    /** <b>被牵连者</b>（战败 / 致命打击挨太多而被同化）的踢出理由；<b>不带名字</b>的版本。 */
+    private static final String GREED_KICK_VICTIM_MESSAGE_KEY = "message.joes_addons_for_abmc.greed_kick_victim";
+
+    /** 被牵连者的理由；<b>带名字</b>的版本（`%s` = 贪婪之徒的名字）。 */
+    private static final String GREED_KICK_VICTIM_NAMED_KEY = "message.joes_addons_for_abmc.greed_kick_victim_named";
+
+    /** 被牵连者那句下面追加的"怎么解除"。 */
+    private static final String GREED_KICK_VICTIM_HINT_KEY = "message.joes_addons_for_abmc.greed_kick_victim_hint";
+
+    /**
+     * <b>被附体的那位（贪婪者）：排一次延迟踢出</b>（用户指定）。
+     * <p>
+     * 由 {@code OrbOfLuckEntity#startPossession} 调用 —— 只有真正的"身体被夺走"那一刻才排，
+     * <b>刻意不放在"每刻维持旁观"的那几处</b>（{@code reattachOnLogin}、附体/同化的每刻兜底）：
+     * 那会让玩家一重进就被再踢一次，而按需求他必须能进来把倒计时走完
+     * （见 {@code OrbOfLuckEntity#isCountdownPausedByOwnerAbsent}）。
+     * <p>
+     * 单机与多人一视同仁：{@code connection.disconnect} 在集成服务器上就是"退回标题界面"，
+     * 在多人里就是"被踢下线"，理由提示由同一个组件给出。
+     * <p>
+     * 之所以延迟 10~20 刻而不是当场踢：先让客户端的旁观切换、附体音效与头顶光球落一拍，
+     * 玩家看得清"自己是怎么没的"，随后才被请出去。
+     */
+    public static void scheduleGreedKick(ServerPlayer player) {
+        enqueueKick(player, "被附体的贪婪者", greedKickReason(GREED_KICK_MESSAGE_KEY, GREED_KICK_HINT_KEY));
+    }
+
+    /**
+     * <b>被同化的那位（贪婪之徒的牵连者）：排一次延迟踢出</b>（用户指定）。
+     * <p>
+     * 由 {@code OrbAssimilation#assimilate} 调用 —— 战败、或者挨够致命打击次数而被同化的玩家
+     * 用<b>另一句话</b>送走：他不是贪心的那位，只是被牵连进来的。
+     *
+     * @param greedyName 那位贪婪之徒的名字；取不到时传 null，自动退回不带名字的那句
+     *                   （拿不到名字的情形：那具空壳背后根本没有核心，例如刷怪蛋放出来的那一具）
+     */
+    public static void scheduleVictimKick(ServerPlayer player, @Nullable String greedyName) {
+        Component reason = greedyName == null || greedyName.isEmpty()
+            ? greedKickReason(GREED_KICK_VICTIM_MESSAGE_KEY, GREED_KICK_VICTIM_HINT_KEY)
+            : greedKickReason(Component.translatable(GREED_KICK_VICTIM_NAMED_KEY, greedyName),
+                GREED_KICK_VICTIM_HINT_KEY);
+        enqueueKick(player, "被同化的牵连者", reason);
+    }
+
+    /**
+     * 拼出整段踢出理由：<b>第一行是那句情绪，第二行是"怎么解除"</b>（用户指定加入 ①）。
+     * <p>
+     * 为什么要加第二行：这两句话本身只表达情绪，玩家被踢出去之后不知道"还能不能回来" ——
+     * 而按现在的规则他<b>能</b>：重进存档让倒计时继续，或者让别人击碎那具夺取他身体的空壳。
+     * 断线界面会把组件原样渲染，所以这里用换行拼成两行，第二行压成灰色当做补充说明。
+     */
+    private static Component greedKickReason(String mainKey, String hintKey) {
+        return greedKickReason(Component.translatable(mainKey), hintKey);
+    }
+
+    private static Component greedKickReason(Component main, String hintKey) {
+        return main.copy()
+            .append(Component.literal("\n"))
+            .append(Component.translatable(hintKey).withStyle(net.minecraft.ChatFormatting.GRAY));
+    }
+
+    /** 两个入口共用的排程：算出到点时刻、记下理由。 */
+    private static void enqueueKick(ServerPlayer player, String logKind, Component reason) {
+        long at = player.level().getGameTime()
+            + GREED_KICK_MIN_TICKS
+            + player.getRandom().nextInt(GREED_KICK_MAX_TICKS - GREED_KICK_MIN_TICKS + 1);
+        GREED_KICK_AT.put(player.getUUID(), new GreedKick(at, logKind, reason));
+    }
+
+    /**
+     * 每服务端刻处理到点的踢出（由 {@link #onServerTickPre} 调用）。
+     * <p>
+     * 时刻按<b>游戏刻</b>判：{@code /tick freeze} 期间游戏刻不流逝，踢出也跟着停 ——
+     * 与模组里其它倒计时同一套口径（见 {@link #updateTransmutationTickState}）。
+     * 已经自己下线的直接销掉，不补踢。
+     */
+    private static void tickGreedKicks(net.minecraft.server.MinecraftServer server) {
+        if (GREED_KICK_AT.isEmpty()) {
+            return;
+        }
+        long now = server.overworld() == null ? 0L : server.overworld().getGameTime();
+        java.util.Iterator<Map.Entry<UUID, GreedKick>> it = GREED_KICK_AT.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<UUID, GreedKick> entry = it.next();
+            GreedKick kick = entry.getValue();
+            if (now < kick.atTick()) {
+                continue;
+            }
+            it.remove();
+            ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+            if (player == null) {
+                continue;
+            }
+            LOGGER.info("[贪婪] 强制踢出 {}：{}（第 {} 游戏刻）",
+                player.getGameProfile().getName(), kick.logKind(), now);
+            player.connection.disconnect(kick.message());
+        }
     }
 
     /**
@@ -9647,6 +9834,20 @@ public class ModMain {
     private static String orbVesselFood(cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity orb) {
         if (orb.getVehicle() instanceof cn.autoforged.joes_addons_for_abmc.entity.PlayerShellEntity shell) {
             return shell.getShellFoodLevel() + "/" + String.format("%.1f", shell.getShellSaturation());
+        }
+        return "无";
+    }
+
+    /**
+     * /jafa orbinfo 的辅助：附体空壳<b>是哪个入口造出来的</b>（见 {@code PlayerShellEntity.ShellOrigin}）。
+     * <p>
+     * 三具核心支撑的空壳（附体事件 / 同化事件 / 刷怪蛋）行为几乎一样，光看画面分不出谁是谁 ——
+     * 而它们的区别恰恰是"打死它会不会复活人""它属于哪颗核心"这些关键规则，所以直接念出来。
+     * 核心骑着的这具按定义一定是 {@code POSSESSION}；显示"无"说明这一 core 此刻没骑在空壳上。
+     */
+    private static String orbVesselOrigin(cn.autoforged.joes_addons_for_abmc.entity.OrbOfLuckEntity orb) {
+        if (orb.getVehicle() instanceof cn.autoforged.joes_addons_for_abmc.entity.PlayerShellEntity shell) {
+            return shell.getShellOrigin().name();
         }
         return "无";
     }
@@ -11358,33 +11559,6 @@ public class ModMain {
             if (itemEntity.getItem().is(ModItems.GAME_ICON.get())
                 || itemEntity.getItem().is(ModItems.OMEGA_GAME_ICON.get())) {
                 handleIndestructibleGameIconTick(itemEntity);
-            } else if (itemEntity.getItem().is(Items.DROPPER)) {
-                Level level = itemEntity.level();
-                BlockPos pos = itemEntity.blockPosition();
-                FluidState fluid = level.getFluidState(pos);
-                if (!fluid.is(FluidTags.WATER)) {
-                    pos = pos.below();
-                    fluid = level.getFluidState(pos);
-                }
-                if (fluid.is(FluidTags.WATER) && fluid.isSource() && level instanceof ServerLevel serverLevel) {
-                    BlockPos portalCenter = LuckyPortalBlockEntity.detectPortalStructure(serverLevel, pos);
-                    if (portalCenter != null) {
-                        // 防止同一投掷器在等待期间每 tick 重复触发
-                        int eid = itemEntity.getId();
-                        boolean alreadyPending = false;
-                        for (PortalActivationTask t : PENDING_PORTAL_ACTIVATIONS) {
-                            if (t.itemEntityId == eid) { alreadyPending = true; break; }
-                        }
-                        if (alreadyPending) return;
-                        // 投掷器入水后不立即消失，延迟 1~1.5 秒（20~30 tick）后召唤闪电并激活传送门，届时投掷器才消失
-                        PortalActivationTask task = new PortalActivationTask();
-                        task.level = serverLevel;
-                        task.waterPos = pos.immutable();
-                        task.itemEntityId = eid;
-                        task.tickDelay = 20 + serverLevel.getRandom().nextInt(11);
-                        PENDING_PORTAL_ACTIVATIONS.add(task);
-                    }
-                }
             }
             return;
         }
@@ -13138,12 +13312,20 @@ public class ModMain {
         };
     }
 
-    /** 女巫Boss阶段的玩家可见名称（Boss条标题/命令反馈/Jade 提示共用）。 */
-    public static String witchBossStageName(int stage) {
+    /**
+     * 女巫Boss 的 Jade 提示里那一行「阶段」的<b>文案键</b>（中英各一份，见 lang 文件）。
+     * <p>
+     * 返回键、不返回成品字符串：文案要在<b>客户端</b>按玩家语言解析，服务端拼死中文的话
+     * 英文客户端就只能看中文。所以由调用方（{@code WitchBossJadePlugin}）拿到键之后
+     * 自己 {@code Component.translatable(...)}。
+     * <p>
+     * 血条<b>不</b>用它：血条只显示「女巫」，阶段差异由颜色体现（见 {@link #WITCH_BOSS_BAR_NAME}）。
+     */
+    public static String witchBossStageLangKey(int stage) {
         return switch (stage) {
-            case WITCH_BOSS_STAGE_BLOCK -> "女巫Boss-方块阶段";
-            case WITCH_BOSS_STAGE_ITEM -> "女巫Boss-物品阶段";
-            default -> "女巫Boss-生物阶段";
+            case WITCH_BOSS_STAGE_BLOCK -> "jade.joes_addons_for_abmc.witch_boss_stage.block";
+            case WITCH_BOSS_STAGE_ITEM -> "jade.joes_addons_for_abmc.witch_boss_stage.item";
+            default -> "jade.joes_addons_for_abmc.witch_boss_stage.entity";
         };
     }
 
@@ -14000,10 +14182,8 @@ public class ModMain {
             player.getAbilities().mayfly = true;
             player.onUpdateAbilities();
             COMMAND_FLIGHT_PLAYERS.add(player.getUUID());
-            if (player.getAbilities().flying && player.tickCount % 5 == 0 && ModConfig.COMMAND_FLY_SOUND.get()) {
-                player.level().playSound(null, player.getX(), player.getY(), player.getZ(),
-                    ModSounds.STAFF_COMMAND_FLY.get(), SoundSource.PLAYERS, 0.5F, 1.0F);
-            }
+            // 飞行音效不在这里播：它已改成<b>客户端本地音效</b>（见 client/CommandStaffFlySound，
+            // 开关也随之进了 client 配置的 [sound]）。这里只负责发/收飞行能力。
         } else if (COMMAND_FLIGHT_PLAYERS.contains(player.getUUID())) {
             player.getAbilities().mayfly = false;
             player.getAbilities().flying = false;
@@ -14296,6 +14476,8 @@ public class ModMain {
         LuckyPortalBlock.clearProcessedThisTick();
         // 旁观者的传送门兜底：他们 noPhysics，走不到 Block#entityInside（见该方法注释）
         LuckyPortalBlock.tickSpectatorsOnPortal(event.getServer());
+        // "太过贪婪"：被附体/被同化后延迟 10~20 游戏刻的强制踢出（见 scheduleGreedKick）
+        tickGreedKicks(event.getServer());
 
         // 幸运猫事件：上一个游戏刻由玩家破坏幸运方块刷出的猫，在此刻立即驯服给该玩家
         cn.autoforged.joes_addons_for_abmc.block.LuckyCatsEvent.tick();
@@ -14330,6 +14512,10 @@ public class ModMain {
         // 被"没有核心的空壳"（刷怪蛋放出来的那一具）同化的玩家：他们不在任何核心的同化名单里，
         // 所以上面那条按核心维护的路径永远看不到他们 —— 这里按玩家自己的记录兜住（保持旁观/切回创造即解除）
         cn.autoforged.joes_addons_for_abmc.entity.OrbAssimilation.tickCorelessAssimilations(event.getServer());
+        // 被同化者登录时的"复仇线索"：登录那一刻空壳可能还没加载，这里补重试（10 秒窗口）
+        cn.autoforged.joes_addons_for_abmc.entity.OrbAssimilation.tickJoinHints(event.getServer());
+        // 落盘的调试开关（强制攻击模式等）：每台服务器读一次，见 DebugOverrides
+        cn.autoforged.joes_addons_for_abmc.entity.OrbPossessedAttackEvents.loadPersistedOverrides(event.getServer());
         // "红僵尸关系"表（SunnySeren 特例用）：换存档清表 + 清过期条目
         cn.autoforged.joes_addons_for_abmc.entity.OrbAdversaryRelations.tick(event.getServer());
         // 暮色森林联动：米诺陶战斧的冲刺驱动（没装暮色时内部列表恒空，只是个空转）
@@ -14356,7 +14542,7 @@ public class ModMain {
         syncGenStateToSharedCounts(event.getServer().overworld());
         // 待放置女巫Boss小屋：覆盖区块全部加载后一次性完整放置
         tickPendingHuts(event.getServer().overworld());
-        // 幸运宝珠神庙：玩家初次进入幸运维度时选址并一次性放置（每个存档只生成一座）
+        // 幸运核心神庙：玩家初次进入幸运维度时选址并一次性放置（每个存档只生成一座）
         cn.autoforged.joes_addons_for_abmc.worldgen.OrbOfLuckTemple.tick(event.getServer());
 
         // 女巫Boss血条（原版 ServerBossEvent 机制）每刻更新
@@ -14473,21 +14659,6 @@ public class ModMain {
             } else {
                 task.tickDelay = 1;
             }
-        }
-
-        // 幸运维度传送门激活延迟任务
-        java.util.Iterator<PortalActivationTask> patIt = PENDING_PORTAL_ACTIVATIONS.iterator();
-        while (patIt.hasNext()) {
-            PortalActivationTask task = patIt.next();
-            if (task.tickDelay > 0) {
-                task.tickDelay--;
-                continue;
-            }
-            patIt.remove();
-            // 延迟结束、闪电降下时才让投掷器消失
-            Entity itemE = task.level.getEntity(task.itemEntityId);
-            if (itemE instanceof ItemEntity) itemE.discard();
-            LuckyPortalBlockEntity.createPortalAtWaterStructure(task.level, task.waterPos);
         }
 
         java.util.Iterator<BonemealTask> bit = PENDING_BONEMEAL_TASKS.iterator();
@@ -20671,13 +20842,6 @@ public class ModMain {
         java.util.List<BlockMovement> movements;
     }
 
-    private static class PortalActivationTask {
-        ServerLevel level;
-        BlockPos waterPos;
-        int itemEntityId;
-        int tickDelay;
-    }
-
     private static class BlockMovement {
         BlockPos startPos;
         BlockPos currentPos;
@@ -21239,27 +21403,6 @@ public class ModMain {
         }
     }
 
-    /** 变身开始时初始化玩家：隐身（不被其它生物/宠物察觉）+ 初始化视角。不强制切冒险模式——保留玩家原模式。 */
-    private static void beginTransmutationView(ServerPlayer sp) {
-        sp.addEffect(new MobEffectInstance(MobEffects.INVISIBILITY,
-            Integer.MAX_VALUE, 0, false, false, true));
-        sp.setInvisible(true);
-        forceTransmutationCamera(sp);
-        // 清除已锁定该玩家的敌对/中立生物目标，配合 onLivingChangeTarget 的拦截，
-        // 确保变形期间任何生物都不会察觉并攻击玩家（即使贴得很近）。
-        clearMobsTargetingPlayer(sp);
-    }
-
-    // 清除附近所有已锁定该玩家的生物目标（变形开始时一次性清理）
-    private static void clearMobsTargetingPlayer(ServerPlayer player) {
-        ServerLevel level = player.serverLevel();
-        for (Mob mob : level.getEntitiesOfClass(Mob.class, player.getBoundingBox().inflate(48.0))) {
-            if (mob.getTarget() == player) {
-                mob.setTarget(null);
-            }
-        }
-    }
-
     /** 复原时恢复玩家第一人称（配置开启时）。 */
     private static void restoreTransmutationCamera(ServerPlayer player) {
         if (ModConfig.FORCE_THIRD_PERSON_ON_TRANSMUTATION.get()) {
@@ -21283,6 +21426,17 @@ public class ModMain {
         PacketDistributor.sendToPlayer(player,
             new cn.autoforged.joes_addons_for_abmc.network.TransmutationStatePayload(
                 transmuted, followEntityId, type));
+        // 视角一并在这里切：变形开始 → 第三人称（初始俯仰斜向下 45°），变形结束 → 第一人称。
+        // <b>必须挂在这个方法上</b>：它是"通知客户端变形状态"的唯一出口，而"变身开始时切视角"原先
+        // 写在 beginTransmutationView 里，那个方法在改成"渲染替换式变形"之后<b>再没有任何调用点</b>，
+        // 于是配置开着也永远不发切视角包（用户实测：变形后仍是第一人称）。
+        // 这样做还顺带覆盖了原先漏掉的几条路：登录时恢复变形状态（resyncTransmutationState /
+        // restoreMorphStateFromNbt）也会切到第三人称，结束变形时也一定恢复第一人称。
+        if (transmuted) {
+            forceTransmutationCamera(player);
+        } else {
+            restoreTransmutationCamera(player);
+        }
     }
 
     /** 该玩家是否正处于“变形中”（生物壳/物品/方块/玩家壳变形期间为 true，之前若再次变形则为 true）。
@@ -21402,11 +21556,11 @@ public class ModMain {
             return;
         }
 
-        CompoundTag entityNbt = new CompoundTag();
+        CompoundTag entityNbt;
         if (carried != null) {
             entityNbt = carried.entityNbt().copy(); // 沿用最初玩家/生物的 NBT
         } else {
-            entity.save(entityNbt);
+            entityNbt = saveEntityNbtForRebuild(entity, "变形药水");
         }
 
         // 女巫Boss 自变形为方块/物品：在 entityNbt 顶层打“原生物是女巫Boss”标记，
@@ -21761,11 +21915,11 @@ public class ModMain {
     // 将原生物变成指定名字的玩家空壳
     private static void performPlayerShellTransmutation(ServerLevel level, LivingEntity entity,
             String skinName, int remainingTicks, UUID killerUuid, CarriedShellOrigin carried) {
-        CompoundTag entityNbt = new CompoundTag();
+        CompoundTag entityNbt;
         if (carried != null) {
             entityNbt = carried.entityNbt().copy(); // 沿用最初玩家/生物的 NBT
         } else {
-            entity.save(entityNbt);
+            entityNbt = saveEntityNbtForRebuild(entity, "变形药水");
         }
         // 原生物被 forceAddEffect 强制变形（抗 addEffect）：标记供其变形形态被摧毁时走"1/4 真伤"而非秒杀。
         if (FORCE_TRANSMUTATION_TEMP.remove(entity.getUUID())) {
@@ -21809,6 +21963,10 @@ public class ModMain {
             shell.setSkinTexture(skinName);
             shell.setPos(spawnX, spawnY, spawnZ);
             shell.setPersistenceRequired();
+            // 来源显式标成"变形药水造的临时壳"：它不是"由幸运核心支撑"的那一类
+            // （同化能力 / 血条 / 战斗 AI 都与它无关，见 PlayerShellEntity.ShellOrigin）。
+            // 不写也能推断出来，但写下来是为了让"这具壳是哪来的"永远只有一个答案。
+            shell.setShellOrigin(PlayerShellEntity.ShellOrigin.TRANSMUTED);
             // 变形壳标记：死亡时只掉落原生物/原玩家物品，不掉落壳本身的掉落物
             shell.getPersistentData().putBoolean(TRANSMUTATION_SHELL_TAG, true);
             // 玩家变身的壳：禁用 AI，避免其自主寻路/移动与“跟随玩家”贴附逻辑互相拉扯造成抽搐
@@ -21837,11 +21995,11 @@ public class ModMain {
     private static void performMobShellTransmutation(ServerLevel level, LivingEntity entity,
             String entityTypeId, int remainingTicks, UUID killerUuid, CarriedShellOrigin carried) {
         boolean wasWitchBoss = entity instanceof Witch ww && ww.getPersistentData().getBoolean(WITCH_BOSS_TAG);
-        CompoundTag entityNbt = new CompoundTag();
+        CompoundTag entityNbt;
         if (carried != null) {
             entityNbt = carried.entityNbt().copy(); // 沿用最初玩家/生物的 NBT
         } else {
-            entity.save(entityNbt);
+            entityNbt = saveEntityNbtForRebuild(entity, "变形药水");
         }
         // 女巫Boss 自变形成生物：在 entityNbt 顶层打“原生物是女巫Boss”标记，
         // 供其自变形形态被摧毁时按比例扣血（而非秒杀重建）。
@@ -22026,7 +22184,6 @@ public class ModMain {
                 player.setInvisible(false);
                 // 被变成的壳死亡：恢复第一人称与原始缩放（避免死亡/重生后残留缩放）
                 restoreTransmutationScale(player);
-                restoreTransmutationCamera(player);
                 player.hurt(livingShellExpiredDamage(level, isPlayerShell), Float.MAX_VALUE);
                 sendTransmutationState(player, false, -1);
             }
@@ -22186,7 +22343,6 @@ public class ModMain {
                     player.getYRot(), player.getXRot());
                 player.fallDistance = 0.0F;
                 restoreTransmutationScale(player);
-                restoreTransmutationCamera(player);
                 sendTransmutationState(player, false, -1);
             } else {
             }
@@ -22718,9 +22874,9 @@ public class ModMain {
         }
         // Him 权杖头颅击杀直接复用原版死亡消息（death.attack.herobrine.head），无需在此手动播报。
         // 成就「知错就改」：击败**附体母体**（幸运核心附体真玩家时产生的那具 boss 空壳）。
-        // 只判母体（possessedOrbUuid != null，见 PlayerShellEntity#isPossessionVessel）：
-        // 刷怪蛋放出的、被同化产生的空壳都不算；附体超时/切创造模式/核心自己血量归零都走
-        // discard() 那种"正常收场"，根本不会走到死亡事件，所以也不会误触发。
+        // 只判母体（来源 = ShellOrigin.POSSESSION，见 PlayerShellEntity#isPossessionVessel）：
+        // 刷怪蛋放出的（SPAWN_EGG）、被同化产生的（ASSIMILATION）都不算；附体超时/切创造模式/
+        // 核心自己血量归零都走 discard() 那种"正常收场"，根本不会走到死亡事件，所以也不会误触发。
         if (event.getEntity() instanceof cn.autoforged.joes_addons_for_abmc.entity.PlayerShellEntity shell
             && shell.isPossessionVessel()) {
             ServerPlayer killer = killCreditPlayer(shell, event.getSource());
@@ -22746,8 +22902,7 @@ public class ModMain {
             && !dead.getPersistentData().getBoolean(TRANSMUTATION_REKILL_TAG)) {
             ResourceLocation typeId = BuiltInRegistries.ENTITY_TYPE.getKey(dead.getType());
             if (typeId != null) {
-                CompoundTag nbt = new CompoundTag();
-                dead.save(nbt);
+                CompoundTag nbt = saveEntityNbtForRebuild(dead, "/revive 击杀存档");
                 // 保存的是死亡瞬间的数据：生命已为 0、死亡/受击计数值已写入。
                 // 移除这些字段，避免复活时再次播放死亡动画并立即死亡。
                 nbt.remove("Health");
@@ -23121,6 +23276,38 @@ public class ModMain {
             ? ModDamageTypes.TRANSMUTATION_BLOCK_EXPIRED.getKey()
             : ModDamageTypes.TRANSMUTATION_ITEM_EXPIRED.getKey();
         return level.damageSources().source(key);
+    }
+
+    /**
+     * 存一份"之后要用来复原实体"的完整 NBT（含 {@code id}）。
+     *
+     * <h2>为什么必须用 {@code saveAsPassenger} 而不是 {@code save}</h2>
+     * 原版 {@code Entity#save} 对<b>乘客</b>是直接放弃的（{@code Entity.java:1730}）：
+     * <pre>
+     * public boolean save(CompoundTag compound) {
+     *     return this.isPassenger() ? false : this.saveAsPassenger(compound);
+     * }
+     * </pre>
+     * 也就是说"实体正骑在某个载具上"时它<b>一个字节都不写</b>，传进去的 CompoundTag 保持为空。
+     * 而 {@code saveAsPassenger}（同一个类、public）不看在不在载具上，写出的内容与非乘客时完全一致：
+     * {@code id}、全部状态、以及<b>它自己的乘客</b>（例如骑在空壳头上的幸运核心）一个不少。
+     *
+     * <p><b>踩过的坑（用户反馈）</b>：玩家空壳骑在载具上时被变形药水溅到 → 存下来的 NBT 是空的 →
+     * {@link #respawnTransmutedEntity} 第一道门槛 {@code !entityNbt.contains("id")} 就判空返回，
+     * 于是倒计时到期不复原、丢变形解药没反应、砸掉那格方块/那个物品也什么都发生不了
+     * （连"重建出来再击杀"的死亡动画都没有），整具空壳就像凭空消失。</p>
+     *
+     * <p>非乘客时它与 {@code save} 的行为<b>完全相同</b>（就是同一个方法），所以这个替换对其它情形零影响。</p>
+     *
+     * @param context 日志里用的场合说明（写不出 NBT 时打一条 warn，便于排查）
+     */
+    private static CompoundTag saveEntityNbtForRebuild(Entity entity, String context) {
+        CompoundTag tag = new CompoundTag();
+        if (!entity.saveAsPassenger(tag)) {
+            LOGGER.warn("[transmute] {} 的 NBT 未能写出（{}），这次变形将无法复原",
+                entity.getType().toShortString(), context);
+        }
+        return tag;
     }
 
     private static net.minecraft.world.entity.LivingEntity respawnTransmutedEntity(ServerLevel level, TransmutationData data, BlockPos pos) {
@@ -23869,7 +24056,6 @@ public class ModMain {
                 player.getYRot(), player.getXRot());
             player.fallDistance = 0.0F;
             restoreTransmutationScale(player);
-            restoreTransmutationCamera(player);
             // 方块形态曾把玩家碰撞箱改为 1×1×1，复原时恢复玩家默认碰撞箱
             if (MORPH_DIMENSIONS.remove(player.getUUID()) != null) {
                 player.refreshDimensions();
@@ -23890,7 +24076,6 @@ public class ModMain {
             player.setInvisible(false);
             // 被变成的实体死亡：恢复第一人称与原始缩放（避免死亡/重生后残留缩放）
             restoreTransmutationScale(player);
-            restoreTransmutationCamera(player);
             // 用绑定“体验卡过期”消息的自定义伤害击杀，玩家死亡消息自然展示为自定义文案
             player.hurt(transmutationDamage(level, isBlock), Float.MAX_VALUE);
             sendTransmutationState(player, false, -1);

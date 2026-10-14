@@ -175,7 +175,7 @@ public class OrbPossessionKiteGoal extends Goal {
     public boolean canUse() {
         // 重锤动作进行中：走位/抽签全归它管（它自己开滑翔、自己俯冲），这里必须让开 ——
         // 否则地面那套输入会让"自由落体中的空壳"在空中横向漂移，直接把砸击点带偏。
-        return this.mob.isOrbAttached()
+        return this.mob.isCoreBackedShell()
             && !this.mob.isMaceSequenceActive()
             && this.mob.getTarget() != null
             && this.mob.getTarget().isAlive();
@@ -265,7 +265,7 @@ public class OrbPossessionKiteGoal extends Goal {
         // 特攻表要求"尽量远程"的敌人（女巫/苦力怕/铁傀儡/卫道士/满血巫妖/监守者…）→ 保持距离模式。
         // <b>但玩家除外</b>（用户指定）：拿到翅膀之前，与玩家战斗时不用控距，走下面那套近身意愿模式。
         this.keepDistance = !(target instanceof Player)
-            && OrbPossessedAttackEvents.prefersRanged(target);
+            && OrbPossessedAttackEvents.prefersRanged(this.mob, target);
         // 近身意愿模式：目标为玩家时生效，但只是"近身阶段"（见类注释：与远程阶段 15~20 秒一换）
         this.engageMelee = this.tickEngagePhase(target);
         boolean seen = this.mob.shouldSeePossessionTarget(target);

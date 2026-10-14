@@ -46,9 +46,20 @@ public class LuckyPortalBlock extends BaseEntityBlock {
         return CODEC;
     }
 
+    /**
+     * <b>用方块模型渲染</b>（用户指定：传送门外观改为 {@code models/block/lucky_portal.json} +
+     * {@code textures/block/lucky_block_partial.png}）。
+     * <p>以前这里是 {@link RenderShape#INVISIBLE}：外观完全由方块实体渲染器
+     * （{@code LuckyPortalBlockRenderer}）画一个 16×6×16 的贴图盒子 + 32 帧 V 轴滚动动画。
+     * 换成模型驱动之后那个渲染器已经没有存在意义，注册一并删掉了（要恢复动画就改回 INVISIBLE
+     * 并把渲染器加回来）。
+     * <p>模型里 {@code ambientocclusion} 设为 false：这些面是"盒子内壁"
+     * （0/16 处的墙 + y=0 的地板），开着 AO 会被自己挡出脏阴影。
+     * 方块光等级仍是 11（见 {@code ModBlocks}），所以内壁是亮着的。
+     */
     @Override
     protected RenderShape getRenderShape(BlockState state) {
-        return RenderShape.INVISIBLE;
+        return RenderShape.MODEL;
     }
 
     @Override

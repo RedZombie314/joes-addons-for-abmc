@@ -195,9 +195,10 @@ public class ModItems {
 
     /**
      * 幸运核心玩家刷怪蛋：直接放下一具"被幸运核心附体的玩家空壳"，
-     * 皮肤从那十位玩家名里随机取（允许重复）。
+     * 皮肤从 {@link OrbPlayerShellSpawnEggItem} 里那份玩家名名单中随机取（允许重复）。
      * 空壳规格与被同化产生的那一具完全一致（20 血 + 20 护甲 + 12 护甲韧性 + 保护 16、
-     * 附魔金苹果回血、走位与抽签攻击、头顶光球）。
+     * 走位与抽签攻击、头顶光球）；附体专属的那几手（吃附魔金苹果/熟猪排、针对特定生物的特攻、
+     * 反制重锤与变形药水）它<b>没有</b>，见 {@code PlayerShellEntity#hasPossessionExclusiveAbilities()}。
      */
     public static final DeferredItem<OrbPlayerShellSpawnEggItem> ORB_PLAYER_SHELL_SPAWN_EGG =
         ITEMS.register("orb_player_shell_spawn_egg",

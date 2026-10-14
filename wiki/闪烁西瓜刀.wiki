@@ -1,0 +1,404 @@
+<!-- =====================================================================
+     页面：闪烁西瓜刀（Glistering Melon Knife）
+     格式：MediaWiki wikitext（可直接粘贴到 MediaWiki / Fandom 页面源码）
+     适用模组版本：JOE's Addons for ABMC 6.7.35（Minecraft 1.21.1 / NeoForge 21.1.x）
+     内容依据源码：
+       src/main/java/cn/autoforged/joes_addons_for_abmc/item/GlisteringMelonKnifeItem.java
+       src/main/java/cn/autoforged/joes_addons_for_abmc/entity/ThrownGlisteringMelonKnife.java
+       src/main/java/cn/autoforged/joes_addons_for_abmc/client/ThrownGlisteringMelonKnifeRenderer.java
+       src/main/java/cn/autoforged/joes_addons_for_abmc/ModMain.java（伤害结算 / 格挡 / 图腾替身）
+       src/main/java/cn/autoforged/joes_addons_for_abmc/item/ModTiers.java、ModItems.java
+     提示：若本站已有物品信息框模板，可把右侧那张浮动表格换成 {{Infobox item|...}}；
+           图片文件名按本站实际上传的文件名修改（下面先按 Glistering melon knife.png 写）。
+     链接约定：原版 Minecraft 的词条（物品 / 方块 / 生物 / 魔咒 / 状态效果 / 关键机制，如闪烁的西瓜片、
+           下界合金斧、三叉戟、蜘蛛网、凋灵、不死图腾、锋利、亡灵杀手、忠诚、生命恢复、潜影贝、
+           创造模式物品栏……）一律用完整 URL 外链到中文 Minecraft Wiki（zh.minecraft.wiki/w/页面名），
+           这样在任何 MediaWiki 站点上都能直接点开；本模组自己的内容（幸运方块、海晶箭、附体空壳等）
+           仍用站内链接或纯文字。原版的泛称与举例（如“干草捆、竹子”）不再逐一加链，避免正文过密。
+     切换为跨 wiki 链接：本站若已配好指向 zh.minecraft.wiki 的前缀（Miraheze 见 Special:Interwiki/add，
+           前缀建议取 mcw，URL 填 https://zh.minecraft.wiki/w/$1），可用正则批量替换：
+           查找 \[https://zh\.minecraft\.wiki/w/([^ \]]+) ([^\]]+)\]  →  替换 [[mcw:$1|$2]]
+     ===================================================================== -->
+
+{| class="wikitable" style="float:right; width:22em; margin:0 0 1em 1em; font-size:90%;"
+|+ style="font-size:115%; font-weight:bold;" | 闪烁西瓜刀
+|-
+| colspan="2" style="text-align:center;" | [[File:Glistering melon knife.png|150px]]
+|-
+! 类型
+| 武器（剑类）
+|-
+! 耐久
+| 50
+|-
+! 攻击力
+| 10 点（5 颗心，同下界合金斧）
+|-
+! 攻击速度
+| 1.6 次/秒（-2.4 修正）
+|-
+! 堆叠上限
+| 1
+|-
+! 附魔能力
+| 14
+|-
+! 修理材料
+| [https://zh.minecraft.wiki/w/闪烁的西瓜片 闪烁的西瓜片]
+|-
+! 可格挡
+| 是（默认按键 <kbd>Z</kbd>）
+|-
+! 获取
+| [[幸运方块]]（无合成配方）
+|-
+! 物品 ID
+| <code>joes_addons_for_abmc:glistering_melon_knife</code>
+|-
+! 实体 ID
+| <code>joes_addons_for_abmc:thrown_glistering_melon_knife</code>
+|}
+
+'''闪烁西瓜刀'''（英文：Glistering Melon Knife）是本模组的一把“剑类”武器：白板攻击力与[https://zh.minecraft.wiki/w/下界合金斧 下界合金斧]持平，可以像[https://zh.minecraft.wiki/w/三叉戟 三叉戟]一样投掷、插在地上再捡回来，能在'''没有盾牌的情况下格挡'''，会在致命一击时'''代替[https://zh.minecraft.wiki/w/不死图腾 不死图腾]保命'''，而对'''[https://zh.minecraft.wiki/w/亡灵 亡灵]'''生物则拥有一个夸张的 <code>×20</code> 伤害乘区。
+
+它同时具备“近战武器、投掷武器、盾牌、保命符”四种身份，但'''耐久只有 50 点，而且没有合成配方'''——只能从[[幸运方块]]里开出来（或在[https://zh.minecraft.wiki/w/创造模式物品栏 创造模式物品栏]中拿取）。
+
+__TOC__
+
+== 简介 ==
+
+* 一把“西瓜做成”的刀，刀身是标准的 45° 对角线构图，贴图分辨率高达 797×805 像素（投掷物渲染时按像素宽度自动换算大小，约为 0.64 格长）。
+* 近战完全走原版结算（蓄力、暴击、剑类附魔都正常生效），只有命中'''亡灵'''时会被本模组的伤害钩子改算。
+* 右键蓄力可以像三叉戟一样'''投掷'''；掷出的刀落地后会'''钉在方块上'''，走过去就能收回背包。
+* 副手或任意装备栏带着它，就能像[https://zh.minecraft.wiki/w/盾牌 盾牌]那样格挡近战与弹射物。
+* 致命伤时它会'''顶替不死图腾'''（甚至能优先花掉你身上的真图腾、把刀留下来）。
+* 它损坏时还有 50% 的概率“裂”出一个真正的不死图腾。
+
+== 获取 ==
+
+{| class="wikitable"
+! 途径
+! 说明
+|-
+| [[幸运方块]]
+| 本物品登记在幸运物品池标签 <code>#joes_addons_for_abmc:lucky_items</code> 中，每个池内物品都是等权重的独立子事件。
+|-
+| [https://zh.minecraft.wiki/w/创造模式物品栏 创造模式物品栏]
+| 本模组的创造标签页里有两把（第二把用于展示）。
+|-
+| 合成
+| '''没有配方。''' 旧版那条“[https://zh.minecraft.wiki/w/西瓜片 西瓜片] / [https://zh.minecraft.wiki/w/岩浆膏 岩浆膏] / [https://zh.minecraft.wiki/w/不死图腾 不死图腾]”竖排三格的配方自 6.7.2 起已被删除，连带自动生成的配方解锁进度也一并去掉，所以合成台上做不出来，工作台帽子/合成权杖那套合成事件同样做不出来。
+|}
+
+<!-- 源码依据：datagen/ModRecipeProvider.java 顶部注释、block/LuckyEvents.java#registerPoolItemEvents -->
+
+== 基础属性 ==
+
+{| class="wikitable"
+! 项目
+! 数值
+! 备注
+|-
+| 攻击力
+| 10 点（5 颗心）
+| 玩家基础 1 点 + 武器 9 点；与下界合金斧相同
+|-
+| 攻击速度
+| 1.6 次/秒
+| 攻击速度修正 -2.4，与所有剑一致
+|-
+| 耐久
+| 50
+| 近战命中 -1 / 投掷 -2 / 格挡有概率 -1
+|-
+| 堆叠上限
+| 1
+|
+|-
+| 附魔能力
+| 14
+| 与铁质工具同级（铁 14）
+|-
+| 铁砧修理
+| [https://zh.minecraft.wiki/w/闪烁的西瓜片 闪烁的西瓜片]
+| 该物品所属“材质等级”的修理材料即闪烁的西瓜片
+|-
+| 挖掘能力
+| 同普通剑
+| 能正常采集[https://zh.minecraft.wiki/w/蜘蛛网 蜘蛛网]（会掉落）；对“剑效率”方块（<code>#minecraft:sword_efficient</code>，如干草捆、竹子等）挖掘速度 ×1.5；'''没有'''镐子的采集等级，挖石头/矿石不会掉落
+|-
+| 稀有度
+| 普通
+| 默认稀有度
+|-
+| 能否穿过传送门
+| 否
+| 投掷物形态也设置了 <code>canUsePortal = false</code>
+|}
+
+== 伤害 ==
+
+=== 普通目标 ===
+
+与原版剑完全一致：
+
+<pre>最终伤害 = 攻击力 × 蓄力 × 暴击 + 附魔加成 × 蓄力</pre>
+
+* 攻击力 = 10（白板）
+* 蓄力系数 = <code>0.2 + 蓄力² × 0.8</code>（完全蓄力时正好等于 1.0）
+* 暴击乘区 = ×1.5
+* 附魔加成：[https://zh.minecraft.wiki/w/锋利 锋利] = <code>0.5 × 等级 + 0.5</code>（即 I 级 +1、V 级 +3）；[https://zh.minecraft.wiki/w/亡灵杀手 亡灵杀手]按原版 +2.5/级；[https://zh.minecraft.wiki/w/节肢杀手 节肢杀手]按原版对节肢生物 +2.5/级
+
+也就是说'''满蓄力不暴击的一刀就是 10 点'''，与下界合金斧相同。
+
+=== 亡灵目标（本模组特色） ===
+
+命中<code>#minecraft:sensitive_to_smite</code>（即<code>#minecraft:undead</code>：[https://zh.minecraft.wiki/w/僵尸 僵尸]、[https://zh.minecraft.wiki/w/尸壳 尸壳]、[https://zh.minecraft.wiki/w/溺尸 溺尸]、[https://zh.minecraft.wiki/w/僵尸村民 僵尸村民]、[https://zh.minecraft.wiki/w/僵尸猪灵 僵尸猪灵]、[https://zh.minecraft.wiki/w/僵尸疣猪兽 僵尸疣猪兽]、[https://zh.minecraft.wiki/w/骷髅 骷髅]、[https://zh.minecraft.wiki/w/流浪者 流浪者]、[https://zh.minecraft.wiki/w/凋灵骷髅 凋灵骷髅]、[https://zh.minecraft.wiki/w/骷髅马 骷髅马]、[https://zh.minecraft.wiki/w/僵尸马 僵尸马]、[https://zh.minecraft.wiki/w/幻翼 幻翼]、[https://zh.minecraft.wiki/w/凋灵 凋灵]……）时，伤害改为：
+
+<pre>最终伤害 = 白板伤害 × (1 + 0.2 × 亡灵杀手等级) × 20 + 锋利加成</pre>
+
+* 也就是'''先按亡灵杀手等级线性追加 20%，再整体进 ×20 乘区'''，等价于 <code>白板 × (20 + 4 × 等级)</code>。
+* '''没有附亡灵杀手也照样 ×20'''——白板一刀对亡灵就是 200 点。
+* 原版亡灵杀手自带的 <code>+2.5 × 等级</code> 固定加成被这条规则'''取代'''，不重复计算。
+* 锋利加成'''不进乘区'''，按原版加在最外层。
+* 亡灵杀手 I 级相对白板多出的部分 = <code>10 × 20 × 20% = 40</code> 点。
+
+{| class="wikitable" style="text-align:center;"
+|+ 对亡灵伤害一览（白板 10、满蓄力、无锋利）
+! 亡灵杀手
+! 乘区
+! 近战（不暴击）
+! 近战（暴击）
+! 投掷命中
+|-
+| 无
+| ×20
+| 200
+| 300
+| 200
+|-
+| I
+| ×24
+| 240
+| 360
+| 240
+|-
+| II
+| ×28
+| 280
+| 420
+| 280
+|-
+| III
+| ×32
+| 320
+| 480
+| 320
+|-
+| IV
+| ×36
+| 360
+| 540
+| 360
+|-
+| V
+| ×40
+| 400
+| 600
+| 400
+|}
+
+几点补充：
+
+* '''投掷命中用同一套公式'''（按满蓄力、不暴击计算），所以丢出去的刀同样能秒掉亡灵。
+* 附了'''锋利 V''' 时，在亡灵身上再加 3 点（如 亡灵杀手 V + 锋利 V = 403），锋利的部分'''不翻 20 倍'''。
+* '''[https://zh.minecraft.wiki/w/力量 力量效果]'''（每级 +3 攻击力）以及其它模组给出的平砍攻击力加成会被算进白板里，因此也会一起吃 ×20（例：力量 II 时白板变 16，对亡灵为 320）。
+* 因为刀被登记进<code>#minecraft:swords</code>，它可以做'''[https://zh.minecraft.wiki/w/横扫 横扫攻击]'''；横扫溅射到亡灵身上的伤害同样会吃 ×20。
+
+== 近战 ==
+
+* 左键正常挥砍，结算完全交给原版（蓄力、暴击、附魔、击退、火焰附加等）。
+* 每次命中消耗 '''1 点耐久'''。
+* 当'''这一刀把刀用坏'''时，有 '''50%''' 的概率在玩家所在位置掉落一个'''[https://zh.minecraft.wiki/w/不死图腾 不死图腾]'''（更像是“刀碎了，里面掉出个图腾”）。
+* 创造模式下不消耗耐久，因此也不会触发上面的掉落。
+
+== 投掷 ==
+
+右键蓄力（姿势与三叉戟完全相同），'''至少蓄力 10 刻（0.5 秒）'''才能掷出：
+
+{| class="wikitable"
+! 项目
+! 数值 / 行为
+|-
+| 出手速度
+| 2.5 格/刻（与三叉戟相同）
+|-
+| 散布
+| 1.0（与三叉戟相同）
+|-
+| 音效
+| 三叉戟投掷音效
+|-
+| 耐久消耗
+| 2 点（近战是 1 点）
+|-
+| 出手后
+| 刀从背包里消失，变成投掷物实体
+|-
+| 命中生物
+| 造成伤害后'''继续飞'''，但不再造成第二次伤害
+|-
+| 命中方块
+| '''钉在原地'''（沿来路退让 0.05 格，速度清零，播放“插进地里”的闷响），不再受重力影响
+|-
+| 插住后的存活
+| 6000 刻 = '''5 分钟'''后自动消失（原版三叉戟插地只有 1 分钟）
+|-
+| 回收方式
+| '''走过去踩一下'''就进背包（原版三叉戟的回收方式）；背包满了不会掉在地上，会留在原地等下次
+|-
+| 谁能捡
+| 掷出者本人随时可以；掷出者已死亡/离线/不是玩家时，任何人都能捡
+|-
+| 耐久只剩很少时
+| 伤害值达到“最大耐久 − 1”（本物品即 49）时就无法再蓄力使用（与原版三叉戟同款判定）
+|}
+
+* '''[https://zh.minecraft.wiki/w/创造模式 创造模式]'''掷出的刀，以及'''附体空壳'''掷出的刀，落地后'''直接消失、不会插在地上'''——它们本来就是凭空掏出来的，否则满地都是刀、还能被玩家捡走刷物品。
+* 投掷物落地/插住的状态是同步数据，客户端不会自己按重力往下掉。
+* 插住的刀'''不能'''通过传送门带走（<code>canUsePortal = false</code>）。
+* “[https://zh.minecraft.wiki/w/多重射击 多重射击]”分裂出来的副本刀，落地后 2 秒即消失（避免一地刀）；射手自己那一发不受影响，照旧插 5 分钟。
+
+=== 忠诚 ===
+
+* 刀上带'''[https://zh.minecraft.wiki/w/忠诚 忠诚]'''附魔时，'''命中生物或方块之后会自动飞回掷出者'''，永远不会插在地上。
+* 返程时穿墙飞行、不再造成伤害，并播放一次三叉戟回收音效；贴到主人身边后玩家的刀'''直接进背包'''（装不下就掉在脚边），创造模式/非玩家主人的刀直接消失。
+* 主人死亡或转为[https://zh.minecraft.wiki/w/旁观模式 旁观模式]时，刀会留在原地变成掉落物（与原版三叉戟一致）。
+* 返程的推进方式是按剩余距离 30% 插值（夹在 0.4~2.0 格/刻），所以不会出现“只听到回收音效、刀在主人身边来回晃”的情况。
+
+== 格挡 ==
+
+手持闪烁西瓜刀（主手或副手皆可），按住'''格挡键'''（默认 <kbd>Z</kbd>，按键设置中“JOE's Addons for ABMC”分类下可改）即可格挡，效果类似盾牌：
+
+* '''格挡近战'''：这次伤害直接清零，播放盾牌格挡音效；有 <code>30% × 0.7^耐久附魔等级</code> 的概率尝试消耗 1 点耐久（[https://zh.minecraft.wiki/w/耐久 耐久]附魔还会在消耗判定里再降一次概率）。
+* '''格挡弹射物'''：伤害清零，并让弹射物随机改变方向飞走（[https://zh.minecraft.wiki/w/潜影贝 潜影贝]子弹会被直接消除）。
+* 可格挡的弹射物名单写在配置文件中：
+** 小型（默认）：<code>minecraft:small_fireball</code>、<code>minecraft:arrow</code>、<code>minecraft:shulker_bullet</code>
+** 大型（默认）：<code>minecraft:trident</code>、<code>minecraft:fireball</code>
+* 用刀格挡'''大型'''弹射物时，除了耐久消耗外，还有 <code>10% × 0.7^耐久附魔等级</code> 的概率'''被打落在地'''（掉成掉落物，可以捡回来）。
+* 格挡'''不消耗[https://zh.minecraft.wiki/w/饥饿 饥饿值]'''（不是原版盾牌机制）。
+* '''海晶箭是特例'''：它命中处于格挡状态的玩家时，会'''必定把刀打落'''并解除格挡（随后这一箭的伤害照常结算）。
+
+== 保命：顶替不死图腾 ==
+
+当一次伤害'''足以让玩家死亡'''（当前生命 - 本次伤害 ≤ 0），且该伤害不是“无视无敌”类伤害（如 <code>/kill</code>、虚空）时：
+
+# 先检查'''主手与副手'''：只要其中一只手拿着闪烁西瓜刀，就触发保命；
+# 再检查'''盔甲栏'''：只要有任意一件护甲栏位放着闪烁西瓜刀，同样触发。
+
+触发后：
+
+* 生命值被设为 '''1 点'''；
+* 获得与原版不死图腾完全相同的效果：'''[https://zh.minecraft.wiki/w/生命恢复 生命恢复] II（45 秒）'''、'''[https://zh.minecraft.wiki/w/伤害吸收 伤害吸收] II（5 秒）'''、'''[https://zh.minecraft.wiki/w/抗火 抗火] I（40 秒）'''；
+* 播放原版不死图腾的粒子与音效（实体事件 35）。
+
+'''消耗谁？'''——本模组会优先花掉你身上'''真正的不死图腾'''，把刀留下来：
+
+# 副手的不死图腾优先；
+# 其次是整个背包（含主手、快捷栏、主背包、盔甲栏）里的不死图腾；
+# 实在一个图腾都没有，才轮到'''这把刀自己被消耗掉'''（刀直接消失）。
+
+注意：
+
+* 只有'''拿在手上或穿在身上'''的刀才能顶命；放在背包/快捷栏里“躺着”的刀不算。
+* 用刀顶命时刀是'''直接消失'''的，'''不会'''触发下面那条“碎裂退还图腾”。
+* 因为会顺手翻找背包里的图腾，所以“手拿西瓜刀 + 背包里放着图腾”时，被吃掉的会是背包里的图腾——这是本模组特意做的判定顺序。
+
+== 损坏时的图腾掉落 ==
+
+无论'''近战砍坏'''还是'''投掷用坏'''，只要这把刀被消耗到损坏，就有 '''50%''' 的概率在玩家脚下掉落一个'''不死图腾'''。
+
+* 创造模式下不消耗耐久，因此不会发生。
+* 用刀顶替不死图腾（上一节）时是“直接消耗”，不会触发本掉落。
+
+== 附魔与修理 ==
+
+闪烁西瓜刀被登记进了两个原版标签，因此同时拥有“剑”和“三叉戟”两套附魔资格：
+
+{| class="wikitable"
+! 标签
+! 带来的附魔
+|-
+| <code>#minecraft:swords</code><br>（→ <code>#minecraft:enchantable/sword</code>、<code>#minecraft:enchantable/sharp_weapon</code>）
+| [https://zh.minecraft.wiki/w/锋利 锋利]、[https://zh.minecraft.wiki/w/亡灵杀手 亡灵杀手]、[https://zh.minecraft.wiki/w/节肢杀手 节肢杀手]、[https://zh.minecraft.wiki/w/横扫之刃 横扫之刃]、[https://zh.minecraft.wiki/w/击退 击退]、[https://zh.minecraft.wiki/w/火焰附加 火焰附加]、[https://zh.minecraft.wiki/w/抢夺 抢夺]
+|-
+| <code>#minecraft:enchantable/trident</code>
+| [https://zh.minecraft.wiki/w/忠诚 忠诚]、[https://zh.minecraft.wiki/w/引雷 引雷]、[https://zh.minecraft.wiki/w/激流 激流]
+|}
+
+* 适用于这些附魔的'''[https://zh.minecraft.wiki/w/附魔台 附魔台]与[https://zh.minecraft.wiki/w/铁砧 铁砧]'''两条路径都被照顾到了：既补了数据包标签，也在物品代码里覆写了“可附魔判定”，所以即便整合包里用数据包覆盖了那个标签，'''忠诚'''依旧能附上。
+* 三叉戟系的三个附魔中，只有'''忠诚'''在刀上有实际效果；'''引雷'''与'''激流'''的效果判定都写死了“必须是三叉戟”，附在刀上不会生效（激流与忠诚/引雷互斥，只能选其中之一）。
+* 附魔能力 14，铁砧上可用'''闪烁西瓜片'''修理。
+* [https://zh.minecraft.wiki/w/耐久 耐久]附魔会同时影响格挡的耐久消耗概率与打落概率。
+
+== 谁会使用它 ==
+
+* '''玩家'''：全部机制如上。
+* '''附体空壳 / 空壳（被幸运核心附体的玩家外壳）'''：
+** 近战特攻：抽出西瓜刀贴身劈砍，白板 10 点，亡灵由同一套钩子补成 200 点，出手间隔 1.5 秒；
+** 远程特攻：把西瓜刀当三叉戟丢出去（速度 2.5、散布 1.0），命中伤害与玩家投掷一致；
+** 面对'''亡灵'''（含'''凋灵'''）时，它有 75% 的概率特意选用西瓜刀——因为刀对亡灵的乘区最高。空壳掷出的刀是“凭空掏出来的”，落地即消失，不会满地掉刀。
+*** 注意：这条"特意选刀"属于'''附体专属能力'''，'''只有附体母体'''（核心附体真玩家时产生的那一具）会这么做；被同化的与刷怪蛋放出的空壳只是照普通池子抽签，抽到刀才用刀（见[[玩家空壳]]）。
+
+== 表现与渲染 ==
+
+* 投掷物'''不用'''“永远正对摄像机”的平面广告牌，而是直接渲染'''物品模型本身'''（带 1 像素厚度的立体模型），和拿在手上/掉在地上看到的是同一个东西。
+* 刀尖始终朝飞行方向、刀柄在后；飞行途中不会自转、也不会跟着摄像机转，刀面保持竖直（与三叉戟一致）。
+* 模型大小由贴图像素宽度自动换算（<code>缩放 = 510 ÷ 贴图宽度</code>，797 px 贴图 → 约 0.64 格），换更高分辨率的贴图无需改代码。
+* 刚出手的前 2 刻若贴在镜头前则不绘制，避免糊住视野。
+* 投掷物实体：尺寸 0.25 × 0.25 格，客户端追踪范围 4 格，每 10 刻同步一次。
+
+== 数据与标识 ==
+
+{| class="wikitable"
+! 项目
+! 值
+|-
+| 物品 ID
+| <code>joes_addons_for_abmc:glistering_melon_knife</code>
+|-
+| 投掷物实体 ID
+| <code>joes_addons_for_abmc:thrown_glistering_melon_knife</code>
+|-
+| 中文名 / 英文名
+| 闪烁西瓜刀 / Glistering Melon Knife
+|-
+| 幸运物品池标签
+| <code>#joes_addons_for_abmc:lucky_items</code>
+|-
+| 亡灵判定标签
+| <code>#minecraft:sensitive_to_smite</code>（= <code>#minecraft:undead</code>）
+|-
+| 格挡按键
+| <code>key.joes_addons_for_abmc.block</code>（默认 <kbd>Z</kbd>）
+|-
+| 存档键名
+| <code>KnifeStuck</code>、<code>KnifeStuckTime</code>、<code>KnifeDealtDamage</code>、<code>KnifeCreativeOnly</code>、<code>KnifeReturnSound</code>、<code>KnifeLoyalty</code>、<code>KnifeStack</code>
+|}
+
+== 琐事 ==
+
+* 它是本模组里唯一同时能'''投掷、格挡、当图腾'''的物品。
+* “刀碎了掉图腾”和“图腾替身”是两套不同机制：前者是'''耐久耗尽'''时的随机奖励，后者是'''致命伤'''时的保命触发。
+* 投掷物插在地上'''等 5 分钟'''，是刻意比原版三叉戟（1 分钟）长——因为它比箭珍贵得多。
+* 它的白板攻击力刻意做成和下界合金斧一样，配合耐久只有 50 点，形成“高伤、短命、能保命”的定位。
+
+<!--
+== 已知问题 ==
+（如需对外公布，可取消注释并补充；详情见代码审查报告）
+* 耐久只剩 2 点时投掷，刀会先因投掷的 2 点耐久消耗而损坏，导致掷出的是一把“空刀”实体（不可见、不可拾取）。
+-->
+
+[[Category:物品]]
+[[Category:武器]]
+[[Category:JOE's Addons for ABMC]]

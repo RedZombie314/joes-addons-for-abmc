@@ -1,0 +1,15 @@
+{
+ "Beeper.png": "src/main/resources/assets/joes_addons_for_abmc/textures/entity/beeper/beeper.png",
+ "Blaze staff.png": "src/main/resources/assets/joes_addons_for_abmc/textures/item/blaze_staff.png",
+ "Crafting table hat.png": "src/main/resources/assets/joes_addons_for_abmc/textures/item/crafting_hat.png",
+ "Glistering melon knife.png": "src/main/resources/assets/joes_addons_for_abmc/textures/item/glistering_melon_knife.png",
+ "Iron hook.png": "src/main/resources/assets/joes_addons_for_abmc/textures/item/iron_hook.png",
+ "Lucky block.png": "src/main/resources/assets/joes_addons_for_abmc/textures/block/lucky_block.png",
+ "Support lucky block.png": "src/main/resources/assets/joes_addons_for_abmc/textures/block/lucky_block.png",
+ "Lucky dimension block.png": "src/main/resources/assets/joes_addons_for_abmc/textures/block/lucky_dimension_block.png",
+ "Lucky selector.png": "src/main/resources/assets/joes_addons_for_abmc/textures/entity/lucky_selector/outer.png",
+ "Staff bee nest.png": "src/main/resources/assets/joes_addons_for_abmc/textures/item/staff_bee_nest.png",
+ "Staff crafting table.png": "src/main/resources/assets/joes_addons_for_abmc/textures/item/staff_crafting_table.png",
+ "Wart on a stick.png": "src/main/resources/assets/joes_addons_for_abmc/textures/item/wart_on_a_stick.png",
+ "Wings.png": "src/main/resources/assets/joes_addons_for_abmc/textures/entity/wings.png"
+}

@@ -14,15 +14,11 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.entity.LightningBolt;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.material.FluidState;
-import net.minecraft.tags.FluidTags;
 import org.jetbrains.annotations.Nullable;
 
 public class LuckyPortalBlockEntity extends BlockEntity {
@@ -106,16 +102,85 @@ public class LuckyPortalBlockEntity extends BlockEntity {
     }
 
     /**
-     * 在传送门结构之外 1~2 格处找一个安全落点。
-     * 传送门结构为以 portalCenter 为起点的 2x2 区域，因此沿随机方向向外偏移 1~2 格即可落在结构之外。
+     * 落地位置与门的水平距离下限（格）。<b>不能小于 2</b>。
+     *
+     * <p>原因：目的地那一扇门是以 {@code portalCenter} 为原点的 <b>2×2</b> 区域
+     * （{@link #createPortalStructureAt} 的 {@code portalOffsets} = offset 0~1），
+     * 所以轴向偏移 <b>1</b> 格时 x/z 会正好与门所占的 0~1 重叠 —— 落点就在门里。
+     * 而门没有碰撞箱（{@code LuckyPortalBlock.COLLISION_SHAPE = Shapes.empty()}），
+     * 玩家会被直接"托"在门上一格然后穿下去，最终站在门方块所在的格子里；
+     * 创造/旁观模式又是"碰到立刻传送"（{@code LuckyPortalBlock.handlePlayerInPortal}），
+     * 于是下一 tick 立刻被弹回原维度 —— 这就是"进单格门有概率被传回主世界"的根因。
+     * 偏移 ≥ 2 时 x/z 与 0~1 不可能重叠，落点必然在结构外。</p>
+     */
+    private static final int LANDING_DISTANCE_MIN = 2;
+
+    /**
+     * 往外最多试到几格。用于避开"脚下又是一扇门"的落点（例如附近已经有别的传送门结构）。
+     * 4 个方向 × 这个区间逐个校验，都拿到第 4 项；实在全不合格才退到兜底。
+     */
+    private static final int LANDING_DISTANCE_MAX = 6;
+
+    /**
+     * 在传送门结构之外找一个安全落点。
+     *
+     * <p>从 {@link #LANDING_DISTANCE_MIN}（= 2，保证在 2×2 结构外）开始逐格往外试，
+     * 每个距离下 4 个方向随机排序，取第一个"落点干净"的列（见 {@link #isLandingClear}）。</p>
      */
     private static BlockPos findSafeTeleportPos(ServerLevel targetLevel, BlockPos portalCenter) {
         int[][] dirs = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
-        int[] d = dirs[targetLevel.getRandom().nextInt(dirs.length)];
-        int dist = 1 + targetLevel.getRandom().nextInt(2); // 1 或 2
-        int x = portalCenter.getX() + d[0] * dist;
-        int z = portalCenter.getZ() + d[1] * dist;
-        return findSafePos(targetLevel, x, z);
+        // 方向顺序随机（Fisher-Yates，用世界自己的随机源），避免每次都被安排到同一侧
+        for (int i = dirs.length - 1; i > 0; i--) {
+            int j = targetLevel.getRandom().nextInt(i + 1);
+            int[] tmp = dirs[i];
+            dirs[i] = dirs[j];
+            dirs[j] = tmp;
+        }
+
+        BlockPos fallback = null;
+        for (int dist = LANDING_DISTANCE_MIN; dist <= LANDING_DISTANCE_MAX; dist++) {
+            for (int[] d : dirs) {
+                BlockPos candidate = findSafePos(targetLevel,
+                    portalCenter.getX() + d[0] * dist,
+                    portalCenter.getZ() + d[1] * dist);
+                if (fallback == null) {
+                    fallback = candidate;
+                }
+                if (isLandingClear(targetLevel, candidate)) {
+                    return candidate;
+                }
+            }
+        }
+        // 极端情况（周围一圈全是门）：给结构外最靠里的那一个，宁可落点不理想也不要原地弹回去。
+        return fallback != null
+            ? fallback
+            : findSafePos(targetLevel, portalCenter.getX() + LANDING_DISTANCE_MIN, portalCenter.getZ());
+    }
+
+    /**
+     * 落点是否"干净"：从落点往下走到真正踩得住的方块，<b>途中（含停下来的那一格）不能有幸运传送门方块</b>。
+     *
+     * <p>{@link #findSafePos} 只保证"落点是空气"，而门没有碰撞箱、会被它当成"地面"：
+     * 玩家会被放在门的正上方一格，然后穿过门落进门格子里 → 创造模式下一 tick 就被传回去。
+     * 这里把"脚下是不是实心"换成"会不会半路遇见门"来判定，正是为了挡住这种情况。</p>
+     *
+     * @return true = 可以落
+     */
+    private static boolean isLandingClear(ServerLevel level, BlockPos landing) {
+        BlockPos.MutableBlockPos p = landing.mutable();
+        int minY = level.getMinBuildHeight();
+        while (p.getY() > minY) {
+            BlockPos below = p.below();
+            BlockState belowState = level.getBlockState(below);
+            if (belowState.getBlock() instanceof LuckyPortalBlock) {
+                return false;
+            }
+            if (!belowState.getCollisionShape(level, below).isEmpty()) {
+                return true;
+            }
+            p.move(0, -1, 0);
+        }
+        return true;
     }
 
     private void propagateReturnTargetToNeighbors(ResourceKey<Level> targetDim, BlockPos targetPos) {
@@ -181,62 +246,6 @@ public class LuckyPortalBlockEntity extends BlockEntity {
         }
 
         return firstPortalPos != null ? firstPortalPos : center;
-    }
-
-    public static BlockPos detectPortalStructure(ServerLevel level, BlockPos waterPos) {
-        int[][] waterOffsets = {{1, 1}, {2, 1}, {1, 2}, {2, 2}};
-        int[][] goldOffsets = {
-            {1, 0}, {2, 0},
-            {0, 1}, {3, 1},
-            {0, 2}, {3, 2},
-            {1, 3}, {2, 3}
-        };
-
-        for (int[] wo : waterOffsets) {
-            BlockPos origin = waterPos.offset(-wo[0], 0, -wo[1]);
-
-            boolean valid = true;
-            for (int[] gp : goldOffsets) {
-                BlockPos checkPos = origin.offset(gp[0], 0, gp[1]);
-                if (!level.getBlockState(checkPos).is(Blocks.GOLD_BLOCK)) {
-                    valid = false;
-                    break;
-                }
-            }
-            if (!valid) continue;
-
-            for (int[] pwo : waterOffsets) {
-                BlockPos checkPos = origin.offset(pwo[0], 0, pwo[1]);
-                FluidState fluid = level.getFluidState(checkPos);
-                if (!fluid.is(FluidTags.WATER) || !fluid.isSource()) {
-                    valid = false;
-                    break;
-                }
-            }
-            if (!valid) continue;
-
-            BlockPos portalCenter = origin.offset(1, 0, 1);
-            return portalCenter;
-        }
-
-        return null;
-    }
-
-    public static void createPortalAtWaterStructure(ServerLevel level, BlockPos waterPos) {
-        BlockPos portalCenter = detectPortalStructure(level, waterPos);
-        if (portalCenter == null) return;
-
-        LightningBolt lightning = EntityType.LIGHTNING_BOLT.create(level);
-        if (lightning != null) {
-            lightning.moveTo(portalCenter.getX() + 0.5, portalCenter.getY(), portalCenter.getZ() + 0.5);
-            level.addFreshEntity(lightning);
-        }
-
-        int[][] portalOffsets = {{0, 0}, {1, 0}, {0, 1}, {1, 1}};
-        for (int[] po : portalOffsets) {
-            BlockPos pp = portalCenter.offset(po[0], 0, po[1]);
-            level.setBlock(pp, ModBlocks.LUCKY_PORTAL.get().defaultBlockState(), Block.UPDATE_ALL);
-        }
     }
 
     @Override

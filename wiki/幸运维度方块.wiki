@@ -1,0 +1,210 @@
+<!-- =====================================================================
+     页面：幸运维度方块（Lucky Dimension Block）
+     格式：MediaWiki wikitext（可直接粘贴到 MediaWiki / Fandom / Miraheze 页面源码）
+     适用模组版本：JOE's Addons for ABMC 6.7.35（Minecraft 1.21.1 / NeoForge 21.1.x）
+     内容依据源码：
+       block/LuckyDimensionBlock.java（方块：RenderShape.INVISIBLE、只服务端 tick）
+       block/entity/LuckyDimensionBlockEntity.java（伪装材质池 + 维度外每 10 刻换材质 + NBT）
+       block/renderer/LuckyDimensionBlockRenderer.java（维度外 BER / 维度内每方块材质与预算）
+       block/renderer/LuckyDimensionSectionRenderer.java（维度内区块网格）
+       block/ModBlocks.java、worldgen/ModNoiseSettings.java（注册属性 / 它是维度地形本体）
+       event/ClientEvents.java（每刻把玩家周围 3 个区块段标脏）
+     链接约定：原版 Minecraft 的词条一律用完整 URL 外链到中文 Minecraft Wiki（zh.minecraft.wiki/w/页面名），
+           本模组自己的内容（幸运维度、幸运方块、幸运核心、幸运选择器、支援幸运方块等）用站内链接。
+           若本站已配好跨 wiki 前缀（Miraheze 见 Special:Interwiki/add，前缀建议 mcw、
+           URL 填 https://zh.minecraft.wiki/w/$1），可把 [https://zh.minecraft.wiki/w/X X] 批量替换成 [[mcw:X|X]]。
+     ===================================================================== -->
+
+{| class="wikitable" style="float:right; width:23em; margin:0 0 1em 1em; font-size:90%;"
+|+ style="font-size:115%; font-weight:bold;" | 幸运维度方块
+|-
+| colspan="2" style="text-align:center;" | [[File:Lucky dimension block.png|150px]]
+|-
+! 类型
+| 方块（含方块实体）
+|-
+! 硬度
+| 1.5
+|-
+! 爆炸抗性
+| 6.0（与[https://zh.minecraft.wiki/w/石头 石头]同级）
+|-
+! 合适工具
+| [https://zh.minecraft.wiki/w/镐 镐]
+|-
+! 掉落物
+| '''无'''（战利品表为空）
+|-
+! 堆叠上限
+| 64
+|-
+! 亮度 / 透明
+| 0 / 否（完整不透明立方体）
+|-
+! 可燃
+| 否
+|-
+! 创造模式物品栏
+| '''不在其中'''
+|-
+! 获取
+| 仅 <code>/give</code>（无配方、无掉落）
+|-
+! 别名
+| 地图上显示为金色（MapColor = GOLD）
+|-
+! 主要用途
+| [[幸运维度]]的'''地形本体'''
+|-
+! 方块 ID
+| <code>joes_addons_for_abmc:lucky_dimension_block</code>
+|-
+! 方块实体 ID
+| <code>joes_addons_for_abmc:lucky_dimension_block_entity</code>
+|}
+
+'''幸运维度方块'''（英文：Lucky Dimension Block）是[[幸运维度]]的'''地形本体'''：那个维度从地表挖到底全是它。它最大的特点不是硬度也不是爆炸抗性，而是'''自己没有固定外观'''——每一格都会"伪装"成 9 种黄色系完整立方体方块中的一种，而且在维度里还会'''随时间各自变换'''。
+
+== 获取 ==
+
+{| class="wikitable"
+! 途径
+! 情况
+|-
+| 合成
+| '''没有配方'''
+|-
+| 创造模式物品栏
+| '''没有登记'''（本模组的创造标签页里找不到它）
+|-
+| 挖掘
+| '''不掉落'''：战利品表是空的（<code>{"type":"minecraft:block","pools":[]}</code>），所以即使拿[https://zh.minecraft.wiki/w/镐 镐]挖、甚至附上[https://zh.minecraft.wiki/w/精准采集 精准采集]也拿不到它
+|-
+| 命令
+| <code>/give joes_addons_for_abmc:lucky_dimension_block</code>
+|-
+| 创造模式中键
+| 在创造模式里对着它按中键可以复制出方块物品（原版行为）
+|}
+
+也就是说：'''在生存模式下它是一件拿不到的方块'''，它存在的意义是当[[幸运维度]]的地形。
+
+== 外观：伪装材质 ==
+
+方块自身有一张黄绿色的贴图（带深金色边框），但正常情况下'''看不到它'''——它的渲染形状被显式设为"Invisible"（<code>RenderShape.INVISIBLE</code>），外观完全由客户端另外绘制成'''伪装材质'''。
+
+=== 伪装材质池 ===
+
+可以拿来当外观的是固定 9 种"完整立方体"方块，全部是黄/沙色系：
+
+* [https://zh.minecraft.wiki/w/干草块 干草块]
+* [https://zh.minecraft.wiki/w/黄色羊毛 黄色羊毛]
+* [https://zh.minecraft.wiki/w/黄色混凝土 黄色混凝土]
+* [https://zh.minecraft.wiki/w/黄色混凝土粉末 黄色混凝土粉末]
+* [https://zh.minecraft.wiki/w/黄色陶瓦 黄色陶瓦]
+* [https://zh.minecraft.wiki/w/鹿角珊瑚块 鹿角珊瑚块]
+* [https://zh.minecraft.wiki/w/沙子 沙子]
+* [https://zh.minecraft.wiki/w/粗金块 粗金块]
+* [https://zh.minecraft.wiki/w/竹板 竹板]
+
+每个候选都要通过一串检查才会进池：渲染形状必须是普通模型（排除屏障、光源、结构空位这类无模型方块）、不能带方块实体、必须是'''满碰撞箱'''的完整立方体、必须能遮挡邻居（排除[https://zh.minecraft.wiki/w/玻璃 玻璃]、[https://zh.minecraft.wiki/w/冰 冰]、[https://zh.minecraft.wiki/w/黏液块 黏液块]、[https://zh.minecraft.wiki/w/树叶 树叶]这类半透明方块，否则方块会变成"透视洞"）、外接盒三个方向都要接近 1 格（排除堆肥桶、炼药锅、土径这种缺角形状）。
+
+=== 两条取材质的路径 ===
+
+{| class="wikitable"
+! 场景
+! 谁决定外观
+! 变化节奏
+|-
+| '''[[幸运维度]]内'''
+| '''客户端按坐标哈希自算'''：不写 NBT、不同步、服务端零开销、不发任何包
+| 每个方块有自己的周期（'''16~24 刻 = 0.8~1.2 秒'''）与相位，所以是"零散逐块"地变；客户端每刻还会把玩家周围 27 个区块段轮转标脏 3 个（约 0.45 秒扫完一轮），网格重编译后才看得到变化
+|-
+| '''其它维度'''（把它当建材）
+| 由方块实体把当前材质同步给客户端，客户端按那个材质画
+| 服务端每 '''10 刻'''换一次，并按方块坐标交错错开；同一时刻'''尽量不出现两个相同材质'''（池子用尽才会重复）
+|}
+
+维度内那条路径还有几道性能限制：只有 '''32 格内'''的方块才画随机材质（更远退回方块自身贴图）；每帧最多画 '''3000''' 个随机材质方块，超出预算的同样退回自身贴图；六面都被邻居挡住的方块整块跳过，每块也只画没被挡住的那 1~3 个面。
+
+* '''小提示'''：同一个方块在不同玩家眼里、不同时刻的材质可能不同——这是"客户端按坐标算"的必然结果，不是显示错误。
+
+=== 曾经的 50% 黄色滤镜 ===
+
+早期版本会在伪装材质上再叠一层 50% 透明度的黄纱（把暗部"抬"向黄色而不是压暗），现在'''已按需求停用'''：滤镜的渲染类型、贴图（<code>textures/block/filter.png</code>）与绘制方法全部原样保留，只是两处调用被注释掉了，以后取消注释即可恢复。
+
+=== 外观相关配置 ===
+
+{| class="wikitable"
+! 键
+! 默认
+! 作用
+|-
+| <code>lucky_dimension_block.lucky_dimension_block_random_textures</code>
+| <code>true</code>
+| '''总开关'''：关闭后，维度内与维度外都改画方块自身的黄绿色贴图（不会隐形）
+|}
+
+另有一个'''代码常量'''（不是配置项）<code>RANDOM_MATERIAL_IN_DIMENSION = true</code>，把它改成 <code>false</code> 可以单独关掉"维度内的随机材质"，只显示自身贴图。
+
+== 用途 ==
+
+* '''[[幸运维度]]的地形'''：它是该维度噪声设置的默认方块，也是地表规则的目标方块——所以那个维度"从天到地"都是它（没有石头、泥土、矿石，也没有水与岩浆）；
+* '''[[幸运选择器]]自然生成的立足点'''：选择器只在"脚下是幸运维度方块"的位置生成，这条规则把它的自然生成限制在幸运维度地形之上；
+* '''建材'''：因为会不停变换外观，它在其它维度里是一块"会变色的装饰方块"（外观每 10 刻变一次）；
+* 它在地图上按'''金色'''显示（MapColor 为 GOLD）。
+
+== 技术细节 ==
+
+* 方块本身只注册了'''服务端'''的刻（客户端刻为 <code>null</code>）；
+* '''在[[幸运维度]]里，方块的刻什么也不做'''：一旦判定当前维度是幸运维度就立刻返回——否则每 10 刻就要给几十万个方块各发一次方块更新包，整片维度会直接被拖垮。维度内的外观改由客户端算，所以服务端完全不需要参与；
+* 维度外则由方块实体负责换材质，并把当前材质存进 NBT（键名 <code>currentTexture</code>）随存档保存；换材质后立刻同步给客户端；
+* 伪装材质是绕方块中心'''放大 1.004 倍'''后绘制的（每个面外移约 0.002 格），避免与方块自身模型共面闪烁；
+* 维度外的方块实体渲染批次必须在方块实体通道之后'''显式提交'''（<code>flushBatches()</code>），否则会出现"代码都跑了但屏幕上什么都没有"；
+* 关卡卸载时会清空"当前被占用的材质"表与材质池缓存，下次进入重新构建。
+
+=== 相关修复 ===
+
+* '''6.5.32'''：维度内的区块网格只带 3×3 个区块，批次区域与本次几何回调对不上时会读越界并'''崩客户端'''——现在改为跳过该格并只警告一次；
+* 伪装材质的"能否使用"缓存曾用普通 <code>HashMap</code>，在区块网格的多线程编译下抛 <code>ConcurrentModificationException</code> 崩客户端，现已改为并发容器。
+
+== 数据与标识 ==
+
+{| class="wikitable"
+! 项目
+! 值
+|-
+| 方块 ID
+| <code>joes_addons_for_abmc:lucky_dimension_block</code>
+|-
+| 方块实体 ID
+| <code>joes_addons_for_abmc:lucky_dimension_block_entity</code>
+|-
+| 战利品表
+| <code>data/joes_addons_for_abmc/loot_tables/blocks/lucky_dimension_block.json</code>（空）
+|-
+| 可挖掘标签
+| <code>#minecraft:mineable/pickaxe</code>
+|-
+| 方块实体 NBT 键
+| <code>currentTexture</code>（伪装材质的方块 ID）
+|-
+| 方块模型
+| <code>models/block/lucky_dimension_block.json</code>（<code>cube_all</code> + 自身贴图）
+|-
+| 贴图
+| <code>textures/block/lucky_dimension_block.png</code>（16×16）
+|-
+| 滤镜贴图（停用中）
+| <code>textures/block/filter.png</code>（16×16）
+|}
+
+== 琐事 ==
+
+* 它可能是本模组里"最不起眼但最占地方"的方块：一个[[幸运维度]]里就有几十万格；
+* 伪装材质刻意'''全部是黄色/沙色系'''（早期的橙色羊毛、橙色混凝土、橙色陶瓦、橙色混凝土粉末已按需求移除），配上那颗[[幸运方块]]太阳，构成了幸运维度"淡雅黄"的整体色调；
+* 材质池曾经是"遍历全部方块注册表自动筛选"，后来改成固定的 9 种——所以现在的外观是'''完全可控'''的；
+* 它是少数'''生存模式拿不到、也无法被破坏掉落'''的方块之一：挖得掉、但什么都不掉。
+
+[[Category:方块]]
+[[Category:JOE's Addons for ABMC]]

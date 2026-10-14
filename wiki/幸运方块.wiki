@@ -1,0 +1,330 @@
+<!-- =====================================================================
+     页面：幸运方块（Lucky Block）
+     格式：MediaWiki wikitext（可直接粘贴到 MediaWiki / Fandom / Miraheze 页面源码）
+     适用模组版本：JOE's Addons for ABMC 6.7.35（Minecraft 1.21.1 / NeoForge 21.1.x）
+     内容依据源码：
+       block/LuckyBlock.java（触发时机：挖掘 / 爆炸；永不掉落）
+       block/LuckyBlockEvents.java（入口 + 配方解锁 + 幸运物品池解析）
+       block/LuckyEvents.java（事件表、抽取优先级、权重、被指定的产物 forcedEvent）
+       block/LuckyOutcomeCatalog.java（<code>/jafa luckyblockresult</code> 的候选表：物品/生物/结构）
+       block/DebugOverrides.java（被指定的产物与强制攻击模式，落盘在主世界）
+       block/LuckyEvent.java、LuckyEventCategory.java（子事件与三个分类）
+       block/LuckyRoster.java、LuckyRosterEvents.java（幸运名单）
+       block/ 下所有 Lucky*Event.java（各个子事件的实际效果）
+       src/main/resources/data/joes_addons_for_abmc/recipe/lucky_block.json（合成配方）
+     链接约定：原版 Minecraft 的词条一律用完整 URL 外链到中文 Minecraft Wiki（zh.minecraft.wiki/w/页面名），
+           本模组自己的内容（幸运维度、幸运核心、幸运选择器、支援幸运方块、闪烁西瓜刀等）用站内链接。
+           若本站已配好跨 wiki 前缀（Miraheze 见 Special:Interwiki/add，前缀建议 mcw、
+           URL 填 https://zh.minecraft.wiki/w/$1），可把 [https://zh.minecraft.wiki/w/X X] 批量替换成 [[mcw:X|X]]。
+     ===================================================================== -->
+
+{| class="wikitable" style="float:right; width:23em; margin:0 0 1em 1em; font-size:90%;"
+|+ style="font-size:115%; font-weight:bold;" | 幸运方块
+|-
+| colspan="2" style="text-align:center;" | [[File:Lucky block.png|150px]]
+|-
+! 类型
+| 方块
+|-
+! 硬度 / 爆炸抗性
+| 0.5 / 0.5（与[https://zh.minecraft.wiki/w/干草块 干草块]相同）
+|-
+! 合适工具
+| [https://zh.minecraft.wiki/w/镐 镐]
+|-
+! 掉落物
+| '''无'''
+|-
+! 堆叠上限
+| 64
+|-
+! 获取
+| 合成：8 [https://zh.minecraft.wiki/w/金锭 金锭] + 1 [https://zh.minecraft.wiki/w/投掷器 投掷器]
+|-
+! 用途
+| 挖掉时'''触发一次幸运事件'''
+|-
+! 方块 ID
+| <code>joes_addons_for_abmc:lucky_block</code>
+|}
+
+'''幸运方块'''（英文：Lucky Block）是本模组最核心的"抽奖机"：把它'''挖掉'''，就会按一张'''事件表'''随机触发一个结果——可能掉一大堆[https://zh.minecraft.wiki/w/金锭 金锭]、可能把你头顶砸下来一片 TNT、也可能刷出一整队钻石甲僵尸。它本身'''不掉落任何东西'''，挖掉只为了开一次奖。
+
+幸运方块也是[[幸运维度]]里生物与掉落物的"内容来源"：那个维度刷出来的生物、以及[[幸运选择器]]采集回来的东西，最终都出自同一张事件表。
+
+__TOC__
+
+== 获取 ==
+
+=== 合成 ===
+
+在工作台里用 '''8 个[https://zh.minecraft.wiki/w/金锭 金锭] + 1 个[https://zh.minecraft.wiki/w/投掷器 投掷器]'''（投掷器放正中央）：
+
+{| class="wikitable" style="text-align:center;"
+|+ 合成配方（产物 ×1）
+|-
+| [https://zh.minecraft.wiki/w/金锭 金锭] || [https://zh.minecraft.wiki/w/金锭 金锭] || [https://zh.minecraft.wiki/w/金锭 金锭]
+|-
+| [https://zh.minecraft.wiki/w/金锭 金锭] || [https://zh.minecraft.wiki/w/投掷器 投掷器] || [https://zh.minecraft.wiki/w/金锭 金锭]
+|-
+| [https://zh.minecraft.wiki/w/金锭 金锭] || [https://zh.minecraft.wiki/w/金锭 金锭] || [https://zh.minecraft.wiki/w/金锭 金锭]
+|}
+
+* 这条配方'''默认不在配方书里'''：玩家'''破坏过一次幸运方块'''之后才会被直接授予（相当于原版 <code>/recipe give</code>，重复触发安全），随后出现在工作台的合成配方书里；
+* 解锁与"挖的时候会不会触发事件"无关——创造模式也一样会解锁；
+* 创造模式物品栏里也有幸运方块。
+
+=== 其它来源 ===
+
+* [[幸运之庙]]（主世界的平原结构）的模板里就嵌着幸运方块，是本模组最主要的"野外来源"；
+* '''幸运方块权杖'''：把幸运方块拿在另一只手上、对权杖按中键即可把权杖装填成这个变体（消耗 1 个幸运方块）——也就是"用掉它"的另一种途径。注意这个变体目前'''尚未实装能力'''（见 [[:Category:权杖]] 的完整表）。
+
+== 触发方式 ==
+
+{| class="wikitable"
+! 方式
+! 是否触发
+! 说明
+|-
+| 玩家挖掘
+| '''是'''
+| 生存模式始终触发；'''创造模式只在 <code>debug_mode = true</code> 时触发'''（方便调试）
+|-
+| 爆炸摧毁
+| '''是'''
+| 没有挖掘者，事件会收到 <code>null</code>——个别子事件据此区分（例如"猫群"只在玩家挖的时候驯服猫）
+|-
+| 活塞推动 / <code>/setblock … destroy</code> / 下落方块压碎
+| '''否'''
+| 这些路径没有覆写，不会触发事件（也不会掉落）
+|}
+
+* 幸运方块本身'''没有冷却'''，挖一个算一次；
+* 无论怎么破坏都'''不会掉落幸运方块本身'''——它的战利品表被显式设为空，挖掘入口也被有意留空；所以"挖幸运方块"永远是"用掉一个"。
+
+== 事件抽取 ==
+
+* 事件分三个'''分类'''：'''幸运物品'''（给东西）、'''幸运实体'''（在方块位置生成东西）、'''幸运结构'''（在方块位置搭结构）；
+* 抽取是'''全局平铺'''的：把三个分类的子事件合成一张表，按权重抽——'''分类本身不影响概率'''，只起归类作用；
+* 目前除"英雄套装"权重为 '''4''' 外，其余子事件权重都是 '''1'''。当前共 '''32''' 个子事件、权重总和 '''35'''：
+** 单个普通子事件 ≈ '''2.9%'''；
+** 英雄套装 ≈ '''11.4%'''（它是原来"四件装备各权重 1"合并后的结果）；
+* 抽取的'''优先级'''（从高到低）：
+
+# '''被指定的产物'''（<code>/jafa luckyblockresult &lt;选项&gt;</code>，落盘）：指定了哪一个就'''只'''开出那一个，'''压过幸运名单'''（名单留着不动）。它'''只在 debug 模式开着时生效'''；
+# '''[[幸运名单]]'''：名单非空就取'''队首'''那一个元素放出来（见下节）；
+# 正常按权重随机。
+
+* 注意：'''光打开 debug 模式已经不再改变抽取结果'''——那个开关现在只负责"允许用命令指定产物"与"创造模式破坏也触发事件"；没指定产物时，debug 下的结果与关着时完全一样。
+
+* 幸运物品池里的物品是'''运行时惰性注册'''的独立子事件，所以子事件总数会随数据包里的物品池标签变化。
+
+== 事件总表 ==
+
+=== 幸运实体（17 个）===
+
+{| class="wikitable"
+! 事件
+! 内容
+|-
+| 猫群
+| 刷 '''5~8''' 只成年[https://zh.minecraft.wiki/w/猫 猫]（毛色随机），有 '''50%''' 概率其中一只换成[https://zh.minecraft.wiki/w/豹猫 豹猫]；玩家挖的会被立刻驯服（豹猫则变为信任）
+|-
+| 僵尸 Bob
+| 一只全套钻石甲（保护 IV / 耐久 III / 荆棘 III）+ 钻石剑（击退 II / 锋利 V / 耐久 III）的[https://zh.minecraft.wiki/w/僵尸 僵尸]，名字就叫 '''Bob'''；'''20%''' 概率是小僵尸
+|-
+| 猪塔
+| '''6''' 只[https://zh.minecraft.wiki/w/猪 猪]自上而下骑成一摞，最上面再骑一个失业[https://zh.minecraft.wiki/w/村民 村民]
+|-
+| 女巫与恶魂
+| 一只[https://zh.minecraft.wiki/w/恶魂 恶魂]，背上骑着[https://zh.minecraft.wiki/w/女巫 女巫]
+|-
+| 骷髅骑士
+| [https://zh.minecraft.wiki/w/骷髅 骷髅]骑[https://zh.minecraft.wiki/w/骷髅马 骷髅马]；马无重力、会像蝙蝠一样飞，骷髅永久抗火（没有武器时给一张弓）
+|-
+| 狼
+| 1 只[https://zh.minecraft.wiki/w/狼 狼]（毛色随机）；玩家挖的会立刻成为你的
+|-
+| 远古守卫者
+| 1 只[https://zh.minecraft.wiki/w/远古守卫者 远古守卫者]
+|-
+| 兔子骑鸡
+| 1 只[https://zh.minecraft.wiki/w/鸡 鸡] + 1 只[https://zh.minecraft.wiki/w/兔子 兔子]骑在上面
+|-
+| 金粒喷泉猪
+| 一只猪每 '''0.2 秒'''从头顶喷 1 颗[https://zh.minecraft.wiki/w/金粒 金粒]（5 颗/秒）；喷出的金粒'''玩家捡不走'''，5 秒后自己消失
+|-
+| 雪傀儡骑蝙蝠
+| 1 只[https://zh.minecraft.wiki/w/蝙蝠 蝙蝠] + 1 只[https://zh.minecraft.wiki/w/雪傀儡 雪傀儡]骑在上面
+|-
+| 金马
+| 一匹装了鞍和金马铠的[https://zh.minecraft.wiki/w/马 马]：移动速度 '''15 格/秒'''、跳跃顶格；玩家挖的会立刻成为你的
+|-
+| 烟花齐射
+| '''3~4''' 个[https://zh.minecraft.wiki/w/烟花火箭 烟花火箭]：仰角 60~80°、速度 '''10 格/秒'''，飞 '''2 秒'''后炸开（约 20 格高）
+|-
+| 烟花猪
+| 一只猪以 '''20 格/秒'''沿朝向直飞，撞到方块或飞满 '''5 秒'''后炸成火花（纯特效，不破坏地形）
+|-
+| 天降铁砧
+| 在'''玩家头顶上方 10 格'''落下一个[https://zh.minecraft.wiki/w/铁砧 铁砧]（会砸伤下方实体；没有玩家时落在方块正上方）
+|-
+| 红石与 TNT 齐射
+| 先落下 1 个红石块，随后在 '''12 格高'''处'''每 5 刻'''落 1 个 [https://zh.minecraft.wiki/w/TNT TNT]，共 '''5''' 个；TNT 落地后引信 3 秒
+|-
+| 苦力怕
+| 1 只普通[https://zh.minecraft.wiki/w/苦力怕 苦力怕]（不预先点燃、不强化）
+|-
+| 反弹盾
+| 一个'''正常大小'''的[https://zh.minecraft.wiki/w/盾牌 盾牌]展示实体，存活 '''5 秒'''，把撞进它体积的弹射物沿径向'''镜面反弹'''（速度 ×1.15）
+|}
+
+=== 幸运物品（14 个）===
+
+{| class="wikitable"
+! 事件
+! 权重
+! 内容
+|-
+| 宝石抛洒
+| 1
+| [https://zh.minecraft.wiki/w/钻石 钻石]、[https://zh.minecraft.wiki/w/金锭 金锭]、[https://zh.minecraft.wiki/w/绿宝石 绿宝石]'''各 3~5 个'''向四周抛出
+|-
+| 金锭喷泉
+| 1
+| '''64~128 个'''[https://zh.minecraft.wiki/w/金锭 金锭]，每个都是单独一个掉落物
+|-
+| 英雄药水
+| 1
+| 1 瓶英雄药水：[https://zh.minecraft.wiki/w/力量 力量] V、[https://zh.minecraft.wiki/w/速度 速度] V、[https://zh.minecraft.wiki/w/抗性提升 抗性提升] IV、[https://zh.minecraft.wiki/w/伤害吸收 伤害吸收] V、[https://zh.minecraft.wiki/w/再生 再生] V、[https://zh.minecraft.wiki/w/急迫 急迫] V、[https://zh.minecraft.wiki/w/跳跃提升 跳跃提升] II，各持续 '''3 分钟'''
+|-
+| 英雄套装
+| '''4'''
+| '''钻石头盔 / 胸甲 / 护腿 / 靴子四件等概率出一件'''，附：保护 IV、弹射物保护 IV、火焰保护 IV、爆炸保护 IV、荆棘 III、耐久 III、经验修补，'''靴子另加摔落缓冲 IV'''
+|-
+| 英雄之剑
+| 1
+| 一把钻石剑 + 锋利 V、亡灵杀手 V、节肢杀手 V、抢夺 V、横扫之刃 V、火焰附加 II、耐久 V、经验修补，并且'''修理惩罚为 0'''
+|-
+| 诱猪胡萝卜
+| 1
+| 一根诱猪胡萝卜：吸引 '''20 格'''内的猪；'''走路捡不走'''（只能靠[https://zh.minecraft.wiki/w/漏斗 漏斗]吸），碰到猪或满 '''1 分钟'''后消失
+|-
+| 爆炸之箭
+| 1
+| '''16~64 支'''[[爆炸之箭]]
+|-
+| 幸运物品池（7 件）
+| 各 1
+| [[烈焰弹发射器]]、[[烈焰手杖]]、[[闪烁西瓜刀]]、[[工作台帽子]]、[[地狱疣生成器]]、[[铁抓钩]]、[[翅膀]]——每件给 1 个（见下节）
+|}
+
+=== 幸运结构（1 个）===
+
+{| class="wikitable"
+! 事件
+! 内容
+|-
+| 幸运水井
+| 生成一口'''幸运水井'''；挖掉方块的玩家会得到 1 枚[https://zh.minecraft.wiki/w/金粒 金粒]。把这枚金粒'''丢进井里唯一的[https://zh.minecraft.wiki/w/水 水]源'''并等 '''2~3 秒'''，按权重结算：'''45%''' 在井上方生成 15~20 个引信 40 刻的 [https://zh.minecraft.wiki/w/TNT TNT]；'''45%''' 在周围撒 10~20 个[https://zh.minecraft.wiki/w/金粒 金粒]；'''10%''' 撒 10~20 个[https://zh.minecraft.wiki/w/土豆 土豆]。每口井'''只能生效一次'''
+|}
+
+== 幸运名单 ==
+
+'''幸运名单'''是一条'''先进先出'''的队列，也是[[幸运维度]]里[[幸运选择器]]的"收货地址"：
+
+* 选择器在维度里抓到的'''生物或物品'''会被收进名单（如果那只生物属于某个幸运生物事件，存的是'''整个事件'''——比如"6 只猪 + 1 个村民"，而不是一只猪）；
+* 名单'''非空'''时，挖掉（或炸掉）幸运方块会'''优先放出一个名单元素'''，随机抽取被暂时搁置；
+* 名单存在主世界存档里（<code>jafa_lucky_roster</code>），上限 '''65536''' 条，跨会话保留。
+
+这条链构成了本模组的核心循环：'''选择器在幸运维度采集 → 名单 → 开幸运方块兑现'''。
+
+== 幸运物品池 ==
+
+标签 <code>#joes_addons_for_abmc:lucky_items</code> 里的物品会自动成为事件表里的独立子事件（每件给 1 个）。当前 8 项：
+
+{| class="wikitable"
+! 物品
+! 备注
+|-
+| [[烈焰弹发射器]] / [[烈焰手杖]] / [[闪烁西瓜刀]] / [[工作台帽子]] / [[地狱疣生成器]] / [[铁抓钩]] / [[翅膀]]
+| 各自成为一个"给 1 件"的子事件
+|-
+| [[爆炸之箭]]
+| 因为在事件表里'''硬编码'''注册过（数量随机 16~64），池内这一条会被跳过，避免同一件物品出现两个子事件、变相提高权重
+|}
+
+数据包可以往这个标签里增删物品，事件表的规模与概率会随之变化。
+
+== 指定产物与命令 ==
+
+{| class="wikitable"
+! 命令
+! 作用
+|-
+| <code>/jafa lucky event</code>
+| 在脚下按正常权重触发一次幸运事件，并回报事件 id 与分类
+|-
+| <code>/jafa lucky event &lt;id&gt;</code>
+| 强制触发指定子事件（id 可省略命名空间，带补全）
+|-
+| <code>/jafa lucky list</code>
+| 按分类列出所有子事件与权重，并报出'''当前指定的产物'''
+|-
+| <code>/jafa luckyblockresult</code>
+| 查看当前指定的产物 + 全部可指定项（按分类列出）
+|-
+| <code>/jafa luckyblockresult &lt;选项&gt;</code>
+| '''指定'''"破坏幸运方块只开出它"（'''需要 <code>debug_mode = true</code>'''）；指定值'''写入存档'''
+|-
+| <code>/jafa luckyblockclear</code>
+| 取消指定，回到正常规则（同样落盘）
+|-
+| <code>/jafa roster list</code> / <code>clear</code>
+| 查看 / 清空'''幸运名单'''
+|}
+
+* 候选只围绕'''默认能开出的东西'''展开（物品 / 生物 / 结构，见 <code>LuckyOutcomeCatalog</code>）——不再是"什么物品都能塞"；
+* 三种写法都认：'''名字'''（<code>英雄套装</code>、<code>猫群</code>、<code>幸运水井</code>）、'''id 路径'''（<code>item/hero_set</code>、<code>entity/cats</code>）、'''完整 id'''（<code>joes_addons_for_abmc:item/hero_set</code>）；名字撞上多项时命令会列出候选、让你改用 id；
+* 指定值'''写入存档'''（主世界的 <code>jafa_debug_overrides</code>）：整个存档一份、跨维度一致、退出重进仍然生效；换个存档各算各的；
+* 它'''只在 debug 模式开着时生效'''：关掉 debug 只是把它"搁置"（存档里仍留着，不带参数查询会提示），重新打开立刻又按它开；
+* 指定生效时挖幸运方块'''只'''开出它，'''永远压过幸运名单'''（名单留在原地不动）；取消指定后走的就是 名单 → 随机 那一套。
+
+== 数据与标识 ==
+
+{| class="wikitable"
+! 项目
+! 值
+|-
+| 方块 ID
+| <code>joes_addons_for_abmc:lucky_block</code>
+|-
+| 合成配方
+| <code>data/joes_addons_for_abmc/recipe/lucky_block.json</code>（8 金锭 + 投掷器）
+|-
+| 战利品表
+| '''无掉落'''
+|-
+| 可挖掘标签
+| <code>#minecraft:mineable/pickaxe</code>
+|-
+| 幸运物品池标签
+| <code>#joes_addons_for_abmc:lucky_items</code>
+|-
+| 幸运名单存档
+| <code>jafa_lucky_roster</code>（主世界，上限 65536）
+|-
+| 事件分类
+| 幸运物品 / 幸运实体 / 幸运结构
+|}
+
+== 琐事 ==
+
+* 幸运方块的'''贴图与[[幸运维度]]的太阳是同一张'''——那个维度的"太阳"就是一颗放大的幸运方块；
+* 它的硬度与[https://zh.minecraft.wiki/w/干草块 干草块]相同（0.5），所以徒手也挖得动，只是用镐更快；
+* 因为"挖了就没"，它在生存里更像一次性消耗品：'''8 个金锭换一次抽奖机会'''；
+* 事件表里有几个是"看着像奖励、其实是陷阱"的：天降铁砧、红石与 TNT 齐射、还有会追着你跑的 Bob；
+* 部分子事件在"玩家挖"和"爆炸炸"时表现不同（猫、狼、金马只在玩家挖的时候才认主）。
+
+[[Category:方块]]
+[[Category:JOE's Addons for ABMC]]

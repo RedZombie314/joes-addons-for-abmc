@@ -20,6 +20,9 @@ import snownee.jade.api.config.IPluginConfig;
  * <p>阶段信息存放在女巫的 PersistentData 中，**不会同步到客户端**，因此必须走 Jade 的
  * 服务端数据 Provider（{@link WitchBossStageServerDataProvider}）把阶段写入同步 tag，
  * 客户端 Provider 再从 {@code accessor.getServerData()} 读取渲染。</p>
+ * <p>同步过去的只是<b>阶段编号</b>，显示文字由客户端按自己的语言查 lang 键
+ * （{@code jade.joes_addons_for_abmc.witch_boss_stage.*}，中英各一份，见
+ * {@link ModMain#witchBossStageLangKey(int)}）—— 服务端不下发中文串。</p>
  * <p>本类仅由 Jade 的 {@code @WailaPlugin} 注解扫描加载（Jade 未安装时不会被引用/加载），
  * Jade 依赖仅为 compileOnly，不打包进本 mod。</p>
  */
@@ -55,13 +58,15 @@ public class WitchBossJadePlugin implements IWailaPlugin {
         }
     }
 
-    /** 客户端：从同步数据 tag 读取阶段并渲染一行文字。优先级 -4400，紧跟在原版血量条（-4500）之后，即显示在 HP 下方。 */
+    /** 客户端：从同步数据 tag 读取阶段并渲染一行文字。优先级 -4400，紧跟在原版血量条（-4500）之后，即显示在 HP 下方。
+     *  <p>文案走 lang 键（{@code jade.joes_addons_for_abmc.witch_boss_stage.*}，中英各一份）：
+     *  服务端只负责把阶段数字同步过来，具体显示成哪种语言由客户端自己决定。 */
     public static class WitchBossStageProvider implements IEntityComponentProvider {
         @Override
         public void appendTooltip(ITooltip tooltip, EntityAccessor accessor, IPluginConfig config) {
             CompoundTag serverData = accessor.getServerData();
             if (serverData == null || !serverData.contains(STAGE_KEY)) return;
-            tooltip.add(Component.literal(ModMain.witchBossStageName(serverData.getInt(STAGE_KEY))));
+            tooltip.add(Component.translatable(ModMain.witchBossStageLangKey(serverData.getInt(STAGE_KEY))));
         }
 
         @Override

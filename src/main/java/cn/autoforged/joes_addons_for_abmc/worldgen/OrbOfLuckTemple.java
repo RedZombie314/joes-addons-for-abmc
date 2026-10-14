@@ -25,7 +25,7 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * 「幸运宝珠神庙」（{@code data/joes_addons_for_abmc/structure/orb_of_luck_temple.nbt}）
+ * 「幸运核心神庙」（{@code data/joes_addons_for_abmc/structure/orb_of_luck_temple.nbt}）
  * 在<b>幸运维度</b>里的一次性生成。
  *
  * <h3>为什么不用世界生成（structure_set）而用代码放置</h3>
@@ -169,7 +169,7 @@ public final class OrbOfLuckTemple {
         counts.orbTemplePlaced = true;
         counts.orbTempleTarget = null;
         counts.setDirty();
-        ModMain.LOGGER.info("[orb-temple] 已在幸运维度生成幸运宝珠神庙：{}（底面 {}×{}，地形高差 {}）",
+        ModMain.LOGGER.info("[orb-temple] 已在幸运维度生成幸运核心神庙：{}（底面 {}×{}，地形高差 {}）",
             origin, size.getX(), size.getZ(), surfaceSpread(lucky, minX, minZ, size));
     }
 
@@ -348,7 +348,7 @@ public final class OrbOfLuckTemple {
         List<StructureTemplate.StructureBlockInfo> platform = template.filterBlocks(
             BlockPos.ZERO, new StructurePlaceSettings(), Blocks.CHISELED_QUARTZ_BLOCK, false);
         if (platform.isEmpty()) {
-            ModMain.LOGGER.warn("[orb-temple] 模板里没找到雕纹石英平台，跳过宝珠生成");
+            ModMain.LOGGER.warn("[orb-temple] 模板里没找到雕纹石英平台，跳过幸运核心生成");
             return;
         }
 

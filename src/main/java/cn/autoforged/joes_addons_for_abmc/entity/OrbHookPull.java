@@ -135,7 +135,7 @@ public final class OrbHookPull {
             Session session = entry.getValue();
             PlayerShellEntity shell = findShell(server, entry.getKey());
             // 空壳没了 / 不再附体：铁链直接收掉（客户端也会因为实体找不到而自己清掉）
-            if (shell == null || !shell.isAlive() || !shell.isOrbAttached()) {
+            if (shell == null || !shell.isAlive() || !shell.isCoreBackedShell()) {
                 it.remove();
                 clearVisual(shell, session);
                 continue;

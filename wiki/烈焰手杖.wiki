@@ -1,0 +1,212 @@
+<!-- =====================================================================
+     页面：烈焰手杖（Blaze Staff）
+     格式：MediaWiki wikitext（可直接粘贴到 MediaWiki / Fandom / Miraheze 页面源码）
+     适用模组版本：JOE's Addons for ABMC 6.7.35（Minecraft 1.21.1 / NeoForge 21.1.x）
+     内容依据源码：
+       item/BlazeStaffItem.java（单发、挥臂、恶魂音效、速度 2 倍）
+       item/FireChargeLauncherItem.java（基类：耐久消耗、发射流程）
+       entity/BlazeStaffFireball.java（6 点伤害、爆炸威力 2、每刻重力 0.05、遵守 mobGriefing）
+       entity/ModEntities.java、event/ClientEvents.java（实体注册与 3 倍全亮渲染）
+       entity/OrbPossessedAttackEvents.java（附体空壳"手持烈焰手杖"放火球）
+       src/main/resources/assets/joes_addons_for_abmc/models/item/blaze_staff.json（handheld 模型）
+     链接约定：原版 Minecraft 的词条一律用完整 URL 外链到中文 Minecraft Wiki（zh.minecraft.wiki/w/页面名），
+           本模组自己的内容（幸运方块、烈焰弹发射器、幸运维度等）用站内链接。
+           若本站已配好跨 wiki 前缀（Miraheze 见 Special:Interwiki/add，前缀建议 mcw、
+           URL 填 https://zh.minecraft.wiki/w/$1），可把 [https://zh.minecraft.wiki/w/X X] 批量替换成 [[mcw:X|X]]。
+     ===================================================================== -->
+
+{| class="wikitable" style="float:right; width:23em; margin:0 0 1em 1em; font-size:90%;"
+|+ style="font-size:115%; font-weight:bold;" | 烈焰手杖
+|-
+| colspan="2" style="text-align:center;" | [[File:Blaze staff.png|150px]]
+|-
+! 类型
+| 物品（远程武器）
+|-
+! 耐久
+| '''512'''
+|-
+! 堆叠上限
+| 1
+|-
+! 发射物
+| 烈焰手杖火球（恶魂火球式，自定义实体）
+|-
+! 单发伤害
+| '''6 点''' + 爆炸威力 2
+|-
+! 射速
+| '''单发'''：每次按下右键打一发，按住不补发
+|-
+! 手持动作
+| 挥臂（像用原版烈焰弹那样）
+|-
+! 可附魔
+| [https://zh.minecraft.wiki/w/耐久 耐久]、[https://zh.minecraft.wiki/w/经验修补 经验修补]、[https://zh.minecraft.wiki/w/消失诅咒 消失诅咒]
+|-
+! 获取
+| [[幸运物品池]] / 创造模式物品栏（'''无合成配方'''）
+|-
+! 物品 ID
+| <code>joes_addons_for_abmc:blaze_staff</code>
+|-
+! 实体 ID
+| <code>joes_addons_for_abmc:blaze_staff_fireball</code>
+|}
+
+'''烈焰手杖'''（英文：Blaze Staff）是[[烈焰弹发射器]]的"重火力版"：右键'''一发一发'''地甩出[https://zh.minecraft.wiki/w/恶魂 恶魂]那种大火球——命中 '''6 点伤害'''，并且会'''爆炸（威力 2）'''。代价是它'''受重力影响'''（飞久了会下坠），而且'''不能长按连发'''，想连打就得一下一下点。
+
+== 获取 ==
+
+* '''[[幸运物品池]]'''：开[[幸运方块]]时可以抽到（每件给 1 个）；
+* '''创造模式物品栏'''里也有一把；
+* '''没有合成配方'''。
+
+== 使用 ==
+
+{| class="wikitable"
+! 操作
+! 效果
+|-
+| 右键（按下瞬间）
+| 打出'''一发'''火球
+|-
+| 按住右键
+| '''什么都不发生'''——长按不会补发；想再打必须'''松开再按'''
+|-
+| 冷却
+| 没有专属冷却（只剩原版所有物品通用的 4 刻右键间隔），松开再按可立刻连打
+|-
+| 手持动作
+| '''挥一下手臂'''（与原版[https://zh.minecraft.wiki/w/烈焰弹 烈焰弹]一致），不是拉弓姿势，因此按住时不会减速
+|}
+
+* 每一发消耗 '''1 点耐久'''（共 512 点），打空即损坏并自动停止；
+* 发射音效是'''恶魂的射击音'''（<code>ghast.shoot</code>），比发射器更有"重武器"的听感。
+
+== 发射物：烈焰手杖火球 ==
+
+{| class="wikitable"
+! 项目
+! 表现
+|-
+| 命中生物
+| '''6 点伤害'''（与恶魂火球相同），并照常结算火焰附加/火焰保护等攻击后效果
+|-
+| 命中后
+| 以'''爆炸威力 2''' 炸开并消失（原版恶魂火球是 1，也就是它的两倍）
+|-
+| 重力
+| '''受重力影响'''：每刻 0.05 格/刻²（与原版箭矢一致），所以飞得越远掉得越多，需要预判抬枪
+|-
+| 速度
+| 初速 '''0.4 格/刻'''——是[[烈焰弹发射器]]的 '''2 倍'''
+|-
+| 破坏地形
+| 爆炸威力 2、遵循 <code>mobGriefing</code> 规则：服务器开了生物破坏就会'''炸掉方块'''，关掉则只伤人不拆家
+|-
+| 渲染
+| 以'''烈焰弹'''的贴图放大 '''3 倍'''绘制，并且'''全亮'''（黑暗中也能看清弹道）
+|}
+
+== 与烈焰弹发射器的对比 ==
+
+两者共用同一套发射框架（同一个基类），差别只在"打什么"和"怎么打"：
+
+{| class="wikitable"
+! 项目
+! [[烈焰弹发射器]]
+! 烈焰手杖
+|-
+| 发射物
+| 原版烈焰人火球（<code>small_fireball</code>）
+| 自定义火球（恶魂火球式）
+|-
+| 单发伤害
+| 5 点 + 点燃 5 秒
+| '''6 点'''
+|-
+| 爆炸
+| 无（只在命中方块处放火）
+| '''威力 2'''
+|-
+| 受重力
+| 否（直线飞行）
+| '''是'''（0.05/刻）
+|-
+| 速度
+| 0.2（原版基准的 2 倍）
+| '''0.4'''（发射器的 2 倍）
+|-
+| 射速
+| 每 10 刻一发，可长按连发
+| 每次按键一发，不连发
+|-
+| 手持动作
+| 拉弓（按住减速）
+| 挥臂（不减速）
+|-
+| 音效
+| 烈焰弹使用
+| 恶魂射击
+|-
+| 可否被格挡
+| 可以（实体是原版 <code>small_fireball</code>，在默认可格挡名单里）
+| 默认'''不可以'''（自定义实体不在名单里，可从配置加入）
+|-
+| 耐久
+| 512（每发 1 点）
+| 512（每发 1 点）
+|}
+
+== 耐久与附魔 ==
+
+* 耐久 '''512'''，每发消耗 1 点；
+* 附魔能力 14，可附 [https://zh.minecraft.wiki/w/耐久 耐久]、[https://zh.minecraft.wiki/w/经验修补 经验修补]、[https://zh.minecraft.wiki/w/消失诅咒 消失诅咒]；
+* '''没有修理材料'''：铁砧上只能用"两件同名物品合并"或经验修补来补耐久。
+
+== 附体空壳也会用烈焰手杖 ==
+
+[[幸运核心]]附体产生的[[玩家空壳]]在远程攻击时，会'''掏出烈焰手杖'''挥一下再放火球（视觉上就是"用手杖放恶魂火球"）。那一下实际发射的是'''原版恶魂火球'''（威力 1），并且被模组额外处理成'''不破坏地形'''。
+
+== 数据与标识 ==
+
+{| class="wikitable"
+! 项目
+! 值
+|-
+| 物品 ID
+| <code>joes_addons_for_abmc:blaze_staff</code>
+|-
+| 火球实体 ID
+| <code>joes_addons_for_abmc:blaze_staff_fireball</code>
+|-
+| 物品属性
+| <code>durability(512)</code>、<code>stacksTo(1)</code>
+|-
+| 附魔标签
+| <code>#minecraft:enchantable/durability</code>（→ 同时获得"消失诅咒"资格）
+|-
+| 爆炸威力
+| 2（<code>EXPLOSION_POWER</code>）
+|-
+| 重力
+| 0.05 格/刻²（<code>GRAVITY</code>，与箭矢一致）
+|-
+| 速度倍率
+| 2.0（<code>SPEED_MULTIPLIER</code>，相对[[烈焰弹发射器]]）
+|-
+| 物品模型
+| <code>models/item/blaze_staff.json</code>（<code>handheld</code> + 本模组贴图）
+|}
+
+== 琐事 ==
+
+* 它是"'''一发一按'''"的设计：想连发只能靠手指速度，但因为没有冷却，实际手速多快就能打多快；
+* 因为火球受重力、速度又是发射器的 2 倍，它的最佳射程其实是'''中距离'''——太近了会被自己的爆炸波及（这枚火球的爆炸'''不豁免射手'''，和[[爆炸之箭]]那种"不伤自己"的设计不同），太远了弹道会掉；
+* 物品栏图标是它自己的手杖贴图，是"权杖"系列里少数'''不是方块权杖变体'''的独立物品之一（另一件是[[烈焰弹发射器]]）；
+* 想拆房子就用它（开 <code>mobGriefing</code>），想只打人就用[[烈焰弹发射器]]或[[爆炸之箭]]。
+
+[[Category:物品]]
+[[Category:武器]]
+[[Category:JOE's Addons for ABMC]]

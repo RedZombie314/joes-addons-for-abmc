@@ -31,6 +31,14 @@ import net.minecraft.stats.Stats;
  *       （GameRenderer.java:829），所以不覆写的话右键永远不会触发。
  *       代价是 {@code canBeHitByProjectile()} 也吃这个开关（Entity.java:1663），
  *       于是同时覆写它返回 false，免得箭矢把物品打坏。</li>
+ *   <li><b>左键攻击它会被踢出存档</b>：这是上一条的连带后果 —— 客户端挑准星用的就是这个开关，
+ *       于是左键也会命中它、发出攻击包；而服务端
+ *       {@code ServerGamePacketListenerImpl#handleInteract} 对 {@code ItemEntity} 的攻击包会直接
+ *       {@code disconnect("multiplayer.disconnect.invalid_entity_attacked")}
+ *       （ServerGamePacketListenerImpl.java:1631-1649，原版靠"掉落物选不中"来避免这件事）。
+ *       这里靠客户端把这次左键拦掉，见
+ *       {@code ClientEvents#onLuckyItemAttackKey}（服务端没有可插手的事件：断线发生在
+ *       {@code Player#attack} 之前）。<b>改本类时别把这个前提忘了</b>。</li>
  * </ul>
  */
 public class LuckyItemEntity extends ItemEntity {

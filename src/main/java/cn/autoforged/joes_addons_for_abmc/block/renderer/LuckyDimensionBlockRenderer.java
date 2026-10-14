@@ -20,6 +20,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.state.BlockState;
@@ -227,11 +228,13 @@ public class LuckyDimensionBlockRenderer implements BlockEntityRenderer<LuckyDim
             return;
         }
 
-        // 六面全被遮挡 → 什么都不用画（地形里绝大多数方块都在地下）
+        // 六面全被遮挡 → 什么都不用画（地形里绝大多数方块都在地下）。
+        // 判据与下面 renderBatched(checkSides=true) 用的是同一套（见 shouldDrawFace 的注释）：
+        // 只看 canOcclude() 会把"雪/半砖"这类半格邻居当成挡住，直接整块不画 → 透视。
         boolean[] faceVisible = new boolean[6];
         boolean anyVisible = false;
         for (int i = 0; i < 6; i++) {
-            faceVisible[i] = !isFaceOccluded(level, pos, FACE_DIRECTIONS[i]);
+            faceVisible[i] = shouldDrawFace(level, mimicState, pos, FACE_DIRECTIONS[i]);
             anyVisible |= faceVisible[i];
         }
         if (!anyVisible) {
@@ -328,7 +331,9 @@ public class LuckyDimensionBlockRenderer implements BlockEntityRenderer<LuckyDim
         boolean[] faceVisible = new boolean[6];
         boolean anyVisible = false;
         for (int i = 0; i < 6; i++) {
-            faceVisible[i] = !isFaceOccluded(level, pos, FACE_DIRECTIONS[i]);
+            // 这一路画的是"滤镜方块本身"（renderFilterOverlay 写的是 0~1 的单位立方体），
+            // 所以"我们这一面"的形状取方块本体，而不是伪装材质。
+            faceVisible[i] = shouldDrawFace(level, level.getBlockState(pos), pos, FACE_DIRECTIONS[i]);
             anyVisible |= faceVisible[i];
         }
         if (!anyVisible) {
@@ -468,11 +473,34 @@ public class LuckyDimensionBlockRenderer implements BlockEntityRenderer<LuckyDim
         }
     }
 
-    /** 邻居方块是否把这一面完全挡住了。 */
-    private static boolean isFaceOccluded(@NotNull Level level, BlockPos pos, Direction direction) {
-        BlockPos neighborPos = pos.relative(direction);
-        if (!level.isLoaded(neighborPos)) return false;
-        return level.getBlockState(neighborPos).canOcclude();
+    /**
+     * 这一面<b>该不该画</b>（true = 邻居没把这一面完全挡住，必须画）。
+     *
+     * <p>判定直接交给原版 {@link Block#shouldRenderFace}（Block.java:213），而不是自己写半个条件。
+     * 它除了 {@code neighbor.canOcclude()} 还有<b>后半个条件</b>：
+     * 邻居朝我们那一面的遮挡形状必须真的盖住我们这一面
+     * （{@code Shapes.joinIsNotEmpty(ourFaceShape, neighborFaceShape, OnlyFirst)}，Block.java:229-234）。
+     *
+     * <h3>为什么只判 {@code canOcclude()} 会漏（"雪/半砖旁边透视"那个 bug）</h3>
+     * {@code canOcclude()} 是<b>按方块类型</b>定死的常量：默认 true（BlockBehaviour.java:1062），
+     * 只有 {@code noOcclusion()} / {@code noCollision()} 才把它置成 false（:1165-:1167），
+     * 而 {@code canOcclude()} 本身就只是把这个常量读出来（:713-715）——<b>跟当前 state 的形状无关</b>。
+     * 雪层、半砖、楼梯这些"碰撞箱不完整"的方块<b>都没有</b>调 {@code noOcclusion()}，
+     * 所以它们的 {@code canOcclude()} 照样是 true，可它们只占半格高。
+     * 旧写法（只看 canOcclude）于是把接触面当成"被完全挡住"剃掉了 ——
+     * 而幸运维度方块的自身模型是 {@code RenderShape.INVISIBLE}（外观 100% 靠渲染器补画），
+     * 剃掉就是<b>真的一个几何体都没有</b>：玩家从这一面直接看穿地形 = 透视。
+     * 原版之所以不会出这种事，正是因为后面还有那道形状判断。
+     *
+     * <p>反过来说，用原版这套还能正确处理这些情况：整砖/双层半砖 → 剃掉（该剃）；
+     * 雪层/半砖/楼梯 → 画（该画）；空气/玻璃/水 → {@code canOcclude()} 为 false → 画（本来就不遮）。
+     *
+     * @param drawn 这一格<b>实际要画的</b>方块状态（区块网格里是伪装材质 mimic，维度外的 BER 里是 mimicState）：
+     *              拿它的遮挡形状当"我们这一面"的形状，与"原版画它时会怎么剃"口径一致。
+     *              两者都必须放在幸运维度方块<b>本体</b>的位置 {@code pos} 上求形状。
+     */
+    public static boolean shouldDrawFace(BlockGetter level, BlockState drawn, BlockPos pos, Direction direction) {
+        return Block.shouldRenderFace(drawn, level, pos, direction, pos.relative(direction));
     }
 
     private void quad(VertexConsumer consumer, Matrix4f matrix, PoseStack.Pose pose,

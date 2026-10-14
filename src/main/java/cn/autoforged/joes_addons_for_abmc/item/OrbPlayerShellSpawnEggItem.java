@@ -20,17 +20,23 @@ import net.minecraft.world.phys.Vec3;
  * 幸运核心玩家刷怪蛋：放下一具<b>被幸运核心附体的玩家空壳</b>。
  *
  * <h2>皮肤</h2>
- * 默认从 {@link #SKINS} 里<b>随机</b>取一个（允许重复）—— 名单是用户指定的十位玩家名。
+ * 默认从 {@link #SKINS} 里<b>随机</b>取一个（允许重复）—— 名单是用户指定的那批玩家名（见 {@link #SKINS}）。
  * 如果这颗蛋<b>被命名过</b>（铁砧改名、或 {@code /give} 带 {@code custom_name}/{@code item_name}），
  * 就直接用那个名字当皮肤（见 {@link #resolveSkinName}）。
  * 空壳的皮肤是按<b>玩家名</b>在客户端联网拉取的（见 {@code PlayerShellRenderer}），所以这里只存名字。
  *
  * <h2>生成出来的是什么</h2>
- * 和"被同化产生的那一具"完全同款（共用 {@link PlayerShellEntity#configureAsPossessedShell()}）：
- * 头顶挂着幸运核心光球、20 血 + 20 护甲 + 12 护甲韧性 + 保护 16 状态效果、靠附魔金苹果回血、
+ * 和"被同化产生的那一具"完全同款（共用 {@link PlayerShellEntity#configureAsAssimilatedShell(double)}
+ * 里那同一套配置，只是走 {@link PlayerShellEntity#configureAsSpawnEggShell()} 这个入口）：
+ * 头顶挂着幸运核心光球、20 血 + 20 护甲 + 12 护甲韧性 + 保护 16 状态效果、
  * 骷髅式走位 + 抽签攻击、不自然消失。
  * <p>
- * 区别只在于它<b>没有</b>背后的玩家，也没有 {@code OrbAssimilation} 的同化关系：
+ * <b>不具备"附体专属的那几手"</b>：不吃附魔金苹果、不吃熟猪排、没有针对特定生物的特攻、
+ * 不反制重锤与变形药水 —— 那是附体事件那一具独有的（见
+ * {@link PlayerShellEntity#hasPossessionExclusiveAbilities()}）；照常会吃紫颂果、
+ * 丢落地水/末影珍珠、丢奶桶自救。
+ * <p>
+ * 区别还在于它<b>没有</b>背后的玩家，也没有 {@code OrbAssimilation} 的同化关系：
  * 打死它就只是打死它（不会"复活"任何人）。
  *
  * <p>继承 {@code DeferredSpawnEggItem} 是为了拿到原版刷怪蛋的贴图与双色染色
@@ -39,18 +45,24 @@ import net.minecraft.world.phys.Vec3;
  */
 public class OrbPlayerShellSpawnEggItem extends net.neoforged.neoforge.common.DeferredSpawnEggItem {
 
-    /** 可随机到的皮肤名（允许重复选取；客户端按名字联网拉皮肤）。 */
+    /**
+     * 可随机到的皮肤名（允许重复选取；客户端按名字联网拉皮肤）。
+     * <p>
+     * 名单由用户指定；<b>改动时记得同步</b> javadoc 与 {@code ModItems} 里那两处说明
+     * （别再写"十位"这种会过期的数字）。
+     */
     private static final String[] SKINS = {
         "Dream",
         "Technoblade",
         "Sapnap",
         "GeorgeNotFound",
         "Red_Zombie",
-        "Herobrine",
         "cubicmetre",
         "BionicLMAO",
         "SunnySeren",
         "Wemmbu",
+        "MHF_Herobrine",
+        "Xujinxuan2008",
     };
 
     /** 蛋的底色：核心的紫。 */
@@ -112,8 +124,11 @@ public class OrbPlayerShellSpawnEggItem extends net.neoforged.neoforge.common.De
             random.nextFloat() * 360.0F, 0.0F);
         // 和"被同化产生的那一具"共用同一套配置：20 护甲 / 12 韧性 / 保护 16、附魔金苹果回血、
         // 走位与抽签攻击、头顶光球；<b>生命上限走默认那档 20</b>（刷怪蛋没有"被附体/同化的玩家"，
-        // 所以给不了"按那位玩家的上限来"；要按放蛋的人算的话就传 context.getPlayer().getMaxHealth()）
-        shell.configureAsPossessedShell();
+        // 所以给不了"按那位玩家的上限来"；要按放蛋的人算的话就传 context.getPlayer().getMaxHealth()）。
+        // 同时把来源标成 SPAWN_EGG —— 与附体事件的 POSSESSION、同化事件的 ASSIMILATION 分开，
+        // 这是"打死它只是打死它、不会复活任何人"这件事的权威标记
+        // （见 PlayerShellEntity.ShellOrigin 与 PlayerShellEntity#getShellOrigin）。
+        shell.configureAsSpawnEggShell();
         level.addFreshEntity(shell);
         level.gameEvent(context.getPlayer(), GameEvent.ENTITY_PLACE, spawnBlock);
 

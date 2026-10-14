@@ -128,7 +128,7 @@ public final class SupportMobControl {
         }
         List<PlayerShellEntity> shells = level.getEntitiesOfClass(PlayerShellEntity.class,
             from.getBoundingBox().inflate(ORB_GATE_RANGE),
-            shell -> shell.isAlive() && shell.isOrbAttached());
+            shell -> shell.isAlive() && shell.isCoreBackedShell());
         for (PlayerShellEntity shell : shells) {
             if (shell.getTarget() == player) {
                 return true;
